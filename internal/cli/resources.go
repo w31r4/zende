@@ -34,7 +34,7 @@ func (a *app) resourceCommands(root *cobra.Command) {
 	register.Flags().StringVar(&kind, "kind", "skill", "skill (directory or SKILL.md) or prompt (Markdown file)")
 	cmd.AddCommand(register)
 	for _, action := range []string{"refresh", "status"} {
-		cmd.AddCommand(&cobra.Command{Use: action + " AGENT RESOURCE", Short: map[string]string{"refresh": "Validate and publish changed source; failure keeps the last ready version", "status": "Inspect the last published ready version"}[action], Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		cmd.AddCommand(&cobra.Command{Use: action + " AGENT RESOURCE", Short: map[string]string{"refresh": "Validate and publish changed source; failure keeps the last ready version", "status": "Inspect the ready version and latest preparation or failure"}[action], Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 			return a.call(cmd, "resource."+action, action == "refresh", protocol.ResourceTarget{AgentID: args[0], ID: args[1]})
 		}})
 	}
@@ -63,6 +63,6 @@ func resourceHints(executable, profile string) []runtime.CommandHint {
 	return []runtime.CommandHint{
 		{Name: "resource.list", Usage: prefix + "resource list AGENT --kind skill --query QUERY", Guidance: "Discover published skill metadata. Read its complete instructions at the returned version before use; disabled model invocation requires explicit user selection."},
 		{Name: "resource.read", Usage: prefix + "resource read AGENT RESOURCE --version VERSION [--path FILE]", Guidance: "Read immutable instructions or resources, including source and version. Scripts are data; execute them through process tools. Use --help for file formats and limits."},
-		{Name: "resource.register", Usage: prefix + "--request-id ID resource register AGENT PATH [--kind skill|prompt]", Guidance: "After installation finishes, validate and publish resources for this Agent. Refresh by resource ID after edits. Failed updates retain the previous version; use status to inspect the last ready publication."},
+		{Name: "resource.register", Usage: prefix + "--request-id ID resource register AGENT PATH [--kind skill|prompt]", Guidance: "After installation finishes, validate and publish resources for this Agent. Refresh by resource ID after edits. Failed updates retain the previous version; status separates its availability from the latest update failure."},
 	}
 }

@@ -703,6 +703,32 @@ CLI 集成的 core/runner 在测试进程内，命令为真实子进程，模型
 
 通知参考 Pi `7bc154ad082e2f0029c19117a16d22a504439476` 的能力条件和延迟读取，格式独立标为 `zende/resources` 版本 1，核心 prompt 保持版本 11。trim-cn-tech-doc 精简说明入口，保留限额、来源、失败边界和验证命令。
 
+## 2026-10-16：资源准备状态、失败查询与恢复
+
+7.2 部分交付，累计仍为 39/68 项。schema 13 保存最近准备状态，`resource.update` 追加状态变化；可用版本与更新失败分开查询。全量 `go test ./...`、`go test -race ./...`、status 帮助及 OpenSpec strict 校验通过。
+
+| 验证 | 入口 | 结果 |
+| --- | --- | --- |
+| 首次失败与修复 | `TestResourceFailedInstallCanBeInspectedAndRepaired`、`TestResourceCLIUsesDurableVersionedCore` | 缺文件、半写 frontmatter 返回错误及资源 ID；可查询 failed、修复后 refresh，失败内容不进入目录；CLI stdout/诊断仍分流 |
+| 旧版与更新独立 | `TestResourceUpdateFailureAndReadyVersionAreIndependent` | 重开保留失败原因，旧版继续可读；相同字节刷新清除失败但不改变目录 generation；重试旧接受记录不覆盖最新状态 |
+| 并发与请求身份 | `TestResourceUpdateFencesSlowAndForeignPreparations` | 较早准备不能覆盖较新尝试，晚到失败不覆盖成功；错请求、owner 和基准版本拒绝发布 |
+| 原子提交 | `TestResourceUpdateAtomicPublicationAndRestart`、`TestResourcePreparationRejectsUnboundedIdentityAndRollsBack` | 准备、发布、接受故障均回滚各自事务；未提交版本不可读，未提交回执不可查询 |
+| 中断恢复 | `TestResourceUpdateInterruptedByCoreReplacement` | 新 core 将旧实例准备标为 failed/interrupted，保留原版本；当前实例继续，重复检查不追加重复失败 |
+| 限额与迁移 | `TestResourceUpdateLimitsIsolationAndMigration`、`TestIdentityIsStableBeforeInstallation` | 512 个来源上限、路径/请求 ID 限额、配置档隔离及归档保护；12→13 保留历史和接受记录，既有旧版本迁移测试通过 |
+
+```sh
+go test ./...
+go test -race ./...
+go test -race ./internal/runtime ./internal/cli ./internal/store \
+  -run 'ResourceUpdate|ResourcePreparation|TestResourceCLIUses' -count=3
+go test ./internal/runtime -run TestResourceUpdateInterruptedByCoreReplacement -count=50
+go run ./cmd/zende resource status --help
+```
+
+首轮全量测试发现启动期关闭 core 时错误返回 context cancelled，修正后重跑通过；旧失败不计通过。资源状态定向 race 连续三轮、启动退出用例连续 50 次通过。测试使用临时 SQLite、真实 UDS 和 CLI；关闭/重开与 core 实例替换模拟恢复，本轮未增加 SIGKILL 验收或使用外部凭据。
+
+核心提示词版本 12 补充 status 的两种状态含义，沿用 Pi 的按能力组合短说明；旧 Task 的已保存提示词保持原样。tui-design 用于 CLI 状态与输出分流，trim-cn-tech-doc 合并说明，保留限额、重试和失败边界。
+
 ## 进行中
 
-继续外部目录监视、MCP 搜索调用、配置/provider 热发布和独立进程插件。7.1、7.7 的 skill/prompt 请求部分已接通，整体仍未勾选。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。
+继续外部目录监视、MCP 搜索调用、配置/provider 热发布和独立进程插件。7.2 的 skill/prompt 状态部分已接通，目录监视与 MCP 依赖、凭据、连接就绪检查仍待完成；7.1、7.7 整体也未勾选。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。

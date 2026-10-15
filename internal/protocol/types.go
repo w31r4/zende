@@ -43,6 +43,7 @@ type ErrorData struct {
 	Kind        string `json:"kind"`
 	Retryable   bool   `json:"retryable"`
 	OperationID string `json:"operation_id,omitempty"`
+	ResourceID  string `json:"resource_id,omitempty"`
 }
 
 func (e *Error) Error() string { return e.Data.Kind + ": " + e.Message }

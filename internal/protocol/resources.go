@@ -83,10 +83,22 @@ type ResourcePage struct {
 	Next       string         `json:"next,omitempty"`
 	Generation int64          `json:"generation"`
 }
+
+// State describes the available publication. Update describes the latest
+// preparation, which may have failed while the published version stays ready.
 type ResourceStatus struct {
 	ResourceInfo
-	State      string `json:"state"`
-	Generation int64  `json:"generation"`
+	State      string          `json:"state"`
+	Generation int64           `json:"generation"`
+	Update     *ResourceUpdate `json:"update,omitempty"`
+}
+
+// ResourceUpdate exposes preparation status independently of content versions.
+type ResourceUpdate struct {
+	AttemptID   string `json:"attempt_id"`
+	OperationID string `json:"operation_id"`
+	State       string `json:"state"`
+	Error       *Error `json:"error,omitempty"`
 }
 type ResourceFileInfo struct {
 	Path       string `json:"path"`

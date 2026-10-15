@@ -2,7 +2,9 @@ package runtime
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
+	"time"
 
 	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/resource"
@@ -22,15 +24,7 @@ func (c *Core) registerResource(ctx context.Context, req protocol.Request, p pro
 	if !filepath.IsAbs(p.Path) {
 		p.Path = filepath.Join(snapshot.Agent.Cwd, p.Path)
 	}
-	current, err := c.Store.Resources(ctx, protocol.ResourceList{AgentID: p.AgentID, Limit: 1})
-	if err != nil {
-		return protocol.Accepted{}, err
-	}
-	prepared, err := resource.Prepare(ctx, p.Kind, p.Path)
-	if err != nil {
-		return protocol.Accepted{}, err
-	}
-	return c.Store.PublishResource(ctx, req, p.AgentID, prepared, current.Generation)
+	return c.prepareResource(ctx, req, p.AgentID, p.Kind, p.Path)
 }
 
 func (c *Core) refreshResource(ctx context.Context, req protocol.Request, p protocol.ResourceTarget) (protocol.Accepted, error) {
@@ -41,9 +35,56 @@ func (c *Core) refreshResource(ctx context.Context, req protocol.Request, p prot
 	if err != nil {
 		return protocol.Accepted{}, err
 	}
-	prepared, err := resource.Prepare(ctx, current.Kind, current.Source)
+	return c.prepareResource(ctx, req, p.AgentID, current.Kind, current.Source)
+}
+
+func (c *Core) prepareResource(ctx context.Context, req protocol.Request, agent, kind, path string) (accepted protocol.Accepted, err error) {
+	identity, err := resource.Identity(kind, path)
 	if err != nil {
 		return protocol.Accepted{}, err
 	}
-	return c.Store.PublishResource(ctx, req, p.AgentID, prepared, current.Generation)
+	attempt, previous, err := c.Store.BeginResourceUpdate(ctx, req, agent, identity, c.InstanceID)
+	if err != nil {
+		return protocol.Accepted{}, err
+	}
+	if previous != nil {
+		return *previous, nil
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		reason := "internal"
+		var known *protocol.Error
+		if errors.As(err, &known) {
+			switch known.Data.Kind {
+			case "invalid_resource", "resource_limit", "resource_changed":
+				reason = known.Data.Kind
+			}
+			// Copy, never modify a shared error owned by another layer.
+			copy := *known
+			err = &copy
+		} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			reason = "cancelled"
+			err = protocol.E(reason, "resource preparation cancelled; inspect status before retrying")
+		} else {
+			err = protocol.E(reason, "resource publication failed; inspect status before retrying")
+		}
+		failure := err.(*protocol.Error)
+		failure.Data.ResourceID, failure.Data.OperationID = identity.ID, req.OperationID
+		// Persist failure even if this client disconnected. Bounded cleanup
+		// cannot keep an IPC handler alive indefinitely during shutdown.
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*time.Second)
+		defer cancel()
+		if saveErr := c.Store.FailResourceUpdate(cleanup, agent, attempt, reason); saveErr != nil {
+			failure = protocol.E("internal", "resource update status could not be saved; inspect status before retrying")
+			failure.Data.ResourceID, failure.Data.OperationID = identity.ID, req.OperationID
+			err = failure
+		}
+	}()
+	prepared, err := resource.Prepare(ctx, kind, identity.Source)
+	if err != nil {
+		return protocol.Accepted{}, err
+	}
+	return c.Store.PublishResourceUpdate(ctx, req, agent, prepared, attempt)
 }

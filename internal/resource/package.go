@@ -37,6 +37,23 @@ type File struct {
 
 var skillName = regexp.MustCompile("^[a-z0-9]+(-[a-z0-9]+)*$")
 
+// Identity is available before files are readable, so failed installations can
+// still be inspected and retried. It performs no filesystem I/O.
+func Identity(kind, source string) (protocol.ResourceInfo, error) {
+	if (kind != "skill" && kind != "prompt") || !filepath.IsAbs(source) || len(source) > 4096 || strings.ContainsRune(source, 0) || !utf8.ValidString(source) {
+		return protocol.ResourceInfo{}, protocol.E("invalid_params", "resource kind must be skill or prompt and source must be an absolute path of at most 4096 bytes")
+	}
+	source = filepath.Clean(source)
+	if kind == "skill" && filepath.Base(source) != "SKILL.md" {
+		source = filepath.Join(source, "SKILL.md")
+	}
+	if len(source) > 4096 {
+		return protocol.ResourceInfo{}, protocol.E("invalid_params", "resource source exceeds 4096 bytes")
+	}
+	id := sha256.Sum256([]byte(kind + "\x00" + source))
+	return protocol.ResourceInfo{ID: fmt.Sprintf("resource_%x", id[:16]), Kind: kind, Source: source}, nil
+}
+
 func parseInstructions(data []byte) (name, description, body string, disabled bool, err error) {
 	fail := func() (string, string, string, bool, error) {
 		return "", "", "", false, protocol.E("invalid_resource", "instructions require YAML frontmatter with name, description and a nonempty UTF-8 body")
@@ -119,17 +136,12 @@ func parseInstructions(data []byte) (name, description, body string, disabled bo
 // This catches writes during preparation, not a writer's unstated future edits;
 // publishers should finish files before register, preferably by atomic rename.
 func Prepare(ctx context.Context, kind, source string) (Package, error) {
-	if (kind != "skill" && kind != "prompt") || !filepath.IsAbs(source) {
-		return Package{}, protocol.E("invalid_params", "resource kind must be skill or prompt and source must be absolute")
+	identity, err := Identity(kind, source)
+	if err != nil {
+		return Package{}, err
 	}
-	source = filepath.Clean(source)
+	source = identity.Source
 	rootPath, entry := filepath.Dir(source), filepath.Base(source)
-	if kind == "skill" {
-		if entry != "SKILL.md" {
-			source = filepath.Join(source, "SKILL.md")
-		}
-		rootPath, entry = filepath.Dir(source), "SKILL.md"
-	}
 	root, err := os.OpenRoot(rootPath)
 	if err != nil {
 		return Package{}, protocol.E("invalid_resource", "resource directory unavailable")
@@ -269,8 +281,11 @@ func BuildPackage(kind, source, entry string, files []File) (Package, error) {
 	p.Info.Name, p.Info.Description, p.Info.DisableModelInvocation = name, description, disabled
 	p.Info.Files, p.Instructions = len(p.Files), body
 	sort.Slice(p.Files, func(i, j int) bool { return p.Files[i].Path < p.Files[j].Path })
-	id := sha256.Sum256([]byte(kind + "\x00" + source))
-	p.Info.ID = fmt.Sprintf("resource_%x", id[:16])
+	identity, err := Identity(kind, source)
+	if err != nil {
+		return Package{}, err
+	}
+	p.Info.ID = identity.ID
 	raw, err := json.Marshal(struct {
 		Kind, Entry string
 		Files       []File

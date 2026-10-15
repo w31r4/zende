@@ -72,8 +72,19 @@ func TestResourceCLIUsesDurableVersionedCore(t *testing.T) {
 		}
 	}
 	v1 := "---\nname: local-review\ndescription: 中文 review\n---\nOriginal complete instructions.\n"
-	write(v1)
 	register := []string{"--request-id", "register", "resource", "register", created.AgentID, "中文 skill"}
+	// A first failed install returns an identity even without any ready version.
+	var installOut, installErrors bytes.Buffer
+	code := Run(ctx, append([]string{"--profile", "resources"}, register...), nil, &installOut, &installErrors, BuildInfo{})
+	var failure protocol.Error
+	if code != 1 || installOut.Len() != 0 || json.Unmarshal(installErrors.Bytes(), &failure) != nil || failure.Data.ResourceID == "" || failure.Data.OperationID != "register" {
+		t.Fatal(code, installOut.String(), installErrors.String())
+	}
+	var missing protocol.ResourceStatus
+	if err := json.Unmarshal(run("resource", "status", created.AgentID, failure.Data.ResourceID), &missing); err != nil || missing.State != "failed" || missing.Version != "" || missing.Update == nil {
+		t.Fatal(missing, err)
+	}
+	write(v1)
 	first := run(register...)
 	var accepted protocol.Accepted
 	if err := json.Unmarshal(first, &accepted); err != nil || accepted.Resource == nil {
@@ -101,7 +112,7 @@ func TestResourceCLIUsesDurableVersionedCore(t *testing.T) {
 	// Invalid refresh leaves the old ready publication, without a false receipt.
 	write("---\nname: partial")
 	var out, diagnostics bytes.Buffer
-	code := Run(ctx, []string{"--profile", "resources", "--request-id", "bad", "resource", "refresh", created.AgentID, id}, nil, &out, &diagnostics, BuildInfo{})
+	code = Run(ctx, []string{"--profile", "resources", "--request-id", "bad", "resource", "refresh", created.AgentID, id}, nil, &out, &diagnostics, BuildInfo{})
 	if code != 1 || out.Len() != 0 || diagnostics.Len() == 0 {
 		t.Fatal(code, out.String(), diagnostics.String())
 	}
@@ -109,11 +120,18 @@ func TestResourceCLIUsesDurableVersionedCore(t *testing.T) {
 	if err := json.Unmarshal(run("resource", "status", created.AgentID, id), &status); err != nil || status.State != "ready" || status.Version != refreshed.Resource.Version {
 		t.Fatal(status, err)
 	}
+	if status.Update == nil || status.Update.State != "failed" || status.Update.OperationID != "bad" || status.Update.Error == nil || status.Update.Error.Data.Kind != "invalid_resource" {
+		t.Fatal("failed update was hidden by last ready version", status)
+	}
 	if err := os.Remove(source); err != nil {
 		t.Fatal(err)
 	}
 	if !bytes.Equal(updated, run(refresh...)) || !bytes.Equal(first, run(register...)) {
 		t.Fatal("retry required source after acceptance")
+	}
+	var unchanged protocol.ResourceStatus
+	if err := json.Unmarshal(run("resource", "status", created.AgentID, id), &unchanged); err != nil || unchanged.Update == nil || unchanged.Update.Error == nil || *unchanged.Update.Error != *status.Update.Error || unchanged.Update.AttemptID != status.Update.AttemptID {
+		t.Fatal("retry of old acceptance changed latest failure", unchanged, err)
 	}
 	if err := json.Unmarshal(run("resource", "read", created.AgentID, id), &content); err != nil || !strings.Contains(content.Text, "Updated") {
 		t.Fatal(content, err)

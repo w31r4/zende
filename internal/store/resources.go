@@ -63,12 +63,23 @@ func decodePackage(raw string) (resource.Package, error) {
 // baseGeneration is observed before preparation. An intervening publication of
 // this resource must not be overwritten by an older, slower preparation.
 func (s *Store) PublishResource(ctx context.Context, req protocol.Request, agent string, prepared resource.Package, baseGeneration int64) (protocol.Accepted, error) {
+	return s.publishResource(ctx, req, agent, prepared, baseGeneration, nil)
+}
+
+func (s *Store) PublishResourceUpdate(ctx context.Context, req protocol.Request, agent string, prepared resource.Package, attempt ResourcePreparation) (protocol.Accepted, error) {
+	return s.publishResource(ctx, req, agent, prepared, attempt.BaseGeneration, &attempt)
+}
+
+func (s *Store) publishResource(ctx context.Context, req protocol.Request, agent string, prepared resource.Package, baseGeneration int64, attempt *ResourcePreparation) (protocol.Accepted, error) {
 	return s.accept(ctx, req, func(tx *sql.Tx) (protocol.Accepted, error) {
 		p, err := validatedPackage(prepared)
 		if err != nil {
 			return protocol.Accepted{}, err
 		}
 		if err := resourceAgent(ctx, tx, agent, true); err != nil {
+			return protocol.Accepted{}, err
+		}
+		if err := checkResourcePreparation(ctx, tx, req, agent, p, attempt); err != nil {
 			return protocol.Accepted{}, err
 		}
 		var previous string
@@ -78,7 +89,7 @@ func (s *Store) PublishResource(ctx context.Context, req protocol.Request, agent
 			return protocol.Accepted{}, err
 		}
 		if previous == p.Info.Version {
-			return protocol.Accepted{AgentID: agent, Resource: &p.Info}, nil
+			return protocol.Accepted{AgentID: agent, Resource: &p.Info}, finishResourcePreparation(ctx, tx, agent, attempt)
 		}
 		if baseGeneration < 0 || generation > baseGeneration {
 			return protocol.Accepted{}, protocol.E("resource_changed", "resource was published during preparation; refresh again")
@@ -123,7 +134,7 @@ func (s *Store) PublishResource(ctx context.Context, req protocol.Request, agent
 ON CONFLICT(agent_id,id) DO UPDATE SET version=excluded.version,generation=excluded.generation`, agent, p.Info.ID, p.Info.Version, event.Seq); err != nil {
 			return protocol.Accepted{}, err
 		}
-		return protocol.Accepted{AgentID: agent, Resource: &p.Info}, nil
+		return protocol.Accepted{AgentID: agent, Resource: &p.Info}, finishResourcePreparation(ctx, tx, agent, attempt)
 	})
 }
 
@@ -182,9 +193,25 @@ func resourceAgent(ctx context.Context, tx *sql.Tx, agent string, writable bool)
 func (s *Store) ResourceStatus(ctx context.Context, target protocol.ResourceTarget) (protocol.ResourceStatus, error) {
 	var result protocol.ResourceStatus
 	err := s.Transaction(ctx, func(tx *sql.Tx) error {
+		if err := resourceAgent(ctx, tx, target.AgentID, false); err != nil {
+			return err
+		}
+		update, err := resourceUpdate(ctx, tx, target.AgentID, target.ID)
+		if err != nil {
+			return err
+		}
+		if update != nil {
+			result.ResourceInfo, result.State, result.Update = update.Identity, update.Update.State, &update.Update
+		}
 		var raw string
-		err := tx.QueryRowContext(ctx, `SELECT v.package,r.generation FROM agent_resources r JOIN resource_versions v ON r.id=v.id AND r.version=v.version WHERE r.agent_id=? AND r.id=?`, target.AgentID, target.ID).Scan(&raw, &result.Generation)
+		err = tx.QueryRowContext(ctx, `SELECT v.package,r.generation FROM agent_resources r JOIN resource_versions v ON r.id=v.id AND r.version=v.version WHERE r.agent_id=? AND r.id=?`, target.AgentID, target.ID).Scan(&raw, &result.Generation)
 		if errors.Is(err, sql.ErrNoRows) {
+			if update != nil && update.Update.State != "ready" {
+				return nil
+			}
+			if update != nil {
+				return protocol.E("invalid_state", "ready resource update has no publication")
+			}
 			return protocol.E("not_found", "resource is not registered for this Agent")
 		}
 		if err != nil {

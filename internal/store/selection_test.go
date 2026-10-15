@@ -176,7 +176,7 @@ func TestSchemaSixMigrationPreservesHistory(t *testing.T) {
 	original, _ := s.Snapshot(ctx, a.AgentID)
 	messages, _, _ := s.ModelContext(ctx, a.AgentID)
 	history, _ := s.Events(ctx, protocol.Cursor{AgentID: a.AgentID})
-	if _, err := s.db.Exec("DROP TABLE wait_receipts; DROP TABLE mailbox; DROP TABLE workspace_operations; DROP TABLE agent_selections; PRAGMA user_version=6;"); err != nil {
+	if _, err := s.db.Exec("DROP TABLE resource_updates; DROP TABLE wait_receipts; DROP TABLE mailbox; DROP TABLE workspace_operations; DROP TABLE agent_selections; PRAGMA user_version=6;"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {

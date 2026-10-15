@@ -15,7 +15,7 @@ import (
 	"zende.local/harness/internal/protocol"
 )
 
-const SchemaVersion = 12
+const SchemaVersion = 13
 
 type Store struct {
 	db   *sql.DB
@@ -126,7 +126,12 @@ PRAGMA user_version=2;`); err != nil {
 		}
 		// v12 adds durable tree-stop events. Older binaries must not schedule
 		// work without honoring their admission fence.
-		_, err := tx.Exec(treeStopSchema)
+		if version < 12 {
+			if _, err := tx.Exec(treeStopSchema); err != nil {
+				return err
+			}
+		}
+		_, err := tx.Exec(resourceUpdateSchema)
 		return err
 	})
 }

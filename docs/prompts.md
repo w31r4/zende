@@ -47,6 +47,8 @@ Zende 保持 exec、进程继续操作和 patch 的工具边界。Pi 的 read/ed
 
 版本 11 加入 `agent stop/resume`，区分默认单 Agent 暂停和显式 `--tree`，说明完成查询、未知效果、队列保留和原 ID 重试。沿用 Pi 的能力条件短说明，完整范围和限额见帮助及 [停止与恢复](./collaboration.md#停止与恢复)。一致性测试核对命令注册、默认 `tree=false` 和不可用状态；旧 Task 仍用保存的提示词。
 
+版本 12 更新资源 CLI 短说明：`status` 区分已有版本可用和最近更新失败。沿用 Pi 的按能力组合方式，参数和状态细节留给帮助及资源文档；旧 Task 保留原提示词。
+
 ## Skill/prompt 的请求级更新
 
 `resource.register/refresh` 校验并保存不可变文件包；失败保留上一版。任务每次请求从同一数据库事务读取上下文和当前资源目录，`model.started.resource_catalog` 保存 generation 及全部 ID/版本。它记录当时可发现的定义，不代表正文已经应用。
@@ -67,7 +69,7 @@ zende resource register AGENT /absolute/path/to/prompt.md --kind prompt
 
 skill 的 `SKILL.md` 与 prompt 文件使用 YAML frontmatter，要求 `name`、`description` 和非空正文。skill 包含相对路径资源，文本按 UTF-8 返回，二进制按 base64 返回。版本覆盖文件路径、字节和执行位；原安装文件更新或删除后，已发布版本仍可读。脚本通过进程工具执行，读取时不运行；执行固定版本脚本时使用该版本的字节，不把可修改的安装目录当作版本副本。
 
-通知沿用 Pi 的能力条件和“元数据发现 → 完整读取 → 使用”顺序，使用 Zende 的版本化 CLI，保留系统提示词版本 11。`TestModelInstallsRefreshesAndUsesSkillThroughBinaryCLI` 用真实 CLI、UDS 和 shell 验证同一 Task 安装、刷新、读取 skill/prompt、执行脚本；模型使用确定性夹具。
+通知沿用 Pi 的能力条件和“元数据发现 → 完整读取 → 使用”顺序，使用 Zende 的版本化 CLI。`TestModelInstallsRefreshesAndUsesSkillThroughBinaryCLI` 用真实 CLI、UDS 和 shell 验证同一 Task 安装、刷新、读取 skill/prompt、执行脚本；模型使用确定性夹具。
 
 ## 输出分类
 
