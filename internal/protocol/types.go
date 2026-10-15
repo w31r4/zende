@@ -187,12 +187,13 @@ type Agent struct {
 }
 
 type Task struct {
-	ID          string   `json:"task_id"`
-	AgentID     string   `json:"agent_id"`
-	State       string   `json:"state"`
-	Input       string   `json:"input"`
-	Result      string   `json:"result,omitempty"`
-	Attachments []string `json:"attachments,omitempty"`
+	ID          string        `json:"task_id"`
+	AgentID     string        `json:"agent_id"`
+	State       string        `json:"state"`
+	Input       string        `json:"input"`
+	Result      string        `json:"result,omitempty"`
+	Attachments []string      `json:"attachments,omitempty"`
+	Skills      []ResourceRef `json:"skills,omitempty"`
 }
 
 type Snapshot struct {
@@ -219,9 +220,10 @@ type CreateAgent struct {
 }
 
 type Submit struct {
-	AgentID     string   `json:"agent_id"`
-	Input       string   `json:"input"`
-	Attachments []string `json:"attachments,omitempty"`
+	AgentID     string        `json:"agent_id"`
+	Input       string        `json:"input"`
+	Attachments []string      `json:"attachments,omitempty"`
+	Skills      []ResourceRef `json:"skills,omitempty"`
 }
 
 type Target struct {

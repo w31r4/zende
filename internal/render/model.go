@@ -36,6 +36,12 @@ type Shell struct {
 	imageLoads                                   map[string]imageLoad
 	imagesPanel                                  *imagesPanel
 	imagesGeneration                             uint64
+	skills                                       []protocol.ResourceInfo
+	skillsReady, skillsWaiting                   bool
+	skillsRequest                                uint64
+	skillsGeneration, skillsFloor                int64
+	skillsStale                                  int
+	skillPicker                                  string
 	questions                                    []protocol.QuestionInfo
 	questionCursor                               int64
 	showQuestions                                bool
@@ -79,6 +85,27 @@ func (m Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	switch msg := msg.(type) {
+	case skillCatalogMsg:
+		if msg.request != m.skillsRequest || !m.skillsWaiting {
+			return m, nil
+		}
+		m.skillsWaiting = false
+		m.issues.raise("skills", msg.err)
+		if msg.err == nil {
+			if msg.generation < m.skillsFloor {
+				m.skillsStale++
+				if m.skillsStale >= 3 {
+					m.issues.raise("skills", protocol.E("resource_changed", "skill catalog is behind events; open /skill to retry"))
+					return m, nil
+				}
+				cmd := m.loadSkills(true)
+				return m, cmd
+			}
+			m.skillsStale = 0
+			m.skills, m.skillsGeneration, m.skillsReady = msg.items, msg.generation, true
+			m.refreshSkillPalette()
+		}
+		return m, nil
 	case tea.ColorProfileMsg:
 		m.theme.profile = msg.Profile
 		m.input.setTheme(m.theme)
@@ -177,6 +204,13 @@ func (m Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.cursor = m.transcript.Cursor
 		m.projectQuestionEvent(msg.Event)
+		if msg.Event.Kind == "resource.published" {
+			m.skillsFloor = max(m.skillsFloor, msg.Event.Seq)
+			if m.palette.entry == "skill" {
+				cmd := m.loadSkills(false)
+				return m, cmd
+			}
+		}
 		// State refreshes are coalesced, not one request per model delta.
 		if m.cursor >= m.snapshot.Cursor && (strings.HasPrefix(msg.Event.Kind, "task.") || strings.HasPrefix(msg.Event.Kind, "agent.") || strings.HasPrefix(msg.Event.Kind, "question.")) {
 			if m.refreshing {
@@ -313,6 +347,9 @@ func (m Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.input, cmd = m.input.Update(msg)
 	m.syncPalette(msg)
+	if m.palette.entry == "skill" {
+		cmd = tea.Batch(cmd, m.loadSkills(false))
+	}
 	return m, cmd
 }
 
@@ -332,7 +369,7 @@ func (m Shell) submit() (tea.Model, tea.Cmd) {
 		m.report(protocol.E("request_pending", "image load is unresolved; /image retries its original request"))
 		return m, nil
 	}
-	if command == "" && len(m.input.images) == 0 {
+	if command == "" && len(m.input.images) == 0 && len(m.input.skills) == 0 {
 		return m, nil
 	}
 	if m.activeQuestion != "" {
@@ -345,7 +382,7 @@ func (m Shell) submit() (tea.Model, tea.Cmd) {
 			m.report(protocol.E("invalid_params", "answer exceeds 1 MiB"))
 			return m, nil
 		}
-		cmd, err := m.mutate("question.answer", protocol.AnswerQuestion{AgentID: m.agent, ID: q.ID, Answer: text, Attachments: m.input.imageIDs()}, text)
+		cmd, err := m.mutate("question.answer", protocol.AnswerQuestion{AgentID: m.agent, ID: q.ID, Answer: text, Attachments: m.input.imageIDs(), Skills: m.input.skillRefs()}, text)
 		if err != nil {
 			m.report(err)
 		}
@@ -355,7 +392,7 @@ func (m Shell) submit() (tea.Model, tea.Cmd) {
 		m.report(protocol.E("invalid_params", "input exceeds 2 MiB"))
 		return m, nil
 	}
-	cmd, err := m.mutate("agent.submit", protocol.Submit{AgentID: m.agent, Input: text, Attachments: m.input.imageIDs()}, text)
+	cmd, err := m.mutate("agent.submit", protocol.Submit{AgentID: m.agent, Input: text, Attachments: m.input.imageIDs(), Skills: m.input.skillRefs()}, text)
 	if err != nil {
 		m.report(err)
 		return m, nil
@@ -378,6 +415,7 @@ func (m *Shell) submitCommand(call invocation) tea.Cmd {
 	}
 	m.restoreCommandDraft()
 	m.applyQuestionAction()
+	m.applySkillPicker()
 	return cmd
 }
 
@@ -394,6 +432,9 @@ func (m Shell) View() tea.View {
 	if frame.images != "" {
 		content += "\n" + m.theme.muted().Render(frame.images)
 	}
+	if frame.skills != "" {
+		content += "\n" + m.theme.muted().Render(frame.skills)
+	}
 	content += "\n" + m.input.View()
 	if len(frame.candidates) > 0 {
 		content += "\n" + m.theme.muted().Render(strings.Join(frame.candidates, "\n"))
@@ -406,6 +447,9 @@ func (m Shell) View() tea.View {
 	if v.Cursor != nil {
 		v.Cursor.Y += len(frame.body)
 		if frame.images != "" {
+			v.Cursor.Y++
+		}
+		if frame.skills != "" {
 			v.Cursor.Y++
 		}
 	}

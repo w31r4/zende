@@ -182,10 +182,12 @@ func validateAttachments(ctx context.Context, tx *sql.Tx, agent string, refs []s
 
 func scanTask(row scanner) (protocol.Task, error) {
 	var t protocol.Task
-	var raw string
-	if err := row.Scan(&t.ID, &t.AgentID, &t.State, &t.Input, &t.Result, &raw); err != nil {
+	var raw, skills string
+	if err := row.Scan(&t.ID, &t.AgentID, &t.State, &t.Input, &t.Result, &raw, &skills); err != nil {
 		return t, err
 	}
-	err := json.Unmarshal([]byte(raw), &t.Attachments)
-	return t, err
+	if err := json.Unmarshal([]byte(raw), &t.Attachments); err != nil {
+		return t, err
+	}
+	return t, json.Unmarshal([]byte(skills), &t.Skills)
 }

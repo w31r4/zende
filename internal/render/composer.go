@@ -16,6 +16,7 @@ type Composer struct {
 	id       string
 	revision uint64
 	images   []protocol.Attachment
+	skills   []protocol.ResourceInfo
 }
 
 type draftStamp struct {
@@ -57,9 +58,50 @@ func (c *Composer) ResetText()           { c.Model.Reset(); c.revision++ }
 func (c *Composer) Reset() {
 	c.ResetText()
 	c.images = nil
+	c.skills = nil
 	c.id = protocol.NewID("draft")
 }
 func (c Composer) stamp() draftStamp { return draftStamp{c.id, c.revision} }
+func (c Composer) skillRefs() []protocol.ResourceRef {
+	var refs []protocol.ResourceRef
+	for _, skill := range c.skills {
+		refs = append(refs, protocol.ResourceRef{ID: skill.ID, Version: skill.Version})
+	}
+	return refs
+}
+func (c *Composer) addSkill(skill protocol.ResourceInfo) error {
+	for _, old := range c.skills {
+		if old.ID == skill.ID {
+			if old.Version != skill.Version {
+				return protocol.E("resource_changed", "another version is already selected; /skill-remove before selecting the new version")
+			}
+			return nil
+		}
+	}
+	if len(c.skills) >= protocol.MaxInputSkills {
+		return protocol.E("resource_limit", "draft supports up to 8 skills; /skill-remove to change selection")
+	}
+	c.skills = append(append([]protocol.ResourceInfo(nil), c.skills...), skill)
+	c.revision++
+	return nil
+}
+func (c *Composer) removeSkill(id string) error {
+	var kept []protocol.ResourceInfo
+	found := false
+	for _, skill := range c.skills {
+		if skill.ID == id {
+			found = true
+		} else {
+			kept = append(kept, skill)
+		}
+	}
+	if !found {
+		return protocol.E("not_found", "skill is not selected in this draft")
+	}
+	c.skills = kept
+	c.revision++
+	return nil
+}
 func (c Composer) imageIDs() []string {
 	var ids []string
 	for _, image := range c.images {

@@ -1,6 +1,7 @@
 package render
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -23,6 +24,7 @@ type Entry struct {
 	OperationID, CallID, ProcessID, Name       string
 	Kind, Category, State, Text                string
 	Attachments                                []string
+	Skills                                     []protocol.ResourceRef
 	Index                                      int
 	Seq, LastSeq                               int64
 	Truncated, Hidden                          bool
@@ -74,9 +76,36 @@ func (p *Transcript) trim() {
 		for _, id := range p.Entries[0].Attachments {
 			p.bytes -= len(id)
 		}
+		for _, ref := range p.Entries[0].Skills {
+			p.bytes -= len(ref.ID) + len(ref.Version)
+		}
 		p.DroppedThrough = max(p.DroppedThrough, p.Entries[0].LastSeq)
 		p.Entries[0] = Entry{}
 		p.Entries = p.Entries[1:]
+	}
+}
+
+func validSkillRefs(refs []protocol.ResourceRef) bool {
+	if len(refs) > protocol.MaxInputSkills {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, ref := range refs {
+		hash, err := hex.DecodeString(ref.Version)
+		if err != nil || len(hash) != 32 || ref.ID == "" || len(ref.ID) > 128 || seen[ref.ID] {
+			return false
+		}
+		seen[ref.ID] = true
+	}
+	return true
+}
+func (p *Transcript) skills(entry *Entry, refs []protocol.ResourceRef) {
+	for _, ref := range entry.Skills {
+		p.bytes -= len(ref.ID) + len(ref.Version)
+	}
+	entry.Skills = append([]protocol.ResourceRef(nil), refs...)
+	for _, ref := range entry.Skills {
+		p.bytes += len(ref.ID) + len(ref.Version)
 	}
 }
 
@@ -117,11 +146,11 @@ func (p *Transcript) apply(e protocol.Event) error {
 		}
 		state := map[string]string{"question.asked": "pending", "question.answered": "answered", "question.cancelled": "cancelled"}[e.Kind]
 		if !validQuestion(q.QuestionInfo, e.AgentID) || q.TaskID != e.TaskID || q.State != state ||
-			len(q.Answer) > protocol.MaxAnswerBytes || !utf8.ValidString(q.Answer) || len(q.Attachments) > protocol.MaxInputImages {
+			len(q.Answer) > protocol.MaxAnswerBytes || !utf8.ValidString(q.Answer) || len(q.Attachments) > protocol.MaxInputImages || !validSkillRefs(q.Skills) {
 			return protocol.E("invalid_state", "invalid question event")
 		}
-		if q.State != "answered" && (q.Answer != "" || len(q.Attachments) > 0) ||
-			q.State == "answered" && strings.TrimSpace(q.Answer) == "" && len(q.Attachments) == 0 {
+		if q.State != "answered" && (q.Answer != "" || len(q.Attachments) > 0 || len(q.Skills) > 0) ||
+			q.State == "answered" && strings.TrimSpace(q.Answer) == "" && len(q.Attachments) == 0 && len(q.Skills) == 0 {
 			return protocol.E("invalid_state", "invalid question answer")
 		}
 		seen := make(map[string]bool)
@@ -145,6 +174,7 @@ func (p *Transcript) apply(e protocol.Event) error {
 				p.bytes += len(id)
 			}
 			p.text(entry, q.Answer, false)
+			p.skills(entry, q.Skills)
 		}
 	case "task.config", "model.started":
 		// Only the public model ID is used; endpoint snapshots and credentials
@@ -187,6 +217,9 @@ func (p *Transcript) apply(e protocol.Event) error {
 		if len(task.Attachments) > protocol.MaxInputImages {
 			return protocol.E("invalid_state", "too many image references")
 		}
+		if !validSkillRefs(task.Skills) {
+			return protocol.E("invalid_state", "invalid skill references")
+		}
 		seen := make(map[string]bool)
 		for _, id := range task.Attachments {
 			if id == "" || len(id) > 128 || seen[id] {
@@ -204,6 +237,7 @@ func (p *Transcript) apply(e protocol.Event) error {
 			p.bytes += len(id)
 		}
 		p.text(entry, task.Input, false)
+		p.skills(entry, task.Skills)
 		if e.Kind == "task.started" {
 			p.Agent.State = "running"
 		}

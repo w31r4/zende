@@ -89,7 +89,7 @@ model: local/my-model
 
 ## 数据与恢复边界
 
-SQLite schema 为 5，使用 WAL + FULL synchronous。版本 1→2 增加人工暂停和任务优先级，2→3 增加附件与任务引用，3→4 增加提问、回答及投递记录，4→5 增加资源版本、目录和发布记录。升级同事务完成，保留历史和接受记录。请求、任务和事件同事务提交；历史、接受记录、附件字节、任务输入、已回答的问题和已发布资源版本由数据库约束保护。更高版本拒绝打开。
+SQLite schema 为 6，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答与资源版本；更高版本拒绝打开。
 
 core 启动先将中断任务置为待核实，再按原身份恢复。取消中的任务保留 cancelling 和暂停选择；核实完成后结束取消，不恢复执行。历史、已接受输入和原 Task ID 保留。
 
@@ -178,7 +178,7 @@ go test ./internal/cli -run 'TestConfiguredResponsesBinaryExecutesPatch|TestBina
 
 首次连接从事件起点回放，断线后按最后成功处理的 seq 自动补发、去重。重试间隔从 250 ms 增至最多 5 秒；连通的空闲订阅也能确认在线。旧连接消息不影响新订阅，重连保留草稿和未确认请求；只有显式 `/retry` 才重试原写请求。历史缺口、身份错误或记录超限停止自动重连并报错，`/refresh` 或点击 offline 从原位置重试，不跳到新快照。
 
-显示缓存最多 512 条、4 MiB 正文及图片引用，单条正文保留末尾 64 KiB；裁切和窗口淘汰有标记，完整历史仍由 `agent history` 查询。PgUp 最多回看当前窗口的 10000 行。`$` skill 候选与配置选择由 5.7–5.8 接入。
+显示缓存最多 512 条、4 MiB 正文及图片/skill 引用，单条正文保留末尾 64 KiB；裁切和窗口淘汰有标记，完整历史仍由 `agent history` 查询。PgUp 最多回看当前窗口的 10000 行。配置选择由 5.8 接入。
 
 `/logs` 选择只读日志，`/terminal` 选择随窗口调整尺寸的 PTY；两者也接受 process ID。`/next` 翻当前进程或图片页，`/back` 返回对话，草稿保留。`/attach [PROCESS]` 显式接管真实终端，Ctrl+B 再按 d 返回。返回后刷新进程并从原事件游标补发；普通输入始终提交给 Agent。尺寸和控制边界见 [终端选择与接管](./processes.md#终端选择与接管)。
 
@@ -217,11 +217,11 @@ zende --request-id answer-1 question answer AGENT QUESTION --file ANSWER.md --im
 zende question inspect AGENT QUESTION
 ```
 
-`ask` 只接受正在运行且未暂停的 Task，返回 `question_id`。问题最多 8 KiB UTF-8；同一 Agent 最多 8 个待回答或待投递问题。`answer` 接受最多 1 MiB UTF-8 和已有图片引用，也支持纯图片；图片限额沿用图片输入。能力检查读取该 Task 保存的配置，失败时问题保持待回答，附件保留。
+`ask` 只接受正在运行且未暂停的 Task，返回 `question_id`。问题最多 8 KiB UTF-8；同一 Agent 最多 8 个待回答或待投递问题。`answer` 接受最多 1 MiB UTF-8、图片引用和 skill 版本，可仅附图片或 skill。图片限额沿用图片输入；能力检查读取 Task 保存的配置，失败时问题保持待回答，附件保留。
 
-当前工具全部结束后，Agent 等待这些问题回答完毕，再按问题创建顺序将回答追加为 user 消息。文字和图片一起投递，`context.message` 的 `question_id` 与投递游标同事务保存，重启和重试不会重复注入。等待不占用 IPC 请求；其他 Agent 按并发上限继续。普通任务输入仍排入任务队列，不自动充当回答。
+当前工具全部结束后，Agent 等待全部回答，再按问题创建顺序追加 user 消息。文字、图片和所选 skill 正文一起投递；`context.message` 的 `question_id`、资源引用与投递游标同事务保存，重启和重试只投递一次。等待不占用 IPC 请求；其他 Agent 继续调度。普通输入仍排入任务队列。
 
-`list` 默认只列待回答问题，可用 `--state answered|cancelled|all`、`--after`、`--limit` 查询；列表和快照只带问题元数据，`inspect` 返回回答及图片引用。回答可处于已接受但尚未投递状态，`delivered_seq` 标记实际进入上下文的位置。
+`list` 默认只列待回答问题，可用 `--state answered|cancelled|all`、`--after`、`--limit` 查询；列表和快照只带问题元数据，`inspect` 返回回答、图片及 skill 引用。回答可处于已接受但尚未投递状态，`delivered_seq` 标记实际进入上下文的位置。
 
 停止 Task 后拒绝新的回答；取消完成时，未回答的问题变为 cancelled，已接受的回答保留并写入上下文。结果未知的 Task 保留待恢复状态，核实后继续等待或投递。连接结果未知时复用原请求 ID；重试已经接受的回答不会恢复已停止的 Task。
 
@@ -252,7 +252,13 @@ skill 接受目录或 `SKILL.md`，prompt 接受单个 Markdown 文件；相对�
 
 入口限 128 KiB，单文件 1 MiB、包 8 MiB/256 文件，目录深度 16 层、扫描 1024 项；`.git` 跳过。包内文件链接可指向包内普通文件，越界链接、目录链接和特殊文件拒绝。双次读取能发现准备期间的变化；尚未完成但暂时合法的文件仍需安装方控制发布时机，建议完整写入后原子替换。
 
-当前交付显式注册、刷新和版本读取。`resource_dirs` 自动发现、目录监测、请求边界通知与 TUI `$` 选择仍在第 5、7 组实施；旧 Task 已保存的提示词保持原样。
+TUI 输入 `$` 或 `/skill` 打开当前 Agent 的已发布目录，候选在输入下方按名称、描述或来源过滤。方向键选择，Enter 附到草稿，Tab 补全命令；主输入与提问回答共用。多行草稿末尾留空格再输入 `$名称`，选择后返回原文字与图片。粘贴按文本保留，Esc 收起候选后可发送字面量。
+
+选择只改变当前草稿，最多 8 个不同 skill；选中后才显示一行名称，点击或 `/skill-remove` 可移除。目录刷新保留已选版本，换版本须先移除。目录只读元数据、最多 512 项；分页代次变化最多重读 3 次，仍不一致时报错，可用 `/skill` 重试。
+
+CLI 用 `agent submit AGENT --skill RESOURCE@VERSION` 或 `question answer AGENT QUESTION --skill RESOURCE@VERSION`，`--skill` 可重复，也支持纯 skill 输入。提交时 core 核实该 Agent 发布过确切版本，将引用与输入原子保存；任务开始或回答投递时追加该版本正文、来源和版本到 user 消息。`disable-model-invocation` 允许用户显式选择；这不赋予正文 developer/system 权限。刷新和源文件删除不改已接受输入；辅助文件用 `resource read --version` 读取，脚本走进程接口。
+
+`resource_dirs` 自动发现、目录监测和模型请求边界通知仍由第 7 组接入；旧 Task 已保存的基础提示词保持原样。
 
 ## Responses 接入
 

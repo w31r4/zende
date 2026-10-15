@@ -110,7 +110,7 @@ func (m Shell) keepAnswerDraft(id string, draft *answerDraft) bool {
 		}
 	}
 	_, loading := m.imageLoads[c.id]
-	return c.Value() != "" || len(c.images) > 0 || loading || m.sentDraft.id == c.id && m.pending != nil
+	return c.Value() != "" || len(c.images) > 0 || len(c.skills) > 0 || loading || m.sentDraft.id == c.id && m.pending != nil
 }
 
 func (m *Shell) questionCommand(name string, args []string) error {

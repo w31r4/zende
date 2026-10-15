@@ -35,6 +35,8 @@ var commands = []command{
 	{name: "images", description: "Saved images"},
 	{name: "image-use", usage: "IMAGE", description: "Select saved image", maxArgs: 1},
 	{name: "image-remove", usage: "IMAGE", description: "Remove draft image", maxArgs: 1},
+	{name: "skill", usage: "[NAME|RESOURCE] [VERSION]", description: "Select skill / refresh list", maxArgs: 2},
+	{name: "skill-remove", usage: "[NAME|RESOURCE]", description: "Remove draft skill", maxArgs: 1},
 	{name: "refresh", description: "Refresh connection"},
 	{name: "retry", description: "Retry original request"},
 	{name: "stop", description: "Stop current work"},
@@ -128,6 +130,8 @@ func (m *Shell) invoke(call invocation) (tea.Cmd, error) {
 		m.issues.manual = m.issues.open
 	case "image", "images", "image-use", "image-remove":
 		return m.imageCommand(c.name, call.args)
+	case "skill", "skill-remove":
+		return m.skillCommand(c.name, call.args)
 	case "questions", "answer", "answer-clear":
 		return nil, m.questionCommand(c.name, call.args)
 	case "next":
@@ -184,6 +188,7 @@ func (m *Shell) dispatch(call invocation) tea.Cmd {
 		m.report(err)
 	} else {
 		m.applyQuestionAction()
+		m.applySkillPicker()
 	}
 	return cmd
 }

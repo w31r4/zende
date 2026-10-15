@@ -1,10 +1,29 @@
 package cli
 
 import (
+	"encoding/hex"
+	"strings"
+
 	"github.com/spf13/cobra"
 	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/runtime"
 )
+
+func parseSkillRefs(values []string) ([]protocol.ResourceRef, error) {
+	if len(values) > protocol.MaxInputSkills {
+		return nil, protocol.E("invalid_params", "at most 8 --skill references")
+	}
+	var refs []protocol.ResourceRef
+	for _, value := range values {
+		id, version, ok := strings.Cut(value, "@")
+		digest, err := hex.DecodeString(version)
+		if !ok || id == "" || len(id) > 128 || err != nil || len(digest) != 32 {
+			return nil, protocol.E("invalid_params", "use --skill RESOURCE@VERSION with an exact SHA-256 version")
+		}
+		refs = append(refs, protocol.ResourceRef{ID: id, Version: version})
+	}
+	return refs, nil
+}
 
 func (a *app) resourceCommands(root *cobra.Command) {
 	cmd := &cobra.Command{Use: "resource", Short: "Publish and read versioned skill/prompt resources"}

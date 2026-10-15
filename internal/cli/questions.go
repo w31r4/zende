@@ -26,17 +26,23 @@ func (a *app) questionCommands(root *cobra.Command) {
 	cmd.AddCommand(ask)
 	var answerFile string
 	var images []string
-	answer := &cobra.Command{Use: "answer AGENT QUESTION [TEXT]", Short: "Save an answer (up to 1 MiB) and optional image references", Args: cobra.RangeArgs(2, 3), RunE: func(cmd *cobra.Command, args []string) error {
-		text, err := readInput(cmd, args[2:], answerFile, len(images) == 0)
+	var skillValues []string
+	answer := &cobra.Command{Use: "answer AGENT QUESTION [TEXT]", Short: "Save an answer (up to 1 MiB), images and selected skill versions", Args: cobra.RangeArgs(2, 3), RunE: func(cmd *cobra.Command, args []string) error {
+		text, err := readInput(cmd, args[2:], answerFile, len(images) == 0 && len(skillValues) == 0)
 		if err != nil {
 			return err
 		}
-		return a.call(cmd, "question.answer", true, protocol.AnswerQuestion{AgentID: args[0], ID: args[1], Answer: text, Attachments: images})
+		skills, err := parseSkillRefs(skillValues)
+		if err != nil {
+			return err
+		}
+		return a.call(cmd, "question.answer", true, protocol.AnswerQuestion{AgentID: args[0], ID: args[1], Answer: text, Attachments: images, Skills: skills})
 	}}
 	answer.Flags().StringVar(&answerFile, "file", "", "Read answer from file, or - for stdin")
 	answer.Flags().StringArrayVar(&images, "image", nil, "Imported image ID (repeatable)")
+	answer.Flags().StringArrayVar(&skillValues, "skill", nil, "Published RESOURCE@VERSION (repeatable)")
 	cmd.AddCommand(answer)
-	cmd.AddCommand(&cobra.Command{Use: "inspect AGENT QUESTION", Short: "Read the question, answer, image references and delivery cursor", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+	cmd.AddCommand(&cobra.Command{Use: "inspect AGENT QUESTION", Short: "Read a saved answer, resource references and delivery cursor", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		return a.call(cmd, "question.inspect", false, protocol.QuestionTarget{AgentID: args[0], ID: args[1]})
 	}})
 	var after, state string

@@ -52,6 +52,12 @@ func (p *Transcript) viewRows(width, rows, scroll int, fold bool, overrides map[
 				}
 				text += fmt.Sprintf("[img %d]", len(entry.Attachments))
 			}
+			if len(entry.Skills) > 0 {
+				if text != "" {
+					text += "\n"
+				}
+				text += fmt.Sprintf("[skill %d]", len(entry.Skills))
+			}
 		case "assistant":
 			switch entry.Category {
 			case "commentary":

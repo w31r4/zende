@@ -116,15 +116,21 @@ func (a *app) command() *cobra.Command {
 	agent.AddCommand(create)
 	var submitFile string
 	var submitImages []string
+	var submitSkills []string
 	submit := &cobra.Command{Use: "submit AGENT [TEXT]", Short: "Durably accept a task input", Args: cobra.RangeArgs(1, 2), RunE: func(cmd *cobra.Command, args []string) error {
-		input, err := readInput(cmd, args[1:], submitFile, len(submitImages) == 0)
+		input, err := readInput(cmd, args[1:], submitFile, len(submitImages) == 0 && len(submitSkills) == 0)
 		if err != nil {
 			return err
 		}
-		return a.call(cmd, "agent.submit", true, protocol.Submit{AgentID: args[0], Input: input, Attachments: submitImages})
+		skills, err := parseSkillRefs(submitSkills)
+		if err != nil {
+			return err
+		}
+		return a.call(cmd, "agent.submit", true, protocol.Submit{AgentID: args[0], Input: input, Attachments: submitImages, Skills: skills})
 	}}
 	submit.Flags().StringVar(&submitFile, "file", "", "Read text from file, or - for stdin")
 	submit.Flags().StringArrayVar(&submitImages, "image", nil, "Imported image ID (repeatable); bytes remain in profile storage")
+	submit.Flags().StringArrayVar(&submitSkills, "skill", nil, "Published RESOURCE@VERSION (repeatable); use the exact selected instructions")
 	agent.AddCommand(submit)
 	for _, action := range []string{"stop", "resume"} {
 		short := "Cancel the current task and pause this Agent; background processes continue"

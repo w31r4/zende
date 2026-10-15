@@ -47,16 +47,16 @@ func commandToken(c Composer) (query string, start int, ok bool) {
 		return "", 0, false
 	}
 	token := text[start:]
-	if !strings.HasPrefix(token, "/") {
+	if !strings.HasPrefix(token, "/") && !strings.HasPrefix(token, "$") {
 		return "", 0, false
 	}
-	return token[1:], start, true
+	return token, start, true
 }
 
 func paletteQuery(c Composer) (query string, start int, entry string, ok bool) {
 	text := c.Value()
 	trimmed := strings.TrimLeftFunc(text, unicode.IsSpace)
-	for _, name := range []string{"commentary", "image-use", "image-remove", "answer", "answer-clear"} {
+	for _, name := range []string{"commentary", "image-use", "image-remove", "answer", "answer-clear", "skill", "skill-remove"} {
 		if rest, match := strings.CutPrefix(trimmed, "/"+name); match && len(rest) > 0 && c.atEnd() {
 			r, _ := utf8.DecodeRuneInString(rest)
 			if unicode.IsSpace(r) {
@@ -65,6 +65,12 @@ func paletteQuery(c Composer) (query string, start int, entry string, ok bool) {
 		}
 	}
 	query, start, ok = commandToken(c)
+	if ok {
+		if strings.HasPrefix(query, "$") {
+			return query[1:], start, "skill", true
+		}
+		query = query[1:]
+	}
 	return query, start, "", ok
 }
 
@@ -89,6 +95,24 @@ func (m *Shell) syncPaletteKey() {
 		return
 	}
 	p := commandPalette{query: query, start: start, entry: entry}
+	if entry == "skill" || entry == "skill-remove" {
+		c, _ := lookupCommand(entry)
+		items := m.skills
+		if entry == "skill-remove" {
+			items = m.editDraft().skills
+		}
+		for _, skill := range items {
+			if strings.Contains(strings.ToLower(skill.Name+" "+skill.Description+" "+skill.Source), strings.ToLower(query)) {
+				args := []string{skill.ID}
+				if entry == "skill" {
+					args = append(args, skill.Version)
+				}
+				p.items = append(p.items, paletteItem{command: c, args: args, title: "$" + imageName(skill.Name) + m.theme.separator() + imageName(skill.Source)})
+			}
+		}
+		m.palette = p
+		return
+	}
 	if entry == "answer" || entry == "answer-clear" {
 		c, _ := lookupCommand(entry)
 		for _, q := range m.questionOptions() {
@@ -151,13 +175,26 @@ func (m *Shell) syncPaletteKey() {
 	m.palette = p
 }
 
-func (m Shell) paletteActive() bool {
+func (m Shell) paletteMatches() bool {
 	query, start, entry, ok := paletteQuery(m.input)
-	return ok && query == m.palette.query && start == m.palette.start && entry == m.palette.entry && len(m.palette.items) > 0
+	return ok && query == m.palette.query && start == m.palette.start && entry == m.palette.entry
 }
+func (m Shell) paletteActive() bool { return m.paletteMatches() && len(m.palette.items) > 0 }
 
 func (m *Shell) paletteKey(key string) (bool, tea.Cmd) {
 	if !m.paletteActive() {
+		if m.paletteMatches() && (m.palette.entry == "skill" || m.palette.entry == "skill-remove") {
+			switch key {
+			case "esc":
+				m.palette = commandPalette{}
+				if m.commandDraft != nil {
+					m.restoreCommandDraft()
+				}
+				return true, nil
+			case "enter", "tab", "up", "down":
+				return true, nil
+			}
+		}
 		return false, nil
 	}
 	switch key {
@@ -194,6 +231,7 @@ func (m *Shell) chooseCandidate(index int, execute bool) tea.Cmd {
 		draft.SetValue(m.input.Value()[:m.palette.start])
 		draft.id, draft.revision = m.input.id, m.input.revision
 		draft.images = append([]protocol.Attachment(nil), m.input.images...)
+		draft.skills = append([]protocol.ResourceInfo(nil), m.input.skills...)
 		m.commandDraft = &draft
 		m.input = NewComposer()
 		m.input.SetWidth(m.width)
@@ -210,6 +248,9 @@ func (m *Shell) chooseCandidate(index int, execute bool) tea.Cmd {
 	if c.usage != "" && len(c.args) == 0 {
 		m.input.InsertString(" ")
 		m.syncPalette(tea.KeyPressMsg{})
+	}
+	if m.palette.entry == "skill" {
+		return m.loadSkills(false)
 	}
 	return nil
 }

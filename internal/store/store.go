@@ -15,7 +15,7 @@ import (
 	"zende.local/harness/internal/protocol"
 )
 
-const SchemaVersion = 5
+const SchemaVersion = 6
 
 type Store struct{ db *sql.DB }
 
@@ -90,7 +90,12 @@ PRAGMA user_version=2;`); err != nil {
 				return err
 			}
 		}
-		_, err := tx.Exec(resourceSchema)
+		if version < 5 {
+			if _, err := tx.Exec(resourceSchema); err != nil {
+				return err
+			}
+		}
+		_, err := tx.Exec(skillInputSchema)
 		return err
 	})
 }
@@ -233,15 +238,26 @@ func (s *Store) Create(ctx context.Context, req protocol.Request, p protocol.Cre
 }
 
 func createTask(ctx context.Context, tx *sql.Tx, agent, input string, attachments ...string) (protocol.Task, error) {
+	return createTaskWithSkills(ctx, tx, agent, input, nil, attachments)
+}
+
+func createTaskWithSkills(ctx context.Context, tx *sql.Tx, agent, input string, skills []protocol.ResourceRef, attachments []string) (protocol.Task, error) {
 	if err := validateAttachments(ctx, tx, agent, attachments); err != nil {
 		return protocol.Task{}, err
 	}
-	t := protocol.Task{ID: protocol.NewID("task"), AgentID: agent, State: "accepted", Input: input, Attachments: append([]string(nil), attachments...)}
+	if _, err := selectedSkills(ctx, tx, agent, skills); err != nil {
+		return protocol.Task{}, err
+	}
+	t := protocol.Task{ID: protocol.NewID("task"), AgentID: agent, State: "accepted", Input: input, Attachments: append([]string(nil), attachments...), Skills: append([]protocol.ResourceRef(nil), skills...)}
 	refs, err := json.Marshal(t.Attachments)
 	if err != nil {
 		return protocol.Task{}, err
 	}
-	_, err = tx.ExecContext(ctx, "INSERT INTO tasks(id,agent_id,state,input,attachments) VALUES(?,?,?,?,?)", t.ID, agent, t.State, input, string(refs))
+	skillRefs, err := json.Marshal(t.Skills)
+	if err != nil {
+		return protocol.Task{}, err
+	}
+	_, err = tx.ExecContext(ctx, "INSERT INTO tasks(id,agent_id,state,input,attachments,skills) VALUES(?,?,?,?,?,?)", t.ID, agent, t.State, input, string(refs), string(skillRefs))
 	if err == nil {
 		_, err = appendEvent(ctx, tx, agent, t.ID, "task.accepted", t)
 	}
@@ -249,8 +265,8 @@ func createTask(ctx context.Context, tx *sql.Tx, agent, input string, attachment
 }
 
 func (s *Store) Submit(ctx context.Context, req protocol.Request, p protocol.Submit, maxAgents int) (protocol.Accepted, error) {
-	if p.Input == "" && len(p.Attachments) == 0 {
-		return protocol.Accepted{}, protocol.E("invalid_params", "input or images are required")
+	if p.Input == "" && len(p.Attachments) == 0 && len(p.Skills) == 0 {
+		return protocol.Accepted{}, protocol.E("invalid_params", "input, images or skills are required")
 	}
 	return s.accept(ctx, req, func(tx *sql.Tx) (protocol.Accepted, error) {
 		var state string
@@ -268,7 +284,7 @@ func (s *Store) Submit(ctx context.Context, req protocol.Request, p protocol.Sub
 		if err := checkCapacity(ctx, tx, p.AgentID, maxAgents); err != nil {
 			return protocol.Accepted{}, err
 		}
-		task, err := createTask(ctx, tx, p.AgentID, p.Input, p.Attachments...)
+		task, err := createTaskWithSkills(ctx, tx, p.AgentID, p.Input, p.Skills, p.Attachments)
 		if err == nil && paused && state != "unknown" {
 			// Explicit new input takes precedence over the existing queue when
 			// waking a manually paused Agent. It never revives the old Task.
@@ -325,7 +341,7 @@ func (s *Store) Snapshot(ctx context.Context, id string) (protocol.Snapshot, err
 		}
 		snap.Cursor = a.Seq
 		snap.Tasks = []protocol.Task{}
-		rows, err := tx.QueryContext(ctx, "SELECT id,agent_id,state,input,result,attachments FROM tasks WHERE agent_id=? ORDER BY rowid", id)
+		rows, err := tx.QueryContext(ctx, "SELECT id,agent_id,state,input,result,attachments,skills FROM tasks WHERE agent_id=? ORDER BY rowid", id)
 		if err != nil {
 			return err
 		}

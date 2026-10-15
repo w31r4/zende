@@ -50,6 +50,8 @@ type questionProbe struct{ reply chan questionUIState }
 type questionUIState struct {
 	text, held, active, main string
 	images                   []string
+	skills                   []protocol.ResourceRef
+	skillChoices             int
 	questions                int
 	pending, loading, ready  bool
 }
@@ -79,6 +81,10 @@ func startQuestionTerminal(t *testing.T, client Client, agent string) questionTe
 				current := model.(Shell)
 				state := questionUIState{text: current.input.Value(), active: current.activeQuestion, images: current.editDraft().imageIDs(),
 					questions: len(current.questions), pending: current.pending != nil, loading: len(current.imageLoads) > 0, ready: current.connected && current.haveSnapshot}
+				state.skills = current.editDraft().skillRefs()
+				if current.paletteActive() && current.palette.entry == "skill" {
+					state.skillChoices = len(current.palette.items)
+				}
 				if current.commandDraft != nil {
 					state.held = current.commandDraft.Value()
 				}
@@ -140,7 +146,7 @@ func startQuestionTerminal(t *testing.T, client Client, agent string) questionTe
 	return questionTerminal{program: program, write: write, paste: func(s string) { write("\x1b[200~" + s + "\x1b[201~") }, wait: wait, finish: finish}
 }
 
-func TestRealTerminalQuestionReconnectAndImageAnswer(t *testing.T) {
+func TestRealTerminalQuestionReconnectImageAndPinnedSkills(t *testing.T) {
 	dir, err := os.MkdirTemp("/tmp", "zende-question-ui-")
 	if err != nil {
 		t.Fatal(err)
@@ -165,14 +171,19 @@ func TestRealTerminalQuestionReconnectAndImageAnswer(t *testing.T) {
 	}
 	const answer = "这张图片\n中文 é 🙂 "
 	received := make(chan model.Request, 1)
-	script := fixture.New(fixture.Step{Events: fixture.Call("ask", "fixture_question", "{}")},
+	script := fixture.New(fixture.Step{Events: fixture.Call("ask", "fixture_question", "{}"), Check: func(req model.Request) error {
+		if len(req.Messages) != 1 || req.Messages[0].Role != "user" || len(req.Messages[0].Content) != 1 || !strings.Contains(req.Messages[0].Content[0].Text, "ORIGINAL instructions") || strings.Contains(req.Messages[0].Content[0].Text, "UPDATED instructions") {
+			return fmt.Errorf("main skill selection did not pin its original user-role body")
+		}
+		return nil
+	}},
 		fixture.Step{Events: fixture.Answer("final", "question fixture complete"), Check: func(req model.Request) error {
 			if len(req.Messages) != 4 || req.Messages[2].Role != "tool" || req.Messages[3].Role != "user" {
 				return fmt.Errorf("answer did not follow completed tool result")
 			}
 			content := req.Messages[3].Content
-			if len(content) != 2 || !strings.Contains(content[0].Text, answer) || content[1].Type != "image" || !bytes.Equal(req.Images[content[1].Attachment].Data, encoded.Bytes()) {
-				return fmt.Errorf("answer or retained image bytes changed")
+			if len(content) != 3 || !strings.Contains(content[0].Text, answer) || content[1].Type != "image" || !bytes.Equal(req.Images[content[1].Attachment].Data, encoded.Bytes()) || !strings.Contains(content[2].Text, "UPDATED instructions") {
+				return fmt.Errorf("answer, retained image bytes or selected skill changed")
 			}
 			received <- req
 			return nil
@@ -207,12 +218,39 @@ func TestRealTerminalQuestionReconnectAndImageAnswer(t *testing.T) {
 		}
 	})
 	client := protocol.Client{Socket: filepath.Join(dir, "core.sock")}
-	req, _ := protocol.NewRequest("agent.create", "initial", protocol.CreateAgent{Cwd: dir, Input: "ask user"})
+	req, _ := protocol.NewRequest("agent.create", "initial", protocol.CreateAgent{Cwd: dir})
 	var created protocol.Accepted
 	if err := client.Call(coreCtx, req, &created); err != nil {
 		t.Fatal(err)
 	}
+	skillDir := filepath.Join(dir, "skill")
+	if err := os.Mkdir(skillDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	skillPath := filepath.Join(skillDir, "SKILL.md")
+	publish := func(body string) protocol.ResourceInfo {
+		t.Helper()
+		if err := os.WriteFile(skillPath, []byte("---\nname: local-review\ndescription: Terminal test\n---\n"+body), 0600); err != nil {
+			t.Fatal(err)
+		}
+		r, _ := protocol.NewRequest("resource.register", protocol.NewID("publish"), protocol.RegisterResource{AgentID: created.AgentID, Kind: "skill", Path: skillPath})
+		var a protocol.Accepted
+		if err := client.Call(coreCtx, r, &a); err != nil || a.Resource == nil {
+			t.Fatal(a, err)
+		}
+		return *a.Resource
+	}
+	original := publish("ORIGINAL instructions")
 	first := startQuestionTerminal(t, client, created.AgentID)
+	first.wait(func(s questionUIState) bool { return s.ready })
+	first.write("$local-review")
+	first.wait(func(s questionUIState) bool { return s.skillChoices == 1 })
+	first.write("\r")
+	first.wait(func(s questionUIState) bool {
+		return s.text == "" && len(s.skills) == 1 && s.skills[0].Version == original.Version
+	})
+	updated := publish("UPDATED instructions")
+	first.write("\r")
 	first.wait(func(s questionUIState) bool { return s.ready && s.questions == 1 })
 	first.finish()
 	snapshot, err := s.Snapshot(coreCtx, created.AgentID)
@@ -227,6 +265,12 @@ func TestRealTerminalQuestionReconnectAndImageAnswer(t *testing.T) {
 	second.write("/answer\r")
 	second.wait(func(s questionUIState) bool { return s.active == questionID && s.main == mainDraft && s.text == "" })
 	second.paste(answer)
+	second.write("$local-review")
+	second.wait(func(s questionUIState) bool { return s.skillChoices == 1 })
+	second.write("\r")
+	second.wait(func(s questionUIState) bool {
+		return s.text == answer && len(s.skills) == 1 && s.skills[0].Version == updated.Version
+	})
 	second.write("/image\t")
 	second.wait(func(s questionUIState) bool { return s.text == "/image " && s.held == answer })
 	second.paste("'" + path + "'")
@@ -234,6 +278,9 @@ func TestRealTerminalQuestionReconnectAndImageAnswer(t *testing.T) {
 	state := second.wait(func(s questionUIState) bool { return s.text == answer && !s.loading && len(s.images) == 1 })
 	imageID := state.images[0]
 	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(skillPath); err != nil {
 		t.Fatal(err)
 	}
 	second.write("\r")
@@ -262,6 +309,9 @@ func TestRealTerminalQuestionReconnectAndImageAnswer(t *testing.T) {
 	q, err := s.Question(coreCtx, protocol.QuestionTarget{AgentID: created.AgentID, ID: questionID})
 	if err != nil || q.Answer != answer || q.DeliveredSeq == 0 || !reflect.DeepEqual(q.Attachments, []string{imageID}) || len(snapshot.Tasks) != 1 || len(script.Requests()) != 2 {
 		t.Fatal("answer created another task, lost data or repeated model work", q, err)
+	}
+	if len(q.Skills) != 1 || q.Skills[0].Version != updated.Version || len(snapshot.Tasks[0].Skills) != 1 || snapshot.Tasks[0].Skills[0].Version != original.Version {
+		t.Fatal("durable skill versions lost")
 	}
 	events, err := s.Events(coreCtx, protocol.Cursor{AgentID: created.AgentID, Limit: 1000})
 	if err != nil {

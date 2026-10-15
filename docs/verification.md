@@ -393,6 +393,26 @@ go test -race ./internal/render -run 'TestQuestion|TestRealTerminalQuestion' -co
 
 使用隔离临时目录和数据库，未安装外部 skill、执行包内脚本或访问模型服务。尚未验证目录自动监测、安装期间半写文件的稳定判定、模型请求级目录刷新和 TUI `$`，这些仍在后续实现范围。说明按 trim-cn-tech-doc 合并操作步骤，保留限额、来源版本和失败条件。
 
+## 2026-10-15：Skill 选择与固定版本输入
+
+5.7 已完成，累计 30/68 项。`$`、`/skill` 和点击共用命令入口，主输入与回答复用草稿组件。schema 6 保存用户选中的 skill 版本；正文在输入实际投递时以 user 消息追加。全量 `go test ./...`、`go test -race ./...` 通过，相关用例在 race 下连续 3 次通过。
+
+| 验证 | 入口 | 结果 |
+| --- | --- | --- |
+| 固定版本与迁移 | `TestSkillInputPinsPublishedVersionAcrossQueueAndRestart`、`TestSchemaFiveMigrationPreservesInputAndResources` | 排队、更新目录和重开后仍使用原正文及来源；5→6 保留旧输入、回答，新增引用受不可变约束保护 |
+| 回答与回滚 | `TestSkillOnlyAnswerSurvivesRestartAndDeliveryRollback`、`TestSkillInputValidationAndAcceptanceRollback` | 显式用户选择允许 disable-model-invocation；纯 skill 回答可投递，失败完整回滚，重试只追加一次；跨 Agent、缺失版本、重复/超量及 prompt 冒充 skill 均拒绝 |
+| 元数据目录 | `TestSkillCatalogMetadataOnlyGenerationPaginationAndBounds`、`TestSkillCatalogBehindEventCursorStopsAutomaticRetry` | 只读元数据；分页代次不一致重读，非法顺序/游标/版本拒绝；持续变化或落后事件最多自动尝试 3 次 |
+| 草稿与布局 | `TestSkillPickerPreservesTextImagesAndSelectionUsesNoIO`、`TestSkillOnlyMainAndAnswerLateAcceptance`、`TestSkillLayoutRemainsBoundedAndEveryTargetUsesRegistry` | 选择只改原草稿，保留中文多行和图片；迟到回执不清除新编辑；80×24、60×24、48×16 与三种颜色能力下输入/候选/状态互不覆盖 |
+| 刷新、粘贴与历史 | `TestSkillRefreshKeepsSelectedVersionAndIgnoresOldAttempt`、`TestSkillPickerLoadingEmptyEscapePasteAndLateReplies`、`TestSkillTranscriptReferencesAreBoundedAndValidated` | 目录更新不替换已选版本；旧回执不重开候选，空候选不误发送，粘贴保持文本；引用计入显示预算，非法事件不推进游标 |
+| CLI | `TestResourceCLIUsesDurableVersionedCore`、`TestSkillFlagRequiresExactVersion` | Unix socket 提交任务/回答的确切版本；源文件删除后仍使用保存正文，非法 `--skill` 拒绝 |
+| 真实终端 | `TestRealTerminalQuestionReconnectImageAndPinnedSkills` | 扩展原提问终端用例：48×16 PTY 中用键盘选择旧版，更新目录后提交仍用旧版；关闭/接回后回答选择新版并附图片，删除两种源文件后原 Task 完成，termios/alt screen/鼠标恢复 |
+
+```sh
+go test -race ./internal/render ./internal/store ./internal/cli -run 'Skill|SchemaFive|ResourceCLI|RealTerminalQuestion' -count=3 -timeout=90s
+```
+
+首轮新增测试修正了夹具用法：回答回执须带 Task ID，内联参数命令先 Tab，CLI 问题文本使用位置参数。PTY 夹具把 skill 放在独立目录，避免将测试 socket 当成包文件；特殊文件拒绝规则保持。按 tui-design 复用下方候选与按需选择行，按 trim-cn-tech-doc 合并操作说明，保留版本、限额和恢复条件。模型使用 fixture，未访问外部服务；自动发现、目录监测和模型请求级通知仍待第 7 组实现。
+
 ## 进行中
 
-继续 5.7 的真实 `$` skill 目录及版本选择；资源后端已提供显式发布与读取，图片和提问均已接入核心、CLI 与 TUI。会话复制依赖第 6、9 组；协作常驻提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成。
+下一项为 5.8：配置驱动的模型选择、目录浏览和 Git 状态。会话复制依赖第 6、9 组；协作提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成。

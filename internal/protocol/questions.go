@@ -17,8 +17,9 @@ type QuestionInfo struct {
 
 type Question struct {
 	QuestionInfo
-	Answer      string   `json:"answer,omitempty"`
-	Attachments []string `json:"attachments,omitempty"`
+	Answer      string        `json:"answer,omitempty"`
+	Attachments []string      `json:"attachments,omitempty"`
+	Skills      []ResourceRef `json:"skills,omitempty"`
 }
 
 type AskQuestion struct {
@@ -33,10 +34,11 @@ type QuestionTarget struct {
 }
 
 type AnswerQuestion struct {
-	AgentID     string   `json:"agent_id"`
-	ID          string   `json:"question_id"`
-	Answer      string   `json:"answer"`
-	Attachments []string `json:"attachments,omitempty"`
+	AgentID     string        `json:"agent_id"`
+	ID          string        `json:"question_id"`
+	Answer      string        `json:"answer"`
+	Attachments []string      `json:"attachments,omitempty"`
+	Skills      []ResourceRef `json:"skills,omitempty"`
 }
 
 type QuestionList struct {

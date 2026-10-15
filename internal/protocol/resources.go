@@ -5,7 +5,14 @@ const (
 	MaxResourceBytes     = 8 << 20
 	MaxResourceFiles     = 256
 	MaxInstructionBytes  = 128 << 10
+	MaxInputSkills       = 8
 )
+
+// ResourceRef pins content; publication of a new version never retargets it.
+type ResourceRef struct {
+	ID      string `json:"resource_id"`
+	Version string `json:"version"`
+}
 
 // IDs identify a source within a profile; versions identify its immutable bytes.
 type ResourceInfo struct {

@@ -14,9 +14,9 @@ type hitTarget struct {
 }
 
 type frame struct {
-	body, candidates []string
-	status, images   string
-	targets          []hitTarget
+	body, candidates       []string
+	status, images, skills string
+	targets                []hitTarget
 }
 
 // One pure layout supplies both rendering and cell-based hit testing. Wrapping,
@@ -44,11 +44,27 @@ func (m Shell) layout() frame {
 			f.targets = append(f.targets, hitTarget{x: 0, y: y, width: ansi.StringWidth(line), call: invocation{name: c.name, args: c.args}, candidate: i})
 			f.candidates = append(f.candidates, line)
 		}
+	} else if m.paletteMatches() && (m.palette.entry == "skill" || m.palette.entry == "skill-remove") {
+		line := "No matching skills"
+		if m.palette.entry == "skill" {
+			if m.skillsWaiting {
+				line = "..."
+			} else if !m.skillsReady {
+				line = "/skill to retry"
+			} else if len(m.skills) == 0 {
+				line = "No skills · resource register"
+			}
+		}
+		f.candidates = []string{ansi.Truncate(line, m.width, "...")}
 	}
 	issues := m.issues.lines(m.width, min(5, m.height/3))
 	rows := m.height - 3 - len(f.candidates) - len(issues)
 	f.images = m.imageStrip()
 	if f.images != "" {
+		rows--
+	}
+	f.skills = m.skillStrip()
+	if f.skills != "" {
 		rows--
 	}
 	switch {
@@ -84,6 +100,13 @@ func (m Shell) layout() frame {
 	f.body = append(f.body, issues...)
 	if f.images != "" {
 		f.targets = append(f.targets, hitTarget{x: 0, y: len(f.body), width: ansi.StringWidth(f.images), call: invocation{name: "images"}, candidate: -1})
+	}
+	if f.skills != "" {
+		y := len(f.body)
+		if f.images != "" {
+			y++
+		}
+		f.targets = append(f.targets, hitTarget{x: 0, y: y, width: ansi.StringWidth(f.skills), call: invocation{name: "skill-remove"}, candidate: -1})
 	}
 	for i := range f.body {
 		f.body[i] = ansi.Truncate(f.body[i], m.width, "...")

@@ -32,7 +32,7 @@ PRAGMA user_version=4;
 `
 
 const questionInfoColumns = "id,agent_id,task_id,prompt,state,delivered_seq"
-const questionColumns = questionInfoColumns + ",answer,attachments"
+const questionColumns = questionInfoColumns + ",answer,attachments,skills"
 
 func scanQuestionInfo(row scanner) (protocol.QuestionInfo, error) {
 	var q protocol.QuestionInfo
@@ -42,13 +42,16 @@ func scanQuestionInfo(row scanner) (protocol.QuestionInfo, error) {
 
 func scanQuestion(row scanner) (protocol.Question, error) {
 	var q protocol.Question
-	var refs string
-	err := row.Scan(&q.ID, &q.AgentID, &q.TaskID, &q.Prompt, &q.State, &q.DeliveredSeq, &q.Answer, &refs)
+	var refs, skills string
+	err := row.Scan(&q.ID, &q.AgentID, &q.TaskID, &q.Prompt, &q.State, &q.DeliveredSeq, &q.Answer, &refs, &skills)
 	if errors.Is(err, sql.ErrNoRows) {
 		return q, protocol.E("not_found", "question not found in this Agent")
 	}
 	if err == nil {
 		err = json.Unmarshal([]byte(refs), &q.Attachments)
+	}
+	if err == nil {
+		err = json.Unmarshal([]byte(skills), &q.Skills)
 	}
 	return q, err
 }
@@ -85,8 +88,8 @@ func (s *Store) Question(ctx context.Context, p protocol.QuestionTarget) (protoc
 
 func (s *Store) AnswerQuestion(ctx context.Context, req protocol.Request, p protocol.AnswerQuestion) (protocol.Accepted, error) {
 	return s.accept(ctx, req, func(tx *sql.Tx) (protocol.Accepted, error) {
-		if !utf8.ValidString(p.Answer) || len(p.Answer) > protocol.MaxAnswerBytes || strings.TrimSpace(p.Answer) == "" && len(p.Attachments) == 0 {
-			return protocol.Accepted{}, protocol.E("invalid_params", "answer requires text or images; UTF-8 text is limited to 1 MiB")
+		if !utf8.ValidString(p.Answer) || len(p.Answer) > protocol.MaxAnswerBytes || strings.TrimSpace(p.Answer) == "" && len(p.Attachments) == 0 && len(p.Skills) == 0 {
+			return protocol.Accepted{}, protocol.E("invalid_params", "answer requires text, images or skills; UTF-8 text is limited to 1 MiB")
 		}
 		q, err := scanQuestion(tx.QueryRowContext(ctx, "SELECT "+questionColumns+" FROM questions WHERE agent_id=? AND id=?", p.AgentID, p.ID))
 		if err != nil {
@@ -106,6 +109,9 @@ func (s *Store) AnswerQuestion(ctx context.Context, req protocol.Request, p prot
 		if err := validateAttachments(ctx, tx, q.AgentID, p.Attachments); err != nil {
 			return protocol.Accepted{}, err
 		}
+		if _, err := selectedSkills(ctx, tx, q.AgentID, p.Skills); err != nil {
+			return protocol.Accepted{}, err
+		}
 		if len(p.Attachments) > 0 {
 			var raw string
 			err := tx.QueryRowContext(ctx, "SELECT payload FROM events WHERE agent_id=? AND task_id=? AND kind='task.config' ORDER BY seq DESC LIMIT 1", q.AgentID, q.TaskID).Scan(&raw)
@@ -123,10 +129,15 @@ func (s *Store) AnswerQuestion(ctx context.Context, req protocol.Request, p prot
 		if err != nil {
 			return protocol.Accepted{}, err
 		}
-		if _, err := tx.ExecContext(ctx, "UPDATE questions SET state='answered',answer=?,attachments=? WHERE id=?", p.Answer, string(refs), q.ID); err != nil {
+		skillRefs, err := json.Marshal(p.Skills)
+		if err != nil {
+			return protocol.Accepted{}, err
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE questions SET state='answered',answer=?,attachments=?,skills=? WHERE id=?", p.Answer, string(refs), string(skillRefs), q.ID); err != nil {
 			return protocol.Accepted{}, err
 		}
 		q.State, q.Answer, q.Attachments = "answered", p.Answer, append([]string(nil), p.Attachments...)
+		q.Skills = append([]protocol.ResourceRef(nil), p.Skills...)
 		if _, err := appendEvent(ctx, tx, q.AgentID, q.TaskID, "question.answered", q); err != nil {
 			return protocol.Accepted{}, err
 		}
@@ -244,7 +255,12 @@ func deliverAnswers(ctx context.Context, tx *sql.Tx, qs []protocol.Question) err
 		for _, id := range q.Attachments {
 			content = append(content, model.Block{Type: "image", Attachment: id})
 		}
-		event, err := appendEvent(ctx, tx, q.AgentID, q.TaskID, "context.message", ContextMessage{QuestionID: q.ID, Message: model.Message{Role: "user", Content: content}})
+		skills, err := selectedSkills(ctx, tx, q.AgentID, q.Skills)
+		if err != nil {
+			return err
+		}
+		content = append(content, skills...)
+		event, err := appendEvent(ctx, tx, q.AgentID, q.TaskID, "context.message", ContextMessage{QuestionID: q.ID, Resources: q.Skills, Message: model.Message{Role: "user", Content: content}})
 		if err != nil {
 			return err
 		}

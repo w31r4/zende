@@ -118,6 +118,33 @@ func TestResourceCLIUsesDurableVersionedCore(t *testing.T) {
 	if err := json.Unmarshal(run("resource", "read", created.AgentID, id), &content); err != nil || !strings.Contains(content.Text, "Updated") {
 		t.Fatal(content, err)
 	}
+	// CLI selection pins the original, now filesystem-independent body.
+	var submitted protocol.Accepted
+	if err := json.Unmarshal(run("agent", "submit", created.AgentID, "--skill", id+"@"+version), &submitted); err != nil {
+		t.Fatal(err)
+	}
+	work, err := s.ClaimNext(ctx, created.AgentID)
+	if err != nil || work == nil || work.Task.ID != submitted.TaskID || len(work.Task.Skills) != 1 || work.Task.Skills[0].Version != version {
+		t.Fatal(work, err)
+	}
+	var asked protocol.Accepted
+	if err := json.Unmarshal(run("question", "ask", created.AgentID, "--task", work.Task.ID, "Which instructions?"), &asked); err != nil {
+		t.Fatal(err)
+	}
+	run("question", "answer", created.AgentID, asked.QuestionID, "--skill", id+"@"+version)
+	if ready, err := s.QuestionBarrier(ctx, created.AgentID, work.Task.ID); err != nil || !ready {
+		t.Fatal(ready, err)
+	}
+	messages, _, err := s.ModelContext(ctx, created.AgentID)
+	if err != nil || len(messages) != 2 {
+		t.Fatal(messages, err)
+	}
+	for _, message := range messages {
+		last := message.Content[len(message.Content)-1]
+		if message.Role != "user" || !strings.Contains(last.Text, "Original complete instructions.") || strings.Contains(last.Text, "Updated") {
+			t.Fatal(message)
+		}
+	}
 	for _, action := range []string{"register", "refresh", "status", "read", "list"} {
 		if !bytes.Contains(run("resource", action, "--help"), []byte("Usage:")) {
 			t.Fatal("missing help", action)
@@ -135,6 +162,18 @@ func TestResourceCLIUsesDurableVersionedCore(t *testing.T) {
 	defer other.Close()
 	if _, err := other.Resources(ctx, protocol.ResourceList{AgentID: created.AgentID}); err == nil {
 		t.Fatal("profile catalog leaked")
+	}
+}
+
+func TestSkillFlagRequiresExactVersion(t *testing.T) {
+	for _, values := range [][]string{{"name"}, {"id@latest"}, {"id@"}, {"@" + strings.Repeat("a", 64)}, make([]string, protocol.MaxInputSkills+1)} {
+		if _, err := parseSkillRefs(values); err == nil {
+			t.Fatal("invalid selection accepted", values)
+		}
+	}
+	refs, err := parseSkillRefs([]string{"id@" + strings.Repeat("a", 64)})
+	if err != nil || len(refs) != 1 || refs[0].ID != "id" {
+		t.Fatal(refs, err)
 	}
 }
 

@@ -15,9 +15,10 @@ type Work struct {
 	Task  protocol.Task
 }
 type ContextMessage struct {
-	RequestID  string        `json:"request_id,omitempty"`
-	QuestionID string        `json:"question_id,omitempty"`
-	Message    model.Message `json:"message"`
+	RequestID  string                 `json:"request_id,omitempty"`
+	QuestionID string                 `json:"question_id,omitempty"`
+	Message    model.Message          `json:"message"`
+	Resources  []protocol.ResourceRef `json:"resources,omitempty"`
 }
 
 func (s *Store) ReadyAgents(ctx context.Context) ([]string, error) {
@@ -51,7 +52,7 @@ func (s *Store) ClaimNext(ctx context.Context, id string) (*Work, error) {
 		if err != nil {
 			return err
 		}
-		*t, err = scanTask(tx.QueryRowContext(ctx, `SELECT id,agent_id,state,input,result,attachments FROM tasks WHERE agent_id=? AND state='accepted' ORDER BY priority DESC,rowid LIMIT 1`, id))
+		*t, err = scanTask(tx.QueryRowContext(ctx, `SELECT id,agent_id,state,input,result,attachments,skills FROM tasks WHERE agent_id=? AND state='accepted' ORDER BY priority DESC,rowid LIMIT 1`, id))
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -75,7 +76,12 @@ func (s *Store) ClaimNext(ctx context.Context, id string) (*Work, error) {
 		for _, ref := range t.Attachments {
 			content = append(content, model.Block{Type: "image", Attachment: ref})
 		}
-		if _, err := appendEvent(ctx, tx, id, t.ID, "context.message", ContextMessage{Message: model.Message{Role: "user", Content: content}}); err != nil {
+		skills, err := selectedSkills(ctx, tx, id, t.Skills)
+		if err != nil {
+			return err
+		}
+		content = append(content, skills...)
+		if _, err := appendEvent(ctx, tx, id, t.ID, "context.message", ContextMessage{Resources: t.Skills, Message: model.Message{Role: "user", Content: content}}); err != nil {
 			return err
 		}
 		work = w

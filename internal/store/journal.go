@@ -21,7 +21,7 @@ func (s *Store) TaskJournal(ctx context.Context, agent, task string, consume fun
 			}
 			return err
 		}
-		query := "SELECT id,agent_id,state,input,result,attachments FROM tasks WHERE agent_id=?"
+		query := "SELECT id,agent_id,state,input,result,attachments,skills FROM tasks WHERE agent_id=?"
 		args := []any{agent}
 		if task != "" {
 			query += " AND id=?"
