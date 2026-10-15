@@ -39,6 +39,8 @@ Zende 保持 exec、进程继续操作和 patch 的工具边界。Pi 的 read/ed
 
 版本 7 补充 `last:N`、继承预算和背景入口：默认读当前视图，仅设预算时选最近完整轮次，显式范围超预算报错。提示模型检查回执范围与估算，详细限额留给帮助及 [继承说明](./collaboration.md#继承)。继续按 Pi 的能力条件组合，旧 Task 的已存提示词不改。
 
+版本 8 补充显式 worktree 参数、提交检出与保留目录规则，以及未知创建使用原请求 ID 核实的入口。仍放在已注册 spawn 的短说明中，完整限制见 [Worktree](./collaboration.md#worktree)；旧 Task 的提示词不改。
+
 ## 输出分类
 
 只有 adapter 声明支持可靠原生类别时，才直接接受 commentary/final。其余接入要求以下独立行标记；控制行不带缩进或多余空格，正文保留 LF/CRLF：

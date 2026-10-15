@@ -39,7 +39,7 @@ func (s *Store) AcceptedRequest(ctx context.Context, req protocol.Request) (prot
 	var fingerprint, raw string
 	err = s.db.QueryRowContext(ctx, "SELECT fingerprint,result FROM operations WHERE id=?", req.OperationID).Scan(&fingerprint, &raw)
 	if errors.Is(err, sql.ErrNoRows) {
-		return protocol.Accepted{}, false, nil
+		return protocol.Accepted{}, false, worktreeFingerprint(ctx, s.db, req.OperationID, want)
 	}
 	if err != nil {
 		return protocol.Accepted{}, false, err

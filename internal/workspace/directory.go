@@ -1,5 +1,5 @@
-// Package workspace supplies read-only filesystem and Git projections. Clients
-// use these queries to browse; the runtime owns durable working-directory changes.
+// Package workspace supplies filesystem/Git queries and explicit worktree
+// creation. The runtime owns durable working-directory changes and operation IDs.
 package workspace
 
 import (

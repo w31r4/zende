@@ -18,43 +18,19 @@ import (
 // and the retry receipt together. cwd was checked by core against revision.
 func (s *Store) Spawn(ctx context.Context, req protocol.Request, p protocol.SpawnAgent, cwd string, revision int64, maxAgents, maxDepth int) (protocol.Accepted, error) {
 	return s.accept(ctx, req, func(tx *sql.Tx) (protocol.Accepted, error) {
-		if p.ParentID == "" || strings.TrimSpace(p.Input) == "" || len(p.Input) > 2<<20 || !utf8.ValidString(p.Input) || !filepath.IsAbs(cwd) {
-			return protocol.Accepted{}, protocol.E("invalid_params", "parent, task input (up to 2 MiB) and an absolute cwd are required")
-		}
-		settings, err := selection(ctx, tx, p.ParentID)
-		if err != nil {
-			return protocol.Accepted{}, err
-		}
-		if settings.Choice.Revision != revision {
-			return protocol.Accepted{}, protocol.E("selection_changed", "parent settings changed; retry spawn")
-		}
-		var state string
-		var cursor int64
-		if err := tx.QueryRowContext(ctx, "SELECT state,seq FROM agents WHERE id=?", p.ParentID).Scan(&state, &cursor); err != nil {
-			return protocol.Accepted{}, err
-		}
-		if state == "copying" || state == "archived" {
-			return protocol.Accepted{}, protocol.E("conflict", "parent is read-only")
-		}
-		source := protocol.SpawnSource{ParentID: p.ParentID, ParentCursor: cursor, Caller: p.Caller}
-		if err := spawnCaller(ctx, tx, &source); err != nil {
-			return protocol.Accepted{}, err
-		}
-		// Root is depth zero; each spawn adds one edge. No filesystem or process
-		// work occurs before capacity and ancestry checks have succeeded.
-		ancestor := p.ParentID
-		for depth := 1; ancestor != ""; depth++ {
-			if depth > maxDepth {
-				return protocol.Accepted{}, protocol.E("limit_exceeded", "agent recursion depth reached")
-			}
-			if err := tx.QueryRowContext(ctx, "SELECT coalesce(parent_id,'') FROM agents WHERE id=?", ancestor).Scan(&ancestor); err != nil {
+		var tree *protocol.Worktree
+		if p.Workspace == "worktree" {
+			r, err := worktreeRecord(ctx, tx, req.OperationID)
+			if err != nil {
 				return protocol.Accepted{}, err
 			}
+			if r == nil || r.Operation.State != "ready" || r.Operation.Workspace.Path != cwd || r.Operation.ParentID != p.ParentID {
+				return protocol.Accepted{}, protocol.E("worktree_pending", "workspace is not ready for child creation")
+			}
+			p = r.Params // preserve the first caller across a retry from another tool
+			tree = &r.Operation.Workspace
 		}
-		if err := checkCapacity(ctx, tx, "", maxAgents); err != nil {
-			return protocol.Accepted{}, err
-		}
-		entries, err := spawnContext(ctx, tx, p, &source)
+		settings, source, entries, err := prepareSpawn(ctx, tx, p, cwd, revision, maxAgents, maxDepth)
 		if err != nil {
 			return protocol.Accepted{}, err
 		}
@@ -128,7 +104,12 @@ func (s *Store) Spawn(ctx context.Context, req protocol.Request, p protocol.Spaw
 		if err != nil {
 			return protocol.Accepted{}, err
 		}
-		accepted := protocol.Accepted{OperationID: req.OperationID, State: "accepted", AgentID: child.ID, TaskID: task.ID, Spawn: &source}
+		accepted := protocol.Accepted{OperationID: req.OperationID, State: "accepted", AgentID: child.ID, TaskID: task.ID, Spawn: &source, Workspace: tree}
+		if tree != nil {
+			if _, err := appendEvent(ctx, tx, child.ID, "", "workspace.inherited", tree); err != nil {
+				return protocol.Accepted{}, err
+			}
+		}
 		if _, err := appendEvent(ctx, tx, p.ParentID, "", "agent.spawned", struct {
 			OperationID string            `json:"operation_id"`
 			Child       protocol.Accepted `json:"child"`
@@ -137,6 +118,57 @@ func (s *Store) Spawn(ctx context.Context, req protocol.Request, p protocol.Spaw
 		}
 		return accepted, nil
 	})
+}
+
+func prepareSpawn(ctx context.Context, tx *sql.Tx, p protocol.SpawnAgent, cwd string, revision int64, maxAgents, maxDepth int) (Selection, protocol.SpawnSource, []contextEntry, error) {
+	var settings Selection
+	var source protocol.SpawnSource
+	fail := func(err error) (Selection, protocol.SpawnSource, []contextEntry, error) {
+		return Selection{}, protocol.SpawnSource{}, nil, err
+	}
+	if p.ParentID == "" || strings.TrimSpace(p.Input) == "" || len(p.Input) > 2<<20 || !utf8.ValidString(p.Input) || !filepath.IsAbs(cwd) {
+		return fail(protocol.E("invalid_params", "parent, task input (up to 2 MiB) and an absolute cwd are required"))
+	}
+	if _, err := protocol.SpawnWorkspaceMode(p.Workspace, p.WorktreePath); err != nil {
+		return fail(err)
+	}
+	var err error
+	settings, err = selection(ctx, tx, p.ParentID)
+	if err != nil {
+		return fail(err)
+	}
+	if settings.Choice.Revision != revision {
+		return fail(protocol.E("selection_changed", "parent settings changed; retry spawn"))
+	}
+	var state string
+	var cursor int64
+	if err := tx.QueryRowContext(ctx, "SELECT state,seq FROM agents WHERE id=?", p.ParentID).Scan(&state, &cursor); err != nil {
+		return fail(err)
+	}
+	if state == "copying" || state == "archived" {
+		return fail(protocol.E("conflict", "parent is read-only"))
+	}
+	source = protocol.SpawnSource{ParentID: p.ParentID, ParentCursor: cursor, Caller: p.Caller}
+	if err := spawnCaller(ctx, tx, &source); err != nil {
+		return fail(err)
+	}
+	ancestor := p.ParentID
+	for depth := 1; ancestor != ""; depth++ {
+		if depth > maxDepth {
+			return fail(protocol.E("limit_exceeded", "agent recursion depth reached"))
+		}
+		if err := tx.QueryRowContext(ctx, "SELECT coalesce(parent_id,'') FROM agents WHERE id=?", ancestor).Scan(&ancestor); err != nil {
+			return fail(err)
+		}
+	}
+	if err := checkCapacity(ctx, tx, "", maxAgents); err != nil {
+		return fail(err)
+	}
+	entries, err := spawnContext(ctx, tx, p, &source)
+	if err != nil {
+		return fail(err)
+	}
+	return settings, source, entries, nil
 }
 
 func spawnCaller(ctx context.Context, tx *sql.Tx, source *protocol.SpawnSource) error {

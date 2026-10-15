@@ -11,10 +11,13 @@ import (
 )
 
 func (a *app) collaborationCommands(agent *cobra.Command) {
-	var parent, file, mode, cwd, background, backgroundFile string
+	var parent, file, mode, cwd, background, backgroundFile, workspaceMode, worktreePath string
 	var budget int
 	var history []string
 	spawn := &cobra.Command{Use: "spawn [TEXT]", Short: "Create a persistent child Agent and accept its first task; return without waiting", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		if _, err := protocol.SpawnWorkspaceMode(workspaceMode, worktreePath); err != nil {
+			return err
+		}
 		if file == "-" && backgroundFile == "-" {
 			return protocol.E("invalid_params", "task and background cannot both read stdin")
 		}
@@ -37,6 +40,9 @@ func (a *app) collaborationCommands(agent *cobra.Command) {
 			return err
 		}
 		p := protocol.SpawnAgent{ParentID: parent, Input: input, Context: mode, Cwd: cwd, ContextBudget: budget, Background: text}
+		if workspaceMode == "worktree" {
+			p.Workspace, p.WorktreePath = workspaceMode, worktreePath
+		}
 		// Keep pre-budget CLI retry fingerprints stable across binary upgrades.
 		if p.Context == "" && budget == 0 {
 			p.Context = "all"
@@ -82,6 +88,8 @@ func (a *app) collaborationCommands(agent *cobra.Command) {
 	spawn.MarkFlagsMutuallyExclusive("background", "background-file")
 	spawn.Flags().StringArrayVar(&history, "background-history", nil, "Include raw context.message range AGENT:FIRST:LAST (repeatable)")
 	spawn.Flags().StringVar(&cwd, "cwd", "", "Existing directory relative to parent cwd; default inherits parent cwd")
+	spawn.Flags().StringVar(&workspaceMode, "workspace", "shared", "shared cwd or a worktree at the source repository's saved HEAD")
+	spawn.Flags().StringVar(&worktreePath, "worktree-path", "", "New worktree path, relative to source cwd; parent directory must exist")
 	agent.AddCommand(spawn)
 }
 
@@ -102,7 +110,7 @@ func callerFromEnvironment() (*protocol.Caller, error) {
 func collaborationHints(executable, profile string) []runtime.CommandHint {
 	prefix := quoteCommandPart(executable) + " --profile " + quoteCommandPart(profile) + " "
 	return []runtime.CommandHint{
-		{Name: "agent.spawn", Usage: prefix + "agent spawn --task-file FILE [--context all|none|last:N] [--context-budget TOKENS]", Guidance: "Delegate an independent task; returns Agent/Task IDs without waiting. Defaults inherit cwd, model and the current context view, excluding pending parent calls. Budget alone selects recent whole turns; an explicit context mode must fit. Add --background-file FILE or --background-history AGENT:FIRST:LAST for specific evidence; inspect the returned range and estimate. Same input in one command deduplicates; use distinct --request-id IDs for identical children and reuse IDs on retry."},
+		{Name: "agent.spawn", Usage: prefix + "agent spawn --task-file FILE [--context all|none|last:N] [--context-budget TOKENS]", Guidance: "Delegate independent work; returns Agent/Task IDs without waiting for the answer. Defaults inherit cwd, model and current context, excluding pending calls. Budget alone selects recent whole turns; explicit ranges must fit. Add --background-file FILE or --background-history AGENT:FIRST:LAST for evidence. Use --workspace worktree --worktree-path PATH for a detached HEAD checkout, excluding uncommitted files; retain its path, no automatic merge or removal. Inspect the receipt; retry unknown creation with the original --request-id. Same input in one command deduplicates; distinct IDs create identical children."},
 		{Name: "agent.submit", Usage: prefix + "--request-id ID agent submit AGENT --file FILE", Guidance: "Reuse a saved Agent and its history for another task. Returns acceptance, not completion. Explicit submit can wake a paused Agent. Inspect its snapshot or history for progress and results."},
 		{Name: "agent.inspect", Usage: prefix + "agent inspect AGENT", Guidance: "Read durable tasks and their state/results without starting a model or TUI. Use agent history AGENT for cursor-paged events."},
 	}

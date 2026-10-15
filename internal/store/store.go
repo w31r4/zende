@@ -15,9 +15,12 @@ import (
 	"zende.local/harness/internal/protocol"
 )
 
-const SchemaVersion = 8
+const SchemaVersion = 9
 
-type Store struct{ db *sql.DB }
+type Store struct {
+	db   *sql.DB
+	path string
+}
 
 func Open(path string) (*Store, error) {
 	if !filepath.IsAbs(path) {
@@ -45,7 +48,7 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db}
+	s := &Store{db: db, path: path}
 	if err := s.initialize(); err != nil {
 		db.Close()
 		return nil, err
@@ -105,9 +108,8 @@ PRAGMA user_version=2;`); err != nil {
 				return err
 			}
 		}
-		// v8 adds context.view events and summary provenance to the journal.
-		// No table rewrite; older binaries must not silently ignore these views.
-		_, err := tx.Exec("PRAGMA user_version=8")
+		// v8 adds context.view events; v9 records external worktree preparation.
+		_, err := tx.Exec(worktreeSchema)
 		return err
 	})
 }
@@ -202,6 +204,9 @@ func (s *Store) accept(ctx context.Context, req protocol.Request, fn func(*sql.T
 			return json.Unmarshal([]byte(result), &accepted)
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if err := worktreeFingerprint(ctx, tx, req.OperationID, fingerprint); err != nil {
 			return err
 		}
 		accepted, err = fn(tx)

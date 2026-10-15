@@ -158,6 +158,9 @@ func TestSpawnCLIAttributionIdempotencyAndReuse(t *testing.T) {
 	for _, args := range [][]string{
 		{"agent", "spawn", "--parent", "another", "bad"},
 		{"agent", "spawn", "--context", "last:0", "invalid count"},
+		{"agent", "spawn", "--workspace", "invalid", "bad"},
+		{"agent", "spawn", "--workspace", "worktree", "missing path"},
+		{"agent", "spawn", "--worktree-path", "unused", "missing mode"},
 		{"agent", "spawn", "--cwd", "does-not-exist", "bad"},
 		{"--request-id", child.OperationID, "agent", "spawn", "conflicting"},
 		{"agent", "spawn", "--file", "-", "--task-file", "-"},
@@ -228,6 +231,13 @@ func TestCollaborationHintsOnlyRegisteredCommands(t *testing.T) {
 		}
 		if !strings.Contains(hint.Usage, "'/path with space/zende' --profile 'profile'") {
 			t.Fatal("unquoted CLI hint")
+		}
+		if hint.Name == "agent.spawn" {
+			for _, text := range []string{"--workspace worktree --worktree-path PATH", "detached HEAD", "uncommitted", "original --request-id", "no automatic merge or removal"} {
+				if !strings.Contains(hint.Guidance, text) {
+					t.Fatal("workspace hint missing", text)
+				}
+			}
 		}
 	}
 }

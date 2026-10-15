@@ -213,6 +213,7 @@ type Accepted struct {
 	Resource    *ResourceInfo   `json:"resource,omitempty"`
 	Selection   *AgentSelection `json:"selection,omitempty"`
 	Spawn       *SpawnSource    `json:"spawn,omitempty"`
+	Workspace   *Worktree       `json:"workspace,omitempty"`
 }
 
 type CreateAgent struct {

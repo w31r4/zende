@@ -272,7 +272,17 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
 			return nil, err
 		}
-		return c.Store.Operation(ctx, p.ID)
+		accepted, err := c.Store.Operation(ctx, p.ID)
+		if isFailure(err, "not_found") {
+			pending, queryErr := c.Store.WorktreeOperation(ctx, p.ID)
+			if queryErr != nil {
+				return nil, queryErr
+			}
+			if pending != nil {
+				return pending, nil
+			}
+		}
+		return accepted, err
 	default:
 		return nil, protocol.E("method_not_found", "unknown method; consult CLI --help")
 	}

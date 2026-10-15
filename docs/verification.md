@@ -509,6 +509,30 @@ go test -race ./internal/store ./internal/runtime ./internal/cli -run 'Test(Cont
 
 提示词版本 7 继续参考 Pi 的能力组合短说明，文档按 trim-cn-tech-doc 合并选择规则并保留预算边界。视图发布是存储基础接口，未接自动摘要生成、容量触发或公开 compact 命令，9.1–9.4 仍未完成。模型为本地夹具，未访问真实模型或执行用户级部署。
 
+## 2026-10-16：显式 worktree 与创建续接
+
+6.3 已完成，累计 34/68 项。默认仍取父有效 cwd，显式 worktree 从准备时的 HEAD 创建独立检出，完成后保留目录。全量 `go test ./...`、`go test -race ./...`、spawn 帮助和 OpenSpec strict 校验通过；相关用例在 race 下连续 3 次通过。
+
+| 验证 | 入口 | 结果 |
+| --- | --- | --- |
+| 真实 Git 与结果 | `TestWorktreeRealCreationPreservesSourceAndResults`、`TestWorktreeSpawnRunsAndRetainsDirectoryAfterCompletion` | detached 检出保存提交，父未提交/未跟踪文件不带入；父 HEAD、refs、索引与文件不变；子任务完成后产物留在独立目录，重试返回原回执 |
+| 路径与归属 | `TestWorktreeRejectsInvalidOrReplacedDestinations` | 非 Git、无 HEAD、已有目录/链接、Git 管理目录、缺失父目录拒绝；目标出现、父路径被替换、所有者标记或 `.git` 指向另一检出时不采用 |
+| 持久意图与事务 | `TestWorktreeIntentReceiptRetryAndGlobalOperationIdentity`、`TestWorktreePreparationPreflightAndTransactionalFailures` | 首次调用归因保持，预留 ID 不能用于另一操作；容量、上下文、深度及事务故障不留半个子 Agent；最终接受失败保留 ready，重试可续原目录 |
+| 中断窗口 | `TestWorktreeSpawnRecoversOnlyOwnedCompleteCheckout`、`TestWorktreeLockSurvivesOwnerClose` | 重开后续 prepared，核实原干净检出；无结果记录且目录缺失/脏时保存 unknown，不重复创建；已保存 ready 允许后续编辑；父描述符关闭后存活子进程仍持锁 |
+| 真实 core 崩溃 | `TestBinaryWorktreeRecoversAfterCoreSIGKILL` | Git 检出中途 SIGKILL 测试 core；新 core 在原 Git 完成前返回 busy，完成后原 ID 恢复同一路径和提交；只有一次检出、一个子 Agent，后续回执不变 |
+| 迁移、CLI 与提示词 | `TestWorktreeSchemaEightMigrationPreservesContextView`、`TestSpawnCLIAttributionIdempotencyAndReuse`、`TestCollaborationHintsOnlyRegisteredCommands` | schema 8→9 保留原视图；无效参数拒绝，默认共享的重试指纹不变；版本 8 说明对应已注册参数与保留、恢复规则 |
+
+`TestBinaryModelSpawnsThroughPipeAndPTYCLI` 同时作为回归，继续验证 shell 临时 cd 不改变子 Agent 默认 cwd。
+
+```sh
+go test -race ./internal/workspace ./internal/store ./internal/runtime ./internal/cli \
+  -run 'Worktree|TestCollaborationHints|TestSpawnCLI' -count=3 -timeout=120s
+```
+
+本节覆盖 V04 的本地实现。实际测试 Git 为 2.55.0；Git、SQLite、UDS 和 core 为真实实现，子任务完成使用模型夹具，崩溃检出用例不访问模型。子二进制为常规构建，宿主与包内并发另由 race 检查。未使用真实凭据或执行用户级部署，断电持久性与树级停止不在本节验收内。
+
+提示词按 Pi 的能力条件组合，文档按 trim-cn-tech-doc 合并默认值与恢复说明，保留目录预留、计时器、Git 过滤器和不确定结果的边界。
+
 ## 进行中
 
-继续第 6 组的 worktree 与 mailbox。会话复制依赖第 6、9 组；协作提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。
+继续第 6 组的 mailbox、投递与结果回流。会话复制依赖第 6、9 组；协作提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。

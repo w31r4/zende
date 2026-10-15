@@ -51,6 +51,38 @@ type SpawnAgent struct {
 	ContextBudget     int            `json:"context_budget,omitempty"`
 	Background        string         `json:"background,omitempty"`
 	BackgroundHistory []ContextRange `json:"background_history,omitempty"`
+	Workspace         string         `json:"workspace,omitempty"`
+	WorktreePath      string         `json:"worktree_path,omitempty"`
+}
+
+func SpawnWorkspaceMode(mode, path string) (string, error) {
+	if mode == "" {
+		mode = "shared"
+	}
+	if mode != "shared" && mode != "worktree" {
+		return "", E("invalid_params", "workspace must be shared or worktree")
+	}
+	if (mode == "worktree") != (path != "") {
+		return "", E("invalid_params", "--workspace worktree requires --worktree-path; shared workspace does not accept it")
+	}
+	return mode, nil
+}
+
+// Worktree records the immutable creation choice. It is not a live Git status.
+type Worktree struct {
+	Source     string `json:"source"`
+	Repository string `json:"repository"`
+	Commit     string `json:"commit"`
+	Path       string `json:"path"`
+	Owner      string `json:"owner"`
+}
+
+type WorktreeOperation struct {
+	OperationID string   `json:"operation_id"`
+	ParentID    string   `json:"parent_id"`
+	State       string   `json:"state"`
+	Workspace   Worktree `json:"workspace"`
+	Failure     *Error   `json:"failure,omitempty"`
 }
 
 // ContextRange references immutable context.message events, including endpoints.
