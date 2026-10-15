@@ -123,14 +123,26 @@ type Identity struct {
 }
 
 type Limits struct {
-	InitializeMS    int `json:"initialize_ms"`
-	ShutdownMS      int `json:"shutdown_ms"`
-	FrameBytes      int `json:"frame_bytes"`
-	DiagnosticBytes int `json:"diagnostic_bytes"`
+	InitializeMS       int `json:"initialize_ms"`
+	ShutdownMS         int `json:"shutdown_ms"`
+	FrameBytes         int `json:"frame_bytes"`
+	DiagnosticBytes    int `json:"diagnostic_bytes"`
+	ConcurrentRequests int `json:"concurrent_requests"`
+	QueuedProgress     int `json:"queued_progress"`
+	ProgressBytes      int `json:"progress_bytes"`
+	CancelMS           int `json:"cancel_ms"`
+	WriteMS            int `json:"write_ms"`
+	Definitions        int `json:"definitions"`
+	CatalogBytes       int `json:"catalog_bytes"`
+	DefinitionBytes    int `json:"definition_bytes"`
+	ArgumentBytes      int `json:"argument_bytes"`
+	ResultBytes        int `json:"result_bytes"`
 }
 
 func DefaultLimits() Limits {
-	return Limits{InitializeMS: int(InitializeTimeout.Milliseconds()), ShutdownMS: int(ShutdownTimeout.Milliseconds()), FrameBytes: MaxFrameBytes, DiagnosticBytes: MaxDiagnosticBytes}
+	return Limits{InitializeMS: int(InitializeTimeout.Milliseconds()), ShutdownMS: int(ShutdownTimeout.Milliseconds()), FrameBytes: MaxFrameBytes, DiagnosticBytes: MaxDiagnosticBytes,
+		ConcurrentRequests: MaxConcurrentRequests, QueuedProgress: MaxQueuedProgress, ProgressBytes: MaxProgressBytes, CancelMS: int(CancelTimeout.Milliseconds()), WriteMS: int(WriteTimeout.Milliseconds()),
+		Definitions: MaxDefinitions, CatalogBytes: MaxCatalogBytes, DefinitionBytes: MaxDefinitionBytes, ArgumentBytes: MaxArgumentBytes, ResultBytes: MaxResultBytes}
 }
 
 type InitializeParams struct {

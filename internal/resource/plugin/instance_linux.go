@@ -1,12 +1,9 @@
 package plugin
 
 import (
-	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,7 +12,6 @@ import (
 	"sync"
 	"syscall"
 	"time"
-	"unicode/utf8"
 
 	"golang.org/x/sys/unix"
 	"zende.local/harness/internal/protocol"
@@ -34,18 +30,6 @@ type Info struct {
 	Error           *protocol.Error `json:"error,omitempty"`
 }
 
-type response struct {
-	JSONRPC string          `json:"jsonrpc"`
-	ID      string          `json:"id"`
-	Result  json.RawMessage `json:"result,omitempty"`
-	Error   json.RawMessage `json:"error,omitempty"`
-}
-
-type pendingResponse struct {
-	id string
-	ch chan response
-}
-
 // Instance owns a process until Closed. The initialization context only bounds
 // preparation; a successfully initialized process outlives that context.
 // Capability adapters and their call lifetimes are layered on this transport.
@@ -58,8 +42,9 @@ type Instance struct {
 
 	mu      sync.Mutex
 	info    Info
-	pending *pendingResponse
+	pending map[string]*pendingResponse
 	gate    chan struct{}
+	catalog *Catalog
 	once    sync.Once
 	closing sync.Once
 	done    chan struct{}
@@ -153,7 +138,7 @@ func Start(ctx context.Context, source string, manifest Manifest, resolved map[s
 	i := &Instance{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr, diag: newDiagnostics(secrets),
 		info: Info{Identity: Identity{ID: manifest.ID, Version: manifest.Version}, InstanceID: protocol.NewID("plugin"), ManifestVersion: manifest.Digest(),
 			State: "preparing", PID: cmd.Process.Pid, Trusted: true, Limits: DefaultLimits(), Capabilities: []string{}},
-		gate: make(chan struct{}, 1), done: make(chan struct{}), closed: make(chan struct{})}
+		gate: make(chan struct{}, 1), pending: make(map[string]*pendingResponse), done: make(chan struct{}), closed: make(chan struct{})}
 	i.readers.Add(2)
 	go i.readProtocol()
 	go i.readDiagnostics()
@@ -233,112 +218,30 @@ func (i *Instance) Done() <-chan struct{}    { return i.done }
 func (i *Instance) Closed() <-chan struct{}  { return i.closed }
 
 func (i *Instance) exchange(ctx context.Context, method string, params any) (json.RawMessage, error) {
-	select {
-	case i.gate <- struct{}{}:
-		defer func() { <-i.gate }()
-	case <-ctx.Done():
-		return nil, ctx.Err()
-	case <-i.done:
-		return nil, protocol.E("unavailable", "plugin connection is closed")
-	}
-	pending := &pendingResponse{id: protocol.NewID("rpc"), ch: make(chan response, 1)}
-	raw, err := json.Marshal(struct {
-		JSONRPC string `json:"jsonrpc"`
-		ID      string `json:"id"`
-		Method  string `json:"method"`
-		Params  any    `json:"params"`
-	}{"2.0", pending.id, method, params})
-	if err != nil || len(raw) > MaxFrameBytes {
-		return nil, protocol.E("invalid_params", "plugin request exceeds the protocol budget")
-	}
-	i.mu.Lock()
-	if i.info.State == "closed" || i.info.State == "failed" {
-		i.mu.Unlock()
-		return nil, protocol.E("unavailable", "plugin connection is closed")
-	}
-	i.pending = pending
-	i.mu.Unlock()
-	defer func() {
-		i.mu.Lock()
-		if i.pending == pending {
-			i.pending = nil
-		}
-		i.mu.Unlock()
-	}()
-	// Anonymous pipes support deadlines on Linux; cancellation interrupts a
-	// plugin that never consumes stdin, without leaking a blocked writer.
-	if deadline, ok := ctx.Deadline(); ok {
-		_ = i.stdin.SetWriteDeadline(deadline)
-	}
-	interrupted := make(chan struct{})
-	stop := context.AfterFunc(ctx, func() { _ = i.stdin.SetWriteDeadline(time.Now()); close(interrupted) })
-	_, err = i.stdin.Write(append(raw, '\n'))
-	if !stop() {
-		<-interrupted
-	}
-	_ = i.stdin.SetWriteDeadline(time.Time{})
+	pending, _, err := i.startRequest(ctx, method, params, "")
 	if err != nil {
-		if ctx.Err() != nil {
-			return nil, ctx.Err()
-		}
-		// The pipe deadline can fire before the context's timer goroutine.
-		if errors.Is(err, os.ErrDeadlineExceeded) {
-			return nil, context.DeadlineExceeded
-		}
-		return nil, protocol.E("plugin_protocol", "plugin request could not be written")
+		return nil, err
 	}
+	defer i.forget(pending)
+	var reply response
 	select {
-	case reply := <-pending.ch:
-		if len(reply.Error) != 0 {
-			return nil, protocol.E("plugin_initialization", "plugin rejected the lifecycle request; inspect diagnostics")
-		}
-		return reply.Result, nil
+	case reply = <-pending.ch:
 	case <-ctx.Done():
+		// Lifecycle/discovery calls have no cancellation handshake. A late
+		// reply must not be mistaken for a later request on this connection.
+		i.stop(asFailure(ctx.Err()))
 		return nil, ctx.Err()
 	case <-i.done:
-		return nil, protocol.E("plugin_protocol", "plugin connection ended before its response")
+		select {
+		case reply = <-pending.ch:
+		default:
+			return nil, protocol.E("plugin_protocol", "plugin connection ended before its response")
+		}
 	}
-}
-
-func (i *Instance) readProtocol() {
-	defer i.readers.Done()
-	scanner := bufio.NewScanner(i.stdout)
-	scanner.Buffer(make([]byte, 4096), MaxFrameBytes+2)
-	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
-		if at := bytes.IndexByte(data, '\n'); at >= 0 {
-			return at + 1, bytes.TrimSuffix(data[:at], []byte{'\r'}), nil
-		}
-		if atEOF && len(data) != 0 {
-			return 0, nil, io.ErrUnexpectedEOF
-		}
-		return 0, nil, nil
-	})
-	for scanner.Scan() {
-		line := scanner.Bytes()
-		var reply response
-		bad := len(line) > MaxFrameBytes || !utf8.Valid(line) || protocol.StrictDecode(line, &reply) != nil ||
-			reply.JSONRPC != "2.0" || reply.ID == "" || len(reply.ID) > 128 || (len(reply.Result) == 0) == (len(reply.Error) == 0)
-		if !bad && len(reply.Error) > 0 {
-			var remote struct {
-				Code    *int            `json:"code"`
-				Message *string         `json:"message"`
-				Data    json.RawMessage `json:"data,omitempty"`
-			}
-			bad = protocol.StrictDecode(reply.Error, &remote) != nil || remote.Code == nil || remote.Message == nil
-		}
-		i.mu.Lock()
-		pending := i.pending
-		if !bad && pending != nil && reply.ID == pending.id {
-			i.pending = nil
-			pending.ch <- reply
-			i.mu.Unlock()
-			continue
-		}
-		i.mu.Unlock()
-		i.stop(protocol.E("plugin_protocol", "invalid or unsolicited plugin stdout frame; logs must use stderr"))
-		return
+	if len(reply.Error) != 0 {
+		return nil, protocol.E("plugin_initialization", "plugin rejected the lifecycle request; inspect diagnostics")
 	}
-	i.stop(protocol.E("plugin_protocol", "plugin stdout ended or exceeded its frame budget"))
+	return reply.Result, nil
 }
 
 func (i *Instance) readDiagnostics() {

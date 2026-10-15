@@ -379,7 +379,7 @@ Core 重启后，已保存结果可补入原工具结果位置，无须重连 MC
 
 ## 插件启动与协议协商
 
-`resource.PreparePlugin` 读取 YAML/JSON manifest、解析环境引用、启动独立进程并完成协商。当前交付启动层；CLI 注册、五类能力接线和版本退役由 OpenSpec 8.2–8.5 完成。准备成功只返回候选实例，不向模型发布能力。
+`resource.PreparePlugin` 读取 YAML/JSON manifest、解析环境引用、启动独立进程并完成协商。当前交付启动与调用底层；CLI 注册、五类能力接线和版本退役由 OpenSpec 8.2–8.5 完成。准备成功只返回候选实例，不向模型发布能力。
 
 ```yaml
 schema_version: 1
@@ -397,13 +397,30 @@ env:
 
 执行文件直接启动，参数不作 shell 展开；命令名按 Core 的 PATH 查找。cwd 默认 manifest 目录，也可指定绝对路径。子进程继承 Core 环境，env 覆盖只接受 `env:NAME` 或 `file:/absolute/path` 引用，值在启动前解析。不要把凭据写进 command、args 或版本字段。准备后复读 manifest，内容变化即关闭候选并报 resource_changed。
 
-stdin/stdout 使用 [JSON-RPC 2.0](https://www.jsonrpc.org/specification)，UTF-8、每行一个对象，末尾换行。宿主发送 `plugin.initialize`，params 包含 protocol_versions、host/plugin 身份、instance_id、capabilities 和 limits；插件响应所选 protocol_version、plugin 身份及 capabilities。当前宿主只提供版本 1，身份和能力须与 manifest 一致。响应须匹配请求 ID，result/error 二选一；错误版本、无效响应、stdout 日志或未经请求的帧均关闭该实例。日志写 stderr。调用/通知协议将随能力接线扩展。
+stdin/stdout 使用 [JSON-RPC 2.0](https://www.jsonrpc.org/specification)，UTF-8、每行一个对象，末尾换行。宿主发送 `plugin.initialize`，params 包含 protocol_versions、host/plugin 身份、instance_id、capabilities 和 limits；插件响应所选 protocol_version、plugin 身份及 capabilities。当前宿主只提供版本 1，身份和能力须与 manifest 一致。响应须匹配请求 ID，result/error 二选一；错误版本、无效响应、stdout 日志或未经请求的帧均关闭该实例。日志写 stderr。
 
 初始化最多 30 秒，调用方可提前取消；准备上下文结束不关闭已就绪实例。所有者调用 Close 时先请求 `plugin.shutdown`，最多等 2 秒，再对进程组发送 TERM，最多等 300 ms 后发送 KILL，回收主进程并关闭管道。退出时诊断最多再排空 100 ms；脱离原进程组的外部进程不在此回收保证内。
 
 协议帧上限 8 MiB。stderr 持续读取，保存脱敏后的末尾 64 KiB，记录读取和淘汰字节数，展示时转义控制字符。显式环境引用值，以及继承环境中名称含 KEY/TOKEN/SECRET/PASSWORD/PASSWD/CREDENTIAL/AUTH 的值用于脱敏；单值最多 64 KiB、最多收集 256 项。跨读取边界的凭据仍脱敏，最多暂存最长凭据长度减一的尾部，关闭时冲刷。未知或编码后的敏感值需插件自行处理。
 
 Info 返回实例身份、manifest 摘要、协商版本、状态、PID、能力、限额和 trusted_execution。摘要覆盖启动配置，不是可执行文件哈希。插件按当前用户权限运行；进程分离用于生命周期管理，外部副作用不随关闭回滚。初始化错误返回的实例已关闭，仅供诊断，失败候选不影响其他实例。
+
+### 插件调用底层
+
+初始化后，`Instance.Discover` 通过 `plugin.describe` 读取已声明的 tools/commands，验证名称、描述和 input_schema/output_schema，再固定本实例的目录。定义引用包含插件身份、manifest 摘要、能力类别和完整定义；JSON 键顺序及新增无关定义不改变原引用。更新定义须准备新实例。
+
+`PrepareCall` 选择引用、校验参数并保存有效 Scope；`Binding/Definition/Scope/Arguments` 返回可记录的绑定。所有者须先持久保存派发意图，再执行一次 `Invoke`，并持有实例直至返回。目前尚未接入 Core 持久回执、模型工具目录和 CLI 命令；跨重启去重也由这些入口负责，底层不重试调用。
+
+| 协议消息 | 内容 |
+| --- | --- |
+| `plugin.tool.call` / `plugin.command.call` | 请求包含 operation_id、definition_ref、name、scope、arguments；两类输出由各自 adapter 解释 |
+| `plugin.progress` | 无 id 的通知；params 含 request_id、operation_id、从 1 连续递增的 sequence 和 JSON value |
+| `plugin.cancel` | 宿主发送的无 id 通知，关联 request_id 和 operation_id；仅表示请求取消 |
+| 原调用响应 | result 含 operation_id、state、output 和可选 error；终态接受 completed、failed、cancelled |
+
+`Invoke` 按线序交给进度观察者，观察者应保存成功后再返回。取消后最多等 5 秒确认终态；插件仍可返回已完成结果，完整结果优先于随后断线。没有可验证响应、输出 schema 不符或进度保存失败时返回 operation_unknown，并保留收到的有界响应作证据；终态不承诺撤销外部副作用。
+
+每实例最多 8 个请求，写帧最多等 2 秒；进度每条 16 KiB、每请求最多排队 32 条，越界关闭实例并让相关未完成调用待核实。目录最多 256 项/4 MiB，单定义 256 KiB，参数 1 MiB、结果 4 MiB。JSON 深度最多 64，数字最多 1024 字符、指数绝对值最多 1024；schema 支持 draft-07/2020-12，关闭外部文件和网络加载。目录、大小、并发和等待限额随初始化及 Info 返回。调用证据可能含业务数据，不能直接混入普通诊断或模型上下文。
 
 ## Responses 接入
 

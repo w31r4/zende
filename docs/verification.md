@@ -850,6 +850,21 @@ go test ./internal/resource/mcp \
 
 测试运行真实本地子进程和临时文件，不访问外部模型、插件服务或用户凭据。协议和限额加入开发说明，按 trim-cn-tech-doc 保留操作、失败与可信执行边界；未改提示词或 TUI。插件工具、CLI、provider、资源/事件能力、热替换和持久恢复仍由 8.2–8.5 完成。
 
+## 2026-10-16：插件调用、进度与取消底层
+
+8.2 部分交付，累计仍为 44/68 项。新增 tools/commands 不可变目录、schema 校验、版本引用及一次性调用；传输可并发关联响应，进度和终态保持线序。Core 持久回执、模型工具注册与 CLI 接线尚未完成。
+
+| 检查 | 测试 | 结果 |
+| --- | --- | --- |
+| 目录与参数 | `TestPluginCatalogValidationAndReferences`、`TestPluginSchemasCannotLoadExternalResources`、`TestPluginJSONBudgetsAndNumericPrecision`、`TestPluginCallRejectsArgumentsBeforeDispatch` | 拒绝非法 schema、外部引用、重复键及超限；JSON 键顺序和无关新增不改变原引用，大整数保留，非法参数不执行 |
+| 调用与关联 | `TestPluginToolsAndCommandsUseBoundCatalog`、`TestPluginKnownFailureAndConcurrentCorrelation`、`TestPluginConcurrentRequestLimitAndCancellationIsolation` | 两类调用使用不同方法，返回机器结果和对应进度；绑定、参数、Scope 可记录，8 个请求并发可取消，超额请求未派发 |
+| 取消与未知 | `TestPluginCancellationWaitsForRealOutcome`、`TestPluginCancellationTimeoutAndProgressFailure`、`TestPluginUnverifiedRepliesNeverBecomeSuccess` | 取消先保持处理中，最终可为 cancelled 或 completed；无确认、进度越界/保存失败、错误关联或输出不合规均待核实，不重试 |
+| 终态与候选 | `TestPluginCompletionWinsCancellationRace`、`TestPluginCompleteReplySurvivesProcessExit`、`TestPluginInvalidCatalogCannotBecomeCallable` | 已接收完整结果不被随后取消或进程退出覆盖；非法目录关闭候选，不能准备调用 |
+
+最终 `go test ./...`、`go test -race ./...`、插件定向 race 三轮、资源包 `go vet` 和 OpenSpec strict 校验通过。重复测试发现目录整体版本仍受原 schema 键顺序影响；将保存的定义也规范化后重跑通过。
+
+测试使用真实本地插件子进程和隔离目录；HTTP 测试确认 schema 编译器没有发出外部引用请求。未使用外部插件服务、模型或用户凭据。说明按 trim-cn-tech-doc 保留协议、限额和待核实边界，提示词与界面未改；这些测试不代表 Core/CLI 插件集成或部署验收完成。
+
 ## 进行中
 
-继续 8.2 的插件工具与 CLI 调用。7.1、7.2 的配置/provider 热发布与外部目录监视尚未完成；目录安装完成的判定方式已提问，待用户选择。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。
+继续 8.2 的 Core 持久回执、模型工具注册与 CLI 接线。7.1、7.2 的配置/provider 热发布与外部目录监视尚未完成；目录安装完成的判定方式已提问，待用户选择。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。
