@@ -370,6 +370,9 @@ func TestImageClickAndCommandHaveSameEffectWithoutConsumingDraft(t *testing.T) {
 	base := makeModel()
 	seen := make(map[string]bool)
 	for _, target := range base.layout().targets {
+		if target.call.name != "images" && target.call.name != "image-use" && target.call.name != "image-remove" && target.call.name != "next" {
+			continue // Status targets have their own command-equivalence tests.
+		}
 		mouse, _ := update(t, makeModel(), tea.MouseClickMsg{X: target.x, Y: target.y, Button: tea.MouseLeft})
 		typed := makeModel()
 		draft := typed.input

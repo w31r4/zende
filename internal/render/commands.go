@@ -24,6 +24,11 @@ type command struct {
 var commands = []command{
 	{name: "help", description: "Commands"},
 	{name: "background", description: "Background work"},
+	{name: "model", usage: "[CONNECTION] [MODEL]", description: "Choose configured model", maxArgs: 2},
+	{name: "effort", usage: "[VALUE]", description: "Choose reasoning effort", maxArgs: 1},
+	{name: "select", description: "Confirm current selection"},
+	{name: "cd", usage: "[PATH]", description: "Browse working directory", maxArgs: 1},
+	{name: "git", description: "Working tree status"},
 	{name: "terminal", usage: "[PROCESS]", description: "Select terminal", maxArgs: 1},
 	{name: "logs", usage: "[PROCESS] [stdout|stderr|pty]", description: "Read process output", maxArgs: 2},
 	{name: "commentary", usage: "[ENTRY]", description: "Fold commentary", maxArgs: 1},
@@ -134,7 +139,12 @@ func (m *Shell) invoke(call invocation) (tea.Cmd, error) {
 		return m.skillCommand(c.name, call.args)
 	case "questions", "answer", "answer-clear":
 		return nil, m.questionCommand(c.name, call.args)
+	case "model", "effort", "select", "cd", "git":
+		return m.selectionCommand(c.name, call.args)
 	case "next":
+		if m.selection != nil {
+			return m.selectionNext()
+		}
 		if m.imagesPanel != nil {
 			if m.imagesPanel.waiting || m.imagesPanel.page.Next == "" {
 				return nil, protocol.E("not_found", "no next image page")
@@ -151,9 +161,12 @@ func (m *Shell) invoke(call invocation) (tea.Cmd, error) {
 		}
 		m.scroll = 0
 	case "back":
+		selection := m.selection != nil
 		m.closePanel()
 		m.issues.open, m.issues.manual = false, false
-		m.questionAction = &questionAction{name: "back"}
+		if !selection {
+			m.questionAction = &questionAction{name: "back"}
+		}
 	case "refresh":
 		m.report(nil)
 		m.gap = false
@@ -163,7 +176,7 @@ func (m *Shell) invoke(call invocation) (tea.Cmd, error) {
 			if m.panel != nil && m.panel.kind == "log" && !m.panel.waiting {
 				poll = pollProcessCmd(m.ctx, m.panel.generation, 0)
 			}
-			return tea.Batch(snapshotCmd(m.ctx, m.client, m.agent), poll), nil
+			return tea.Batch(snapshotCmd(m.ctx, m.client, m.agent), poll, m.syncGit(true)), nil
 		}
 	case "retry":
 		if m.pending == nil {
@@ -196,6 +209,9 @@ func (m *Shell) dispatch(call invocation) tea.Cmd {
 func (m *Shell) closePanel() {
 	m.help, m.showActivity, m.panel, m.scroll = false, false, nil, 0
 	m.imagesPanel = nil
+	m.selection = nil
+	m.selectionGeneration++
+	m.issues.resolve("selection")
 	m.showQuestions = false
 	m.imagesGeneration++
 	m.processGeneration++

@@ -234,7 +234,7 @@ func imageTitle(image protocol.Attachment, separator string) string {
 
 func imageName(name string) string {
 	// File names may contain newlines or tabs; each item still owns one row.
-	return strings.NewReplacer("\n", `\n`, "\t", `\t`).Replace(safeText(name))
+	return singleLine(name)
 }
 
 func (m *Shell) refreshImagePalette() {

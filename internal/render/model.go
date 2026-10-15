@@ -66,6 +66,12 @@ type Shell struct {
 	processGeneration                            uint64
 	resizePending                                *protocol.Request
 	attaching                                    bool
+	selection                                    *selectionPanel
+	selectionGeneration, selectionMutation       uint64
+	git                                          protocol.GitStatus
+	gitPath                                      string
+	gitGeneration                                uint64
+	gitWaiting                                   bool
 }
 
 func New(ctx context.Context, client Client, agent string, emit func(tea.Msg)) Shell {
@@ -77,6 +83,9 @@ func New(ctx context.Context, client Client, agent string, emit func(tea.Msg)) S
 func (m Shell) Init() tea.Cmd { return snapshotCmd(m.ctx, m.client, m.agent) }
 
 func (m Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if handled, cmd := m.updateSelection(msg); handled {
+		return m, cmd
+	}
 	if handled, cmd := m.updateImages(msg); handled {
 		m.refreshImagePalette()
 		return m, cmd
@@ -85,6 +94,10 @@ func (m Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	switch msg := msg.(type) {
+	case tea.PasteMsg:
+		if m.selection != nil && m.commandDraft == nil {
+			m.closePanel() // Pasting returns to the held composer, never chooses a row.
+		}
 	case skillCatalogMsg:
 		if msg.request != m.skillsRequest || !m.skillsWaiting {
 			return m, nil
@@ -164,18 +177,19 @@ func (m Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.projectQuestions(msg.Snapshot)
 		}
 		m.haveSnapshot = true
+		git := m.syncGit(false)
 		if !m.watching && !m.gap && !m.attaching {
 			// Replay from our actual projection cursor, never the newer snapshot.
 			// The stream provides backpressure while old history is consumed.
 			cmd := m.startWatch()
 			activity := m.startActivity()
-			return m, tea.Batch(cmd, activity)
+			return m, tea.Batch(cmd, activity, git)
 		}
 		if m.refreshAgain {
 			m.refreshAgain, m.refreshing = false, true
-			return m, snapshotCmd(m.ctx, m.client, m.agent)
+			return m, tea.Batch(snapshotCmd(m.ctx, m.client, m.agent), git)
 		}
-		return m, nil
+		return m, git
 	case watchReadyMsg:
 		if msg.Generation == m.generation && m.watching {
 			m.connected, m.connectionErr = true, nil
@@ -277,6 +291,18 @@ func (m Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.report(protocol.E("transport_unknown", "answer acceptance identity did not match; retry the original request"))
 			return m, nil
 		}
+		if m.pending.Method == "agent.select" {
+			if msg.Accepted.Selection == nil || msg.Accepted.Selection.AgentID != m.agent {
+				m.report(protocol.E("transport_unknown", "selection acceptance is incomplete; /retry keeps its ID"))
+				return m, nil
+			}
+			if m.selection != nil && m.selectionGeneration == m.selectionMutation {
+				m.closePanel()
+			}
+			// Invalidate even a query already in flight for the previous cwd.
+			m.git, m.gitPath, m.gitWaiting = protocol.GitStatus{}, "", false
+			m.gitGeneration++
+		}
 		m.pending = nil
 		if draft := m.findDraft(m.sentDraft.id); draft != nil && draft.stamp() == m.sentDraft && draft.Value() == m.sentText {
 			draft.Reset()
@@ -324,6 +350,9 @@ func (m Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if handled, cmd := m.panelKey(msg.String()); handled {
+			return m, cmd
+		}
+		if handled, cmd := m.selectionKey(msg.String()); handled {
 			return m, cmd
 		}
 		switch msg.String() {
@@ -401,6 +430,11 @@ func (m Shell) submit() (tea.Model, tea.Cmd) {
 }
 
 func (m *Shell) scrollBy(up int) {
+	if m.selection != nil {
+		_, items := m.selectionChoices()
+		m.selection.index = max(0, min(max(0, len(items)-1), m.selection.index-up))
+		return
+	}
 	if m.help || m.showActivity || m.imagesPanel != nil || m.showQuestions || m.activeQuestion != "" && m.panel == nil {
 		up = -up // Lists start at the top; conversation/log windows at the end.
 	}
@@ -420,6 +454,10 @@ func (m *Shell) submitCommand(call invocation) tea.Cmd {
 }
 
 func safeText(text string) string { return process.DisplayText([]byte(text)) }
+
+func singleLine(text string) string {
+	return strings.NewReplacer("\n", `\n`, "\t", `\t`).Replace(safeText(text))
+}
 
 func (m Shell) View() tea.View {
 	if m.width < 48 || m.height < 16 {
@@ -452,6 +490,9 @@ func (m Shell) View() tea.View {
 		if frame.skills != "" {
 			v.Cursor.Y++
 		}
+	}
+	if m.selection != nil && m.commandDraft == nil {
+		v.Cursor = nil // Navigation focus is the marked row, not the held draft.
 	}
 	return v
 }

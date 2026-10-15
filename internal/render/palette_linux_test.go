@@ -22,6 +22,8 @@ func (c *paletteTerminalClient) Retry(_ context.Context, req protocol.Request, t
 		*target.(*protocol.Snapshot) = protocol.Snapshot{Agent: protocol.Agent{ID: "agent", Cwd: "/project"}}
 	case "agent.activity":
 		*target.(*protocol.Activity) = protocol.Activity{AgentID: "agent"}
+	case "workspace.git":
+		*target.(*protocol.GitStatus) = protocol.GitStatus{Path: "/project", State: "none"}
 	default:
 		c.mutations.Add(1)
 		return fmt.Errorf("unexpected method %s", req.Method)

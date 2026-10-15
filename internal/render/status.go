@@ -44,17 +44,22 @@ func (m Shell) statusProjection() (string, []hitTarget) {
 	if suffix != "" {
 		available = max(0, available-1)
 	}
-	model := ""
+	model := m.theme.modelMark()
 	id := m.snapshot.Agent.Model
 	if id == "" {
 		id = m.transcript.ResolvedModel
 	}
 	if id != "" {
 		parts := strings.Split(id, "/")
-		model = m.theme.modelMark() + " " + ansi.Truncate(safeText(parts[len(parts)-1]), min(16, available/3), "...") + sep
+		model += " " + ansi.Truncate(singleLine(parts[len(parts)-1]), min(16, available/3), "...")
 	}
-	cwd := safeText(m.snapshot.Agent.Cwd)
-	room := max(0, available-ansi.StringWidth(model))
+	model = ansi.Truncate(model, available, "")
+	git := ansi.Truncate(m.gitLabel(), min(16, max(0, available/4)), "...")
+	cwd := singleLine(m.snapshot.Agent.Cwd)
+	room := max(0, available-ansi.StringWidth(model)-ansi.StringWidth(sep))
+	if git != "" {
+		room = max(0, room-ansi.StringWidth(git)-ansi.StringWidth(sep))
+	}
 	if ansi.StringWidth(cwd) > room {
 		if room < 3 {
 			cwd = ansi.Truncate(cwd, room, "")
@@ -62,13 +67,28 @@ func (m Shell) statusProjection() (string, []hitTarget) {
 			cwd = ansi.TruncateLeft(cwd, ansi.StringWidth(cwd)-room+3, "...")
 		}
 	}
-	left := ansi.Truncate(model+cwd, available, "")
+	left := ""
+	var targets []hitTarget
+	for _, p := range []part{{model, invocation{name: "model"}}, {cwd, invocation{name: "cd"}}, {git, invocation{name: "git"}}} {
+		if p.text == "" {
+			continue
+		}
+		if left != "" {
+			left += sep
+		}
+		x := ansi.StringWidth(left)
+		text := ansi.Truncate(p.text, max(0, available-x), "")
+		if text != "" {
+			targets = append(targets, hitTarget{x: x, y: m.height - 1, width: ansi.StringWidth(text), call: p.call, candidate: -1})
+		}
+		left += text
+	}
+	left = ansi.Truncate(left, available, "")
 	if suffix == "" {
-		return left, nil
+		return left, targets
 	}
 	padding := max(1, m.width-ansi.StringWidth(left)-ansi.StringWidth(suffix))
 	x := ansi.StringWidth(left) + padding
-	var targets []hitTarget
 	for _, p := range right {
 		w := ansi.StringWidth(p.text)
 		if p.call.name != "" {

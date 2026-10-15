@@ -446,6 +446,27 @@ go test -race ./internal/render ./internal/store ./internal/cli -run 'Skill|Sche
 
 测试使用临时目录、SQLite、runner 与本地 HTTP 模型夹具，未访问外部模型。TUI 选择页与 Git 刷新仍待接入；跨模型私有数据迁移归 10.6，本节不作为 V21 全项或部署验收通过。
 
+## 2026-10-16：TUI 选配与 Git 状态
+
+5.8 已完成，累计 31/68 项。选择页复用持久选配接口，确认前只读；底部模型、cwd、Git 均有对应 `/` 入口。全量 `go test ./...`、`go test -race ./...` 和 OpenSpec strict 校验通过，新增选配用例在 race 下连续 3 次通过。
+
+| 验证 | 入口 | 结果 |
+| --- | --- | --- |
+| 配置与确认 | `TestModelPickerUsesConfiguredConnectionsAndDefersAllWrites`、`TestSelectionEmptyStaleAndUnavailableCatalogs` | 同名连接按 ID 区分；空配置、未实现 adapter、目录版本变化和晚到查询明确处理；连接、型号、力度逐级选择，确认才写 |
+| 目录与分页 | `TestDirectoryNavigationDotPathAndPaginationKeepRevision`、`TestPickerModelPagesUseTheOriginalVersionAndBoundQueries` | `.`、`..`、根目录、中文空格路径、h/j/k/l 与分页通过；路径按字面传递，保留初始 revision 和目录版本 |
+| 回执与 Git | `TestSelectionAcceptanceFencingRetryAndDraft`、`TestGitRefreshCoalescesAndClearsOldOrUnknownState` | 未知接受保留原请求，缺失回执和版本冲突拒绝；切目录、查询失败或非 Git 清除旧分支，旧计时器/回复无效，上游缺失保持未知 |
+| 布局与入口 | `TestPickerCellsThemeAndClickCommandEquivalence`、`TestPickerMetadataStaysInOneRowWithoutChangingTargets` | 六种面板 × 三种尺寸 × 三种颜色能力共 54 组通过；输入/底栏保留，点击与命令等价，换行、Tab、控制字节不改变布局或路径参数 |
+| 草稿与焦点 | `TestPickerCancellationReturnsToTheSameAnswerComposer`、`TestPickerStillAllowsSkillCommandsBelowTheComposer`、`TestPickerFocusDoesNotInterpretHeldDraftAsCommand` | 回答、文字和图片保留；选择页内 `/`、`$` 可用；草稿不抢导航焦点，粘贴按文本返回输入，方向键不提交选择 |
+| 真实终端与 core | `TestRealTerminalSelectsThroughCoreAndRefreshesGit` | 48×16 Linux PTY 经真实 UDS/SQLite 完成模型、力度和非 Git 目录确认；取消保持原设置，仅两条 selection 事件、零任务、零凭据读取；退出恢复 termios 和 alt screen |
+
+```sh
+go test -race ./internal/render -run 'TestModelPicker|TestSelection|TestDirectoryNavigation|TestGitRefresh|TestPicker|TestRealTerminalSelects' -count=3 -timeout=90s
+```
+
+首轮测试修正了两处夹具假设：图片测试只遍历图片入口；selection revision 按历史 seq 分配，不假定从零逐次加一。边界检查补上单行元数据转义和回答焦点保留。按 tui-design 采用无边框单页下钻，按 trim-cn-tech-doc 合并过时的选择页待办说明，保留历史验证与失败条件。
+
+验证使用临时 Git 仓库、SQLite 和配置元数据，未发送模型请求、读取外部凭据或安装用户服务。V21 的本地交互链路完成，四协议兼容性与整体部署仍按后续任务验收。
+
 ## 进行中
 
-继续 5.8：接入 TUI 模型/力度选择、单页目录导航、选择确认与 Git 刷新。持久选配和请求边界已由 core/CLI 提供。会话复制依赖第 6、9 组；协作提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成。
+接下来实现第 6 组的多 Agent 与 mailbox。会话复制依赖第 6、9 组；协作提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。

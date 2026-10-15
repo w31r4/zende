@@ -68,6 +68,8 @@ func (m Shell) layout() frame {
 		rows--
 	}
 	switch {
+	case m.selection != nil:
+		m.selectionRows(&f, rows)
 	case m.help:
 		start := min(m.scroll, max(0, len(commands)-rows))
 		for i := start; i < len(commands) && len(f.body) < rows; i++ {
