@@ -182,6 +182,11 @@ func (s *Store) TransitionWorktree(ctx context.Context, req protocol.Request, pr
 		if !valid {
 			return protocol.E("invalid_params", "invalid workspace transition")
 		}
+		if next == "creating" {
+			if err := treeWritable(ctx, tx, r.Operation.ParentID); err != nil {
+				return err
+			}
+		}
 		r.Operation.State, r.Operation.Failure = next, failure
 		data, err := json.Marshal(failure)
 		if err != nil {

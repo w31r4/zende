@@ -15,7 +15,7 @@ import (
 	"zende.local/harness/internal/protocol"
 )
 
-const SchemaVersion = 11
+const SchemaVersion = 12
 
 type Store struct {
 	db   *sql.DB
@@ -119,7 +119,14 @@ PRAGMA user_version=2;`); err != nil {
 				return err
 			}
 		}
-		_, err := tx.Exec(taskResultSchema)
+		if version < 11 {
+			if _, err := tx.Exec(taskResultSchema); err != nil {
+				return err
+			}
+		}
+		// v12 adds durable tree-stop events. Older binaries must not schedule
+		// work without honoring their admission fence.
+		_, err := tx.Exec(treeStopSchema)
 		return err
 	})
 }
@@ -296,6 +303,12 @@ func (s *Store) Submit(ctx context.Context, req protocol.Request, p protocol.Sub
 		return protocol.Accepted{}, protocol.E("invalid_params", "input, images or skills are required")
 	}
 	return s.accept(ctx, req, func(tx *sql.Tx) (protocol.Accepted, error) {
+		if err := treeWritable(ctx, tx, p.AgentID); err != nil {
+			return protocol.Accepted{}, err
+		}
+		if err := treeCallerWritable(ctx, tx, p.Caller); err != nil {
+			return protocol.Accepted{}, err
+		}
 		var state string
 		var paused bool
 		err := tx.QueryRowContext(ctx, "SELECT state,paused FROM agents WHERE id=?", p.AgentID).Scan(&state, &paused)

@@ -13,47 +13,53 @@ import (
 // its in-memory worker. Retrying this operation never targets a newer Task.
 func (s *Store) Stop(ctx context.Context, req protocol.Request, p protocol.Target) (protocol.Accepted, error) {
 	return s.accept(ctx, req, func(tx *sql.Tx) (protocol.Accepted, error) {
-		var state string
-		if err := tx.QueryRowContext(ctx, "SELECT state FROM agents WHERE id=?", p.AgentID).Scan(&state); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return protocol.Accepted{}, protocol.E("not_found", "agent not found")
-			}
-			return protocol.Accepted{}, err
-		}
-		if state == "archived" || state == "copying" {
-			return protocol.Accepted{}, protocol.E("conflict", "agent is read-only")
-		}
-		var task string
-		err := tx.QueryRowContext(ctx, `SELECT id FROM tasks WHERE agent_id=? AND state IN ('running','cancelling','unknown') ORDER BY rowid LIMIT 1`, p.AgentID).Scan(&task)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			return protocol.Accepted{}, err
-		}
-		next := "paused"
-		if task != "" {
-			next = "cancelling"
-		}
-		if state == "unknown" {
-			next = "unknown"
-		}
-		if _, err := tx.ExecContext(ctx, "UPDATE agents SET paused=1,state=? WHERE id=?", next, p.AgentID); err != nil {
-			return protocol.Accepted{}, err
-		}
-		if task != "" {
-			if _, err := tx.ExecContext(ctx, "UPDATE tasks SET state='cancelling' WHERE id=?", task); err != nil {
-				return protocol.Accepted{}, err
-			}
-			if _, err := appendEvent(ctx, tx, p.AgentID, task, "task.cancelling", map[string]string{"operation_id": req.OperationID}); err != nil {
-				return protocol.Accepted{}, err
-			}
-		}
-		if _, err := appendEvent(ctx, tx, p.AgentID, task, "agent.paused", map[string]any{"operation_id": req.OperationID, "paused": true, "state": next}); err != nil {
-			return protocol.Accepted{}, err
-		}
-		return protocol.Accepted{AgentID: p.AgentID, TaskID: task}, nil
+		task, err := pauseAgent(ctx, tx, req.OperationID, p.AgentID)
+		return protocol.Accepted{AgentID: p.AgentID, TaskID: task}, err
 	})
 }
 
+func pauseAgent(ctx context.Context, tx *sql.Tx, operation, agent string) (string, error) {
+	var state string
+	if err := tx.QueryRowContext(ctx, "SELECT state FROM agents WHERE id=?", agent).Scan(&state); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", protocol.E("not_found", "agent not found")
+		}
+		return "", err
+	}
+	if state == "archived" || state == "copying" {
+		return "", protocol.E("conflict", "agent is read-only")
+	}
+	var task string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM tasks WHERE agent_id=? AND state IN ('running','cancelling','unknown') ORDER BY rowid LIMIT 1`, agent).Scan(&task)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	next := "paused"
+	if task != "" {
+		next = "cancelling"
+	}
+	if state == "unknown" {
+		next = "unknown"
+	}
+	if _, err := tx.ExecContext(ctx, "UPDATE agents SET paused=1,state=? WHERE id=?", next, agent); err != nil {
+		return "", err
+	}
+	if task != "" {
+		if _, err := tx.ExecContext(ctx, "UPDATE tasks SET state='cancelling' WHERE id=?", task); err != nil {
+			return "", err
+		}
+		if _, err := appendEvent(ctx, tx, agent, task, "task.cancelling", map[string]string{"operation_id": operation}); err != nil {
+			return "", err
+		}
+	}
+	_, err = appendEvent(ctx, tx, agent, task, "agent.paused", map[string]any{"operation_id": operation, "paused": true, "state": next})
+	return task, err
+}
+
 func unpause(ctx context.Context, tx *sql.Tx, agent, task string) error {
+	if err := treeWritable(ctx, tx, agent); err != nil {
+		return err
+	}
 	if _, err := tx.ExecContext(ctx, `UPDATE agents SET paused=0,state=CASE WHEN state='paused' THEN 'idle' ELSE state END WHERE id=?`, agent); err != nil {
 		return err
 	}
@@ -63,6 +69,9 @@ func unpause(ctx context.Context, tx *sql.Tx, agent, task string) error {
 
 func (s *Store) Resume(ctx context.Context, req protocol.Request, p protocol.Target, maxAgents int) (protocol.Accepted, error) {
 	return s.accept(ctx, req, func(tx *sql.Tx) (protocol.Accepted, error) {
+		if err := treeWritable(ctx, tx, p.AgentID); err != nil {
+			return protocol.Accepted{}, err
+		}
 		var state string
 		var paused bool
 		if err := tx.QueryRowContext(ctx, "SELECT state,paused FROM agents WHERE id=?", p.AgentID).Scan(&state, &paused); err != nil {

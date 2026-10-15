@@ -81,6 +81,12 @@ func scanMail(row interface{ Scan(...any) error }, body bool) (protocol.Mail, er
 
 func (s *Store) Send(ctx context.Context, req protocol.Request, p protocol.SendMessage, maxAgents int) (protocol.Accepted, error) {
 	return s.accept(ctx, req, func(tx *sql.Tx) (protocol.Accepted, error) {
+		if err := treeWritable(ctx, tx, p.AgentID); err != nil {
+			return protocol.Accepted{}, err
+		}
+		if err := treeCallerWritable(ctx, tx, p.Caller); err != nil {
+			return protocol.Accepted{}, err
+		}
 		if p.Delivery == "" {
 			p.Delivery = "queue"
 		}

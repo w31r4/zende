@@ -126,6 +126,12 @@ func prepareSpawn(ctx context.Context, tx *sql.Tx, p protocol.SpawnAgent, cwd st
 	fail := func(err error) (Selection, protocol.SpawnSource, []contextEntry, error) {
 		return Selection{}, protocol.SpawnSource{}, nil, err
 	}
+	if err := treeWritable(ctx, tx, p.ParentID); err != nil {
+		return fail(err)
+	}
+	if err := treeCallerWritable(ctx, tx, p.Caller); err != nil {
+		return fail(err)
+	}
 	if p.ParentID == "" || strings.TrimSpace(p.Input) == "" || len(p.Input) > 2<<20 || !utf8.ValidString(p.Input) || !filepath.IsAbs(cwd) {
 		return fail(protocol.E("invalid_params", "parent, task input (up to 2 MiB) and an absolute cwd are required"))
 	}

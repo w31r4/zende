@@ -51,6 +51,9 @@ func (s *Store) Selection(ctx context.Context, agent string) (Selection, error) 
 // together. The caller prepared against previous; concurrent choices conflict.
 func (s *Store) Select(ctx context.Context, req protocol.Request, next Selection, previous int64, modelChanged bool) (protocol.Accepted, error) {
 	return s.accept(ctx, req, func(tx *sql.Tx) (protocol.Accepted, error) {
+		if err := treeWritable(ctx, tx, next.Choice.AgentID); err != nil {
+			return protocol.Accepted{}, err
+		}
 		if !filepath.IsAbs(next.Choice.Cwd) || previous < 0 || len(next.Binding) > model.MaxBlockBytes || modelChanged && (next.Choice.Model == "" || !json.Valid(next.Binding)) {
 			return protocol.Accepted{}, protocol.E("invalid_params", "invalid prepared selection")
 		}

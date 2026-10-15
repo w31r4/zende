@@ -581,6 +581,29 @@ go test -race ./internal/runtime ./internal/store ./internal/render ./internal/c
 
 提示词版本 10 参考 Pi 的按能力组合短说明，文档按 trim-cn-tech-doc 合并过时待办并保留预算、游标、暂停与恢复条件。tui-design 用于沿用输出区和窄屏验证，零新增边框或按钮。二进制、SQLite、UDS、pipe/tmux 为真实本地组件；模型为本地 HTTP 夹具，子二进制为常规构建，宿主与包内并发由 race 检查。V18 本地链路完成，未进行真实供应商或用户级部署验收。
 
+## 2026-10-16：树级停止的持久准备
+
+6.7 部分实现，完成数仍为 37/68。schema 12 用追加事件保存停止范围与成员冻结状态；旧版本程序拒绝打开该版本，避免忽略停止约束。接口暂留存储层，尚未注册树级停止 CLI。全量 `go test ./...`、`go test -race ./...` 和 OpenSpec strict 校验通过；相关存储测试在 race 下连续 3 次通过。
+
+| 验证 | 入口 | 结果 |
+| --- | --- | --- |
+| 范围、重试与重开 | `TestTreeStopCapturesScopeAndPersistsAdmissionFence` | 根、子、孙同事务暂停；队列、未读消息和原上下文保留，范围外 Agent 不变；同 ID 重试不追加，重开后仍阻止 resume、submit、send、spawn 和选配 |
+| worktree 范围 | `TestTreeStopCapturesAllPendingWorktreeStates` | prepared/creating/unknown/ready 均纳入；已接受检出由子 Agent 覆盖；阻止新准备和派发，允许旧结果落定，禁止发布新子 Agent |
+| 事务失败与重叠 | `TestTreeStopOverlapAndFailureRollBackWholeScope` | 成员冻结、范围事件、回执写入失败全部回滚；重叠停止返回原操作身份，只读成员拒绝整项操作 |
+| 并发接受 | `TestTreeStopSpawnRaceIncludesOrRejectsChild`、`TestTreeStopWorktreePreparationAndAcceptanceRaces`、`TestTreeStopSubmitAndResumeRacesCannotReleaseFence` | 并发派生/准备/接受要么纳入范围，要么拒绝；提交与恢复不能在停止提交后解除暂停 |
+| 未知、容量与迁移 | `TestTreeStopRequiresExplicitMatchingScopeAndKeepsUnknown`、`TestTreeStopBoundRejectsWithoutPartialPause`、`TestTreeStopSchemaElevenMigrationPreservesFacts` | 树范围必须显式且匹配目标；未知效果仍待核实；超过 10000 个 Agent 整项拒绝；11→12 保留旧快照 |
+| 完成记录投影 | `TestTreeStopGateReleasesOnlyOnOriginalRootCompletion` | 仅原根操作的完成事件解除全树冻结，成员记录或别的操作无效；解除后仍人工暂停，旧 stop 重试不取消新工作。完成事件由夹具写入，不是进程退出验收 |
+
+Task 结果可继续落盘，但 Task 全部终态也不会把树操作自动改成 stopped。runner 停止、Git 身份与锁核实、停止流程的崩溃续接和公开命令仍待接通；本节不代表整树终止或部署验收通过。
+
+复现：
+
+```sh
+go test -race ./internal/store -run 'TreeStop|StopResume|StopAnd|MailboxPause' -count=3
+```
+
+说明按 trim-cn-tech-doc 区分“接受停止”和“已核实退出”，保留范围、上限和恢复条件。新增存储测试只使用隔离 SQLite 与夹具，没有发出进程终止信号或访问外部模型。
+
 ## 进行中
 
-继续 6.7 的树级停止与协作提示词验收。会话复制仍依赖第 6、9 组。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。
+继续 6.7：将持久停止范围接到 runner、worktree 和 core 恢复，再开放 CLI 并验证协作提示词。会话复制仍依赖第 6、9 组。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。
