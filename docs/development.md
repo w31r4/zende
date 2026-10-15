@@ -116,7 +116,7 @@ Git 查询使用 [porcelain v2](https://git-scm.com/docs/git-status#_porcelain_f
 
 ## 数据与恢复边界
 
-SQLite schema 为 7，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答与资源版本；更高版本拒绝打开。
+SQLite schema 为 12，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。版本 8 加入上下文视图事件，9 保存 worktree 准备，10 加入 mailbox，11 保存结果投递回执，12 加入整树停止事件与调度保护。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答与资源版本；更高版本拒绝打开。
 
 core 启动先将中断任务置为待核实，再按原身份恢复。取消中的任务保留 cancelling 和暂停选择；核实完成后结束取消，不恢复执行。历史、已接受输入和原 Task ID 保留。
 
@@ -155,7 +155,7 @@ Task 保存启动设置和提示词；每次 `model.started` 另存实际 cwd、
 
 stop/resume 使用稳定 `--request-id` 去重。重试旧 stop 只返回原接受记录，不停止后来任务。停止与 final 通过数据库事务排序：先提交 final 则保留 completed，先提交 stop 则取消优先，均保留人工暂停。
 
-`agent.paused`、`task.cancelling`、`task.cancelled`、`agent.resumed` 为追加事件，`paused` 单独记录用户选择。取消过程中崩溃或效果不明时出现 `task.cancellation_pending`，原调用记录保留。mailbox 与显式树级停止仍由第 6 组接入。
+`agent.paused`、`task.cancelling`、`task.cancelled`、`agent.resumed` 为追加事件，`paused` 单独记录用户选择。取消过程中崩溃或效果不明时出现 `task.cancellation_pending`，原调用记录保留。`agent stop AGENT --tree` 显式停止整树，暂停时收到的 mailbox 消息继续保存；范围、核实与恢复见 [停止与恢复](./collaboration.md#停止与恢复)。
 
 ## Agent loop
 
@@ -291,7 +291,7 @@ TUI 输入 `$` 或 `/skill` 打开当前 Agent 的已发布目录，候选在输
 
 CLI 用 `agent submit AGENT --skill RESOURCE@VERSION` 或 `question answer AGENT QUESTION --skill RESOURCE@VERSION`，`--skill` 可重复，也支持纯 skill 输入。提交时 core 核实该 Agent 发布过确切版本，将引用与输入原子保存；任务开始或回答投递时追加该版本正文、来源和版本到 user 消息。`disable-model-invocation` 允许用户显式选择；这不赋予正文 developer/system 权限。刷新和源文件删除不改已接受输入；辅助文件用 `resource read --version` 读取，脚本走进程接口。
 
-`resource_dirs` 自动发现、目录监测和模型请求边界通知仍由第 7 组接入；旧 Task 已保存的基础提示词保持原样。
+资源发布后，下一模型请求追加有界发现通知，按实际目录保存版本；旧 Task 的基础提示词和旧正文保持原样。限额、恢复与读取入口见 [请求级更新](./prompts.md#skillprompt-的请求级更新)。`resource_dirs` 自动发现、目录监视及 MCP 接入仍在第 7 组实施。
 
 ## Responses 接入
 
