@@ -39,6 +39,12 @@ func (p *Transcript) viewRows(width, rows, scroll int, fold bool, overrides map[
 		}
 		key := ""
 		switch entry.Kind {
+		case "mailbox":
+			sender := "user"
+			if entry.Mail.Source != nil {
+				sender = entry.Mail.Source.Caller.AgentID
+			}
+			prefix = "@ " + sender + separator + entry.Mail.Delivery + separator + entry.State + "\n"
 		case "question":
 			prefix = "? "
 			if entry.State == "cancelled" {
@@ -57,6 +63,9 @@ func (p *Transcript) viewRows(width, rows, scroll int, fold bool, overrides map[
 					text += "\n"
 				}
 				text += fmt.Sprintf("[skill %d]", len(entry.Skills))
+			}
+			if text == "" {
+				continue // a mailbox Task or status-only event is not user text
 			}
 		case "assistant":
 			switch entry.Category {

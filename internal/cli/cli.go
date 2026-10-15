@@ -78,6 +78,7 @@ func (a *app) command() *cobra.Command {
 	a.tuiCommands(root)
 	a.attachmentCommands(root)
 	a.questionCommands(root)
+	a.mailboxCommands(root)
 	a.resourceCommands(root)
 	a.workspaceCommands(root)
 	config := &cobra.Command{Use: "config", Short: "Inspect effective configuration without resolving secrets"}
@@ -175,6 +176,7 @@ func (a *app) command() *cobra.Command {
 	agent.AddCommand(recoverCommand)
 	a.selectionCommands(agent)
 	a.collaborationCommands(agent)
+	a.sendCommand(agent)
 	root.AddCommand(agent)
 	operation := &cobra.Command{Use: "operation", Short: "Look up acceptance after a connection failure"}
 	operation.AddCommand(&cobra.Command{Use: "inspect ID", Short: "Inspect a stable mutation request", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -247,6 +249,8 @@ func (a *app) call(cmd *cobra.Command, method string, mutation bool, params any)
 	case protocol.SpawnAgent:
 		caller = p.Caller
 	case protocol.Submit:
+		caller = p.Caller
+	case protocol.SendMessage:
 		caller = p.Caller
 	}
 	if caller != nil && a.operationID == "" {

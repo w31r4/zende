@@ -108,6 +108,13 @@ func (s *Store) BeginModelRequest(ctx context.Context, agent, task string, revis
 		if current.Choice.Revision != revision || seq != cursor {
 			return protocol.E("request_conflict", "context or settings changed before request start; rebuild the request")
 		}
+		var pending bool
+		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM mailbox m WHERE m.agent_id=? AND "+readySteer+")", agent).Scan(&pending); err != nil {
+			return err
+		}
+		if pending {
+			return protocol.E("request_conflict", "steer arrived before request start; deliver before rebuilding")
+		}
 		if notice != "" {
 			event, err := appendEvent(ctx, tx, agent, task, "context.message", ContextMessage{Message: model.Message{Role: "developer", Content: []model.Block{{Type: "text", Text: notice}}}})
 			if err != nil {

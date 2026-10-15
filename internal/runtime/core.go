@@ -37,6 +37,24 @@ func New(s *store.Store, config resource.Effective) *Core {
 
 func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 	switch req.Method {
+	case "agent.send":
+		var p protocol.SendMessage
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.Store.Send(ctx, req, p, c.Config.Config.Limits.Agents)
+	case "mailbox.inspect":
+		var p protocol.MailTarget
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.Store.Mail(ctx, p.ID)
+	case "mailbox.list":
+		var p protocol.MailboxQuery
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.Store.Mailbox(ctx, p)
 	case "agent.selection":
 		var p protocol.Target
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

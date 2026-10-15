@@ -25,6 +25,7 @@ type Entry struct {
 	Kind, Category, State, Text                string
 	Attachments                                []string
 	Skills                                     []protocol.ResourceRef
+	Mail                                       *protocol.MailInfo
 	Index                                      int
 	Seq, LastSeq                               int64
 	Truncated, Hidden                          bool
@@ -73,6 +74,7 @@ func (p *Transcript) text(entry *Entry, text string, appendText bool) {
 func (p *Transcript) trim() {
 	for len(p.Entries) > transcriptEntries || p.bytes > transcriptBytes {
 		p.bytes -= len(p.Entries[0].Text)
+		p.bytes -= mailBytes(p.Entries[0].Mail)
 		for _, id := range p.Entries[0].Attachments {
 			p.bytes -= len(id)
 		}
@@ -139,6 +141,8 @@ func (p *Transcript) Apply(e protocol.Event) error {
 
 func (p *Transcript) apply(e protocol.Event) error {
 	switch e.Kind {
+	case "mailbox.accepted", "mailbox.delivered":
+		return p.applyMail(e)
 	case "question.asked", "question.answered", "question.cancelled":
 		var q protocol.Question
 		if err := decodePayload(e, &q); err != nil {
@@ -255,6 +259,17 @@ func (p *Transcript) apply(e protocol.Event) error {
 			state = data.State
 		}
 		p.entry(e, "task:"+e.TaskID, "user").State = state
+		for i := range p.Entries {
+			entry := &p.Entries[i]
+			if entry.Mail != nil && entry.TaskID == e.TaskID && entry.Mail.DeliveredSeq > 0 {
+				entry.Mail.TaskState, entry.LastSeq = state, e.Seq
+				entry.State = "delivered"
+				if state == "completed" {
+					entry.State = "processed"
+				}
+				entry.Mail.State = entry.State
+			}
+		}
 		switch state {
 		case "completed", "failed", "cancelled":
 			p.Agent.State = "idle"

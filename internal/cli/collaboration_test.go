@@ -101,6 +101,22 @@ func TestSpawnCLIAttributionIdempotencyAndReuse(t *testing.T) {
 	if json.Unmarshal(follow, &continued) != nil || continued.AgentID != child.AgentID || continued.TaskID == child.TaskID {
 		t.Fatal(string(follow))
 	}
+	var sent protocol.Accepted
+	message := run("peer message", "agent", "send", child.AgentID, "--file", "-", "--delivery", "steer")
+	if err := json.Unmarshal(message, &sent); err != nil || sent.MessageID == "" || sent.TaskID != "" {
+		t.Fatal(string(message), err)
+	}
+	if repeated := run("peer message", "agent", "send", child.AgentID, "--file", "-", "--delivery", "steer"); !bytes.Equal(message, repeated) {
+		t.Fatal("send retry duplicated message")
+	}
+	var inbox protocol.MailboxPage
+	if err := json.Unmarshal(run("", "mailbox", "list", "--direction", "outbox"), &inbox); err != nil || len(inbox.Items) != 1 || inbox.Items[0].ID != sent.MessageID {
+		t.Fatal(inbox, err)
+	}
+	var mail protocol.Mail
+	if err := json.Unmarshal(run("", "mailbox", "inspect", sent.MessageID), &mail); err != nil || mail.Source == nil || mail.Source.Caller != caller || mail.Input != "peer message" || mail.State != "accepted" {
+		t.Fatal(mail, err)
+	}
 	history, err := s.Events(ctx, protocol.Cursor{AgentID: child.AgentID, Limit: 1000})
 	if err != nil {
 		t.Fatal(err)
@@ -129,6 +145,9 @@ func TestSpawnCLIAttributionIdempotencyAndReuse(t *testing.T) {
 	}
 	nextRaw, _ := json.Marshal(nextCaller)
 	t.Setenv(protocol.CallerEnvironment, string(nextRaw))
+	if repeated := run("peer message", "--request-id", sent.OperationID, "agent", "send", child.AgentID, "--file", "-", "--delivery", "steer"); !bytes.Equal(message, repeated) {
+		t.Fatal("retry caller changed message")
+	}
 	if retried := run(input, "--request-id", child.OperationID, "agent", "spawn", "--task-file", "-"); !bytes.Equal(retried, acceptedBytes) {
 		t.Fatal("new caller changed accepted spawn", string(retried))
 	}

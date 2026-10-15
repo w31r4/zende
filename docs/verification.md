@@ -533,6 +533,31 @@ go test -race ./internal/workspace ./internal/store ./internal/runtime ./interna
 
 提示词按 Pi 的能力条件组合，文档按 trim-cn-tech-doc 合并默认值与恢复说明，保留目录预留、计时器、Git 过滤器和不确定结果的边界。
 
+## 2026-10-16：持久 mailbox 与 queue/steer
+
+6.4、6.5 已完成，累计 36/68 项。schema 10 保存消息、来源、接收 Task 和投递游标；接受与投递分别提交，查询不消费。全量 `go test ./...`、`go test -race ./...`、CLI 帮助和 OpenSpec strict 校验通过；新增协作、mailbox 与显示用例在 race 下连续 3 次通过。
+
+| 验证 | 入口 | 结果 |
+| --- | --- | --- |
+| 接受、来源与去重 | `TestMailboxAcceptanceAttributionRetryAndReadOnlyQueries`、`TestSpawnCLIAttributionIdempotencyAndReuse` | 八路并发同 ID 只接受一次；人类/模型来源区分，跨调用重试保留首次归因；收件/发件查询只读，重开后原消息与处理结果保持 |
+| 事务与迁移 | `TestMailboxAtomicAcceptanceDeliveryAndSchemaNineMigration`、`TestMailboxSteerBatchRollbackAndSelfSource` | 接受回执、正文投递、游标和事件四处故障完整回滚；一批 steer 第二条失败也不留下第一条投递；自发自收的两侧 seq 正确；9→10 保留原快照 |
+| 调度、暂停与顺序 | `TestMailboxPauseResumeOrderPriorityAndRequestFence`、`TestMailboxPausedAndIdleSchedulingBothModes` | 忙碌、空闲、暂停、unknown 均有验证；resume 按已有消息接收顺序，显式 submit 优先；暂停中的消息不唤醒，重复 resume 不更换预留 Task，迟到 steer 拒绝过期请求准备 |
+| 完整工具组 | `TestMailboxQueueSteerWaitForWholeToolGroupAndKeepOneLoop` | 两个受控工具全部完成后 steer 才进入下一请求，原工具未取消；queue 在原 Task 完成后启动新 Task；三次模型请求、两个工具派发，无第二条并行循环 |
+| 限额与分页 | `TestMailboxValidationPaginationAndCapacity` | UTF-8、256 KiB 正文、128 条待投递上限、活动 Agent 容量、状态与游标校验通过；列表只含元数据，旧消息和历史不被删 |
+| 显示与重放 | `TestMailboxProjectionAttributionLifecycleAndWidth`、`TestMailboxProjectionRejectsMalformedEventsAndBoundsRetention` | 80×24、60×24、48×16 保留发送者及状态，正文只显示一次；控制符转义、宽字符、裁切预算、错误事件和未知处理状态通过；无新面板或按钮 |
+| 真实 core 崩溃 | `TestBinaryMailboxSurvivesAcceptanceAndDeliveryCrashes` | 暂停中接受后 SIGKILL，重启仍暂停；resume 投递后再次 SIGKILL，重启继续原 Task；同 ID 重试返回原消息，一个 Task、一次上下文投递；CLI 读取的实际历史可由 TUI 同源重放 |
+
+`processed` 只表示关联 Task 已完成，不是外部业务验收。失败、取消和待核实单独保留在 `task_state`，已进入上下文的消息不会因处理失败自动重投。
+
+```sh
+go test -race ./internal/render ./internal/store ./internal/runtime ./internal/cli \
+  -run 'Mailbox|SpawnCLI|CollaborationHints' -count=3 -timeout=120s
+```
+
+首轮夹具修正了旧 schema 模拟时遗漏移除 mailbox 表、工具结果字段与 role 的假设，以及将 steer 显示误断言为 queue；原失败不计为通过。
+
+提示词版本 9 继续按 Pi 的已注册能力组合，区分接受、投递和处理完成；按 trim-cn-tech-doc 合并规则并保留限额与恢复条件。tui-design 用于复用输出区和窄屏检查，零新增边框/按钮，邮箱状态只用一处文字标记。Git、SQLite、UDS 和二进制是真实本地组件；模型为本地夹具，未使用外部凭据或执行用户级部署。
+
 ## 进行中
 
-继续第 6 组的 mailbox、投递与结果回流。会话复制依赖第 6、9 组；协作提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。
+继续 6.6 的自动结果回流和 wait 去重。会话复制依赖第 6、9 组；协作提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。

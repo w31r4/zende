@@ -80,8 +80,8 @@ func (s *Store) Resume(ctx context.Context, req protocol.Request, p protocol.Tar
 		if err := checkCapacity(ctx, tx, p.AgentID, maxAgents); err != nil {
 			return protocol.Accepted{}, err
 		}
-		var task string
-		err := tx.QueryRowContext(ctx, "SELECT id FROM tasks WHERE agent_id=? AND state='accepted' ORDER BY priority DESC,rowid LIMIT 1", p.AgentID).Scan(&task)
+		queued, err := nextQueuedTask(ctx, tx, p.AgentID)
+		task := queued.ID
 		if errors.Is(err, sql.ErrNoRows) {
 			next, e := createTask(ctx, tx, p.AgentID, "Continue from the saved context. Inspect prior tool results and running processes; do not repeat completed actions.")
 			err = e

@@ -15,6 +15,7 @@ type Work struct {
 	Task  protocol.Task
 }
 type ContextMessage struct {
+	MessageID  string                 `json:"message_id,omitempty"`
 	RequestID  string                 `json:"request_id,omitempty"`
 	QuestionID string                 `json:"question_id,omitempty"`
 	Message    model.Message          `json:"message"`
@@ -29,7 +30,9 @@ type ContextSummaryRef struct {
 }
 
 func (s *Store) ReadyAgents(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT DISTINCT a.id FROM agents a JOIN tasks t ON t.agent_id=a.id WHERE a.state='idle' AND a.paused=0 AND t.state='accepted' ORDER BY a.rowid`)
+	rows, err := s.db.QueryContext(ctx, `SELECT a.id FROM agents a WHERE a.state='idle' AND a.paused=0 AND
+ (EXISTS(SELECT 1 FROM tasks t WHERE t.agent_id=a.id AND t.state='accepted') OR
+ EXISTS(SELECT 1 FROM mailbox m WHERE m.agent_id=a.id AND m.task_id IS NULL)) ORDER BY a.rowid`)
 	if err != nil {
 		return nil, err
 	}
@@ -59,7 +62,7 @@ func (s *Store) ClaimNext(ctx context.Context, id string) (*Work, error) {
 		if err != nil {
 			return err
 		}
-		*t, err = scanTask(tx.QueryRowContext(ctx, `SELECT id,agent_id,state,input,result,attachments,skills FROM tasks WHERE agent_id=? AND state='accepted' ORDER BY priority DESC,rowid LIMIT 1`, id))
+		*t, err = nextQueuedTask(ctx, tx, id)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -75,6 +78,22 @@ func (s *Store) ClaimNext(ctx context.Context, id string) (*Work, error) {
 		a.State, t.State = "running", "running"
 		if _, err := appendEvent(ctx, tx, id, t.ID, "task.started", *t); err != nil {
 			return err
+		}
+		var mailID string
+		err = tx.QueryRowContext(ctx, "SELECT id FROM mailbox WHERE task_id=? AND delivered_seq=0", t.ID).Scan(&mailID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if mailID != "" {
+			m, err := scanMail(tx.QueryRowContext(ctx, "SELECT "+mailColumns+",m.input FROM mailbox m LEFT JOIN tasks t ON t.id=m.task_id WHERE m.id=?", mailID), true)
+			if err != nil {
+				return err
+			}
+			if err := deliverMail(ctx, tx, m, t.ID); err != nil {
+				return err
+			}
+			work = w
+			return nil
 		}
 		var content []model.Block
 		if t.Input != "" {

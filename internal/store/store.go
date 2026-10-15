@@ -15,7 +15,7 @@ import (
 	"zende.local/harness/internal/protocol"
 )
 
-const SchemaVersion = 9
+const SchemaVersion = 10
 
 type Store struct {
 	db   *sql.DB
@@ -109,7 +109,12 @@ PRAGMA user_version=2;`); err != nil {
 			}
 		}
 		// v8 adds context.view events; v9 records external worktree preparation.
-		_, err := tx.Exec(worktreeSchema)
+		if version < 9 {
+			if _, err := tx.Exec(worktreeSchema); err != nil {
+				return err
+			}
+		}
+		_, err := tx.Exec(mailboxSchema)
 		return err
 	})
 }
@@ -328,11 +333,12 @@ func (s *Store) Submit(ctx context.Context, req protocol.Request, p protocol.Sub
 func checkCapacity(ctx context.Context, tx *sql.Tx, agent string, maxAgents int) error {
 	var count, own int
 	const active = "state IN ('accepted','running','cancelling','unknown')"
-	if err := tx.QueryRowContext(ctx, "SELECT count(DISTINCT agent_id) FROM tasks WHERE "+active).Scan(&count); err != nil {
+	const reserved = "SELECT agent_id FROM tasks WHERE " + active + " UNION SELECT agent_id FROM mailbox WHERE delivered_seq=0"
+	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM ("+reserved+")").Scan(&count); err != nil {
 		return err
 	}
 	if agent != "" {
-		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM tasks WHERE agent_id=? AND "+active, agent).Scan(&own); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM ("+reserved+") WHERE agent_id=?", agent).Scan(&own); err != nil {
 			return err
 		}
 	}

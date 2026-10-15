@@ -1,6 +1,6 @@
 # Agent 创建与复用
 
-已实现 spawn、worktree、后续任务提交、调用归因和持久去重。Agent 由 core 调度，CLI 返回身份后退出，子 Agent 不另开 TUI。
+已实现 spawn、worktree、任务提交、mailbox、queue/steer、调用归因和持久去重。Agent 由 core 调度，CLI 返回身份后退出，子 Agent 不另开 TUI。
 
 ## 用法
 
@@ -15,7 +15,38 @@ zende --profile dev agent history CHILD --after 0
 
 模型在 exec_command 中可省略 `--parent`。spawn 的 `--task-file`（别名 `--file`）支持文件或 `-` 读 stdin，也可直接传文字；上限 2 MiB UTF-8。回执含 Agent、首个 Task、操作身份和继承范围。`accepted` 表示任务已保存，结果从 inspect/history 查询。
 
-submit 给同一 Agent 增加 Task，保留历史；忙碌时排队，人工暂停时显式 submit 可唤醒。它还不是待实现的 send/mailbox 投递接口。
+submit 给同一 Agent 增加 Task，保留历史；忙碌时排队，人工暂停时显式 submit 可唤醒。send 保存通信消息，按 queue/steer 投递并保留暂停。
+
+## Mailbox
+
+```sh
+zende --profile dev --request-id message-1 agent send CHILD --file MESSAGE.md
+zende --profile dev --request-id message-2 agent send CHILD --file URGENT.md --delivery steer
+zende --profile dev mailbox list --agent CHILD --state accepted
+zende --profile dev mailbox inspect MESSAGE
+zende --profile dev mailbox list --agent PARENT --direction outbox
+```
+
+send 支持位置文本、文件或 `--file -`，最多 256 KiB UTF-8；每个接收方最多保留 128 条尚未投递的消息。待投递 mailbox 与已接受任务共同计入活动 Agent 容量；达限拒绝新消息，已有内容保留。消息限额见命令帮助，活动 Agent 上限见配置；压测与配置覆盖仍归 9.6。
+
+回执包含 `message_id`，此时不保证已有处理 Task。记录保留发送来源、接收方、原操作 ID、正文及投递方式；模型命令自动携带调用归因，人类调用标记 `sender_kind: user`。消息原文与接受事件同事务保存。
+
+| 接收方状态 | queue，默认 | steer |
+| --- | --- | --- |
+| 忙碌 | 当前 Task 终态后新建处理任务 | 当前响应的完整工具组及提问回答落定后，在下一请求前投递 |
+| 空闲且可运行 | 新建处理任务 | 新建处理任务 |
+| 人工暂停 | 保存，等待恢复 | 保存，等待恢复 |
+| 副作用待核实 | 保存，原恢复屏障保持 | 保存，原恢复屏障保持 |
+
+resume 按接收顺序处理此前未投递的消息；旧 steer 不越过更早的 queue。恢复后新收到的 steer 可在下一请求前投递。显式用户 submit 唤醒时先处理新输入，已有 mailbox 留待随后；原 cancelled Task 不复活。已进入上下文的消息即使其处理任务后来失败或取消，也不重新投递，原文与 Task 结果仍可查询。
+
+`accepted` 表示已保存；`delivered` 表示已追加到接收方上下文；`processed` 表示关联 Task 已完成。`task_state` 另报运行、失败、取消或待核实，完成也不代表发送者的业务要求经外部验证。进入上下文、接收 Task 关联及 `delivered_seq` 在同一事务提交；新请求开始前再次检查迟到的 steer。
+
+模型输入使用普通 user 传输消息，正文前单列来源元数据，明确 Agent 文本是同伴通信；不把它提升为 developer 指令或伪装成人类新要求。原始内容块与 `message_id` 进入追加历史。
+
+list 只返回元数据，inspect 返回正文；查询不消费消息。`--agent` 在模型命令中默认取调用者，其他场景必填。收件箱按接收事件 seq 分页，发件箱按发送事件 seq 分页，`--after` 使用返回的 `next`，每页最多 100 条。状态筛选是当前状态投影：刷新旧消息状态须从 0 重查或 inspect；跨游标查询不补报旧消息的新状态。
+
+TUI 在原输出区显示发送者、queue/steer 和状态，同一消息只显示一次；自动创建的处理 Task 不另造一条用户输入。CLI history 保留同一组事件，显示裁切不改原文。
 
 ## 继承
 
@@ -71,21 +102,24 @@ Git 自身的失败清理由 Git 决定，harness 不执行 reset、prune 或目
 
 runner 在 pipe 和 PTY 的 shell 环境中写入 `ZENDE_CALLER`：启动它的 Agent、Task 与宿主执行操作 ID。CLI 自动携带；core 从原 `tool.dispatching` 核对模型请求和工具调用，未知来源或 parent 不符时拒绝。该信息用于归因，不是权限或安全隔离。长命 shell 续写仍归于最初的执行来源，环境不随每次 stdin 改写。
 
-同一次命令内，spawn/submit 未指定请求 ID 时，由调用来源与规范化参数生成稳定 ID。重试返回原回执；有意创建内容相同的多个任务需分别指定 `--request-id`。跨工具调用重试也应显式复用原 ID：新的归因信息不改变原接受身份，历史仍保留首次来源；任务参数变化则报冲突。人类命令默认生成新 ID。
+同一次命令内，spawn/submit/send 未指定请求 ID 时，由调用来源与规范化参数生成稳定 ID。重试返回原回执；有意创建内容相同的多个任务或消息需分别指定 `--request-id`。跨工具调用重试也应显式复用原 ID：新的归因信息不改变原接受身份，历史仍保留首次来源；任务或消息参数变化则报冲突。人类命令默认生成新 ID。
 
 子身份、选择、继承内容、首个任务、父来源事件和接受回执同事务保存。断线可用 `operation inspect ID` 查询；已接受重试不重新检查父当前设置、路径或容量。
 
 ## 后续范围
 
-send、mailbox、queue/steer、自动结果回流及 wait 去重归 6.4–6.6。树级停止（含尚未接受的工作目录准备）和全部协作提示词验收归 6.7。当前命令帮助与提示词只列已注册能力。
+自动结果回流及 wait 去重归 6.6。树级停止（含尚未接受的工作目录准备）和全部协作提示词验收归 6.7。当前命令帮助与提示词只列已注册能力。
 
 本地链路复现：
 
 ```sh
 go test ./internal/cli -run TestBinaryModelSpawnsThroughPipeAndPTYCLI -count=1 -v
 go test ./internal/cli -run TestBinaryWorktreeRecoversAfterCoreSIGKILL -count=1 -v
+go test ./internal/cli -run TestBinaryMailboxSurvivesAcceptanceAndDeliveryCrashes -count=1 -v
 ```
 
 测试真实二进制、SQLite、UDS、pipe 和 tmux，模型使用本地 HTTP 夹具。子请求保持运行时父任务可完成，重复 spawn 只产生一个子 Agent，再次 submit 沿用原历史；不代表真实供应商或用户级部署验收。
 
 worktree 用例在真实 Git 检出中途终止测试 core，重启后先验证忙碌拒绝，再释放检出并用原 ID 续接；只创建一次目录和子 Agent，不调用外部模型。
+
+mailbox 用例在暂停中接受消息后，以及消息进入上下文后，分别 SIGKILL 测试 core；重启保持暂停或继续原 Task。同一 ID 重试仍返回原消息，投递只有一次，模型为本地 HTTP 夹具。

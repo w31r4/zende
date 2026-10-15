@@ -204,6 +204,7 @@ type Snapshot struct {
 }
 
 type Accepted struct {
+	MessageID   string          `json:"message_id,omitempty"`
 	OperationID string          `json:"operation_id"`
 	AgentID     string          `json:"agent_id"`
 	TaskID      string          `json:"task_id,omitempty"`
