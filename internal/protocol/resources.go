@@ -1,17 +1,46 @@
 package protocol
 
+import (
+	"encoding/hex"
+	"strings"
+)
+
 const (
 	MaxResourceFileBytes = 1 << 20
 	MaxResourceBytes     = 8 << 20
 	MaxResourceFiles     = 256
 	MaxInstructionBytes  = 128 << 10
 	MaxInputSkills       = 8
+	MaxAgentResources    = 512
 )
 
 // ResourceRef pins content; publication of a new version never retargets it.
 type ResourceRef struct {
 	ID      string `json:"resource_id"`
 	Version string `json:"version"`
+}
+
+// ResourceCatalog identifies the ready definitions visible at a request
+// boundary. Membership does not mean that their instructions were applied.
+type ResourceCatalog struct {
+	Generation int64         `json:"generation"`
+	Entries    []ResourceRef `json:"entries"`
+}
+
+func (c ResourceCatalog) Valid() bool {
+	if c.Generation < 0 || len(c.Entries) > MaxAgentResources || (c.Generation == 0) != (len(c.Entries) == 0) {
+		return false
+	}
+	previous := ""
+	for _, ref := range c.Entries {
+		id, err := hex.DecodeString(strings.TrimPrefix(ref.ID, "resource_"))
+		version, versionErr := hex.DecodeString(ref.Version)
+		if err != nil || len(id) != 16 || versionErr != nil || len(version) != 32 || ref.ID <= previous || ref.ID != "resource_"+hex.EncodeToString(id) || ref.Version != hex.EncodeToString(version) {
+			return false
+		}
+		previous = ref.ID
+	}
+	return true
 }
 
 // IDs identify a source within a profile; versions identify its immutable bytes.

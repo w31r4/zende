@@ -235,7 +235,7 @@ func TestMailboxPauseResumeOrderPriorityAndRequestFence(t *testing.T) {
 	q := sendMail(t, s, a.AgentID, "queue", "queued")
 	st := sendMail(t, s, a.AgentID, "steer", "steer")
 	view, _ := s.ContextSnapshot(ctx, a.AgentID)
-	if err := s.BeginModelRequest(ctx, a.AgentID, a.TaskID, 0, view.Cursor, "", func(int64) any { return map[string]string{"request_id": "blocked"} }); err == nil {
+	if err := s.BeginModelRequest(ctx, a.AgentID, a.TaskID, 0, view.Cursor, nil, func(int64) any { return map[string]string{"request_id": "blocked"} }); err == nil {
 		t.Fatal("request skipped pending steer")
 	}
 	mailControl(t, s, "stop", a.AgentID)

@@ -87,7 +87,7 @@ func (s *Store) PublishResource(ctx context.Context, req protocol.Request, agent
 		if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM agent_resources WHERE agent_id=?", agent).Scan(&count); err != nil {
 			return protocol.Accepted{}, err
 		}
-		if previous == "" && count >= 512 {
+		if previous == "" && count >= protocol.MaxAgentResources {
 			return protocol.Accepted{}, protocol.E("resource_limit", "Agent catalog exceeds 512 resources")
 		}
 		raw, err := json.Marshal(p)
@@ -125,6 +125,46 @@ ON CONFLICT(agent_id,id) DO UPDATE SET version=excluded.version,generation=exclu
 		}
 		return protocol.Accepted{AgentID: agent, Resource: &p.Info}, nil
 	})
+}
+
+// ResourceSnapshot is read in the same transaction as the model context. Only
+// metadata is loaded; bodies and assets stay behind versioned resource.read.
+type ResourceSnapshot struct {
+	Catalog protocol.ResourceCatalog
+	Items   []protocol.ResourceStatus
+}
+
+func resourceSnapshot(ctx context.Context, tx *sql.Tx, agent string) (ResourceSnapshot, error) {
+	r := ResourceSnapshot{Catalog: protocol.ResourceCatalog{Entries: []protocol.ResourceRef{}}}
+	if err := tx.QueryRowContext(ctx, "SELECT coalesce(max(generation),0) FROM resource_publications WHERE agent_id=?", agent).Scan(&r.Catalog.Generation); err != nil {
+		return r, err
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT r.id,r.version,r.generation,v.info FROM agent_resources r
+ JOIN resource_versions v ON r.id=v.id AND r.version=v.version WHERE r.agent_id=? ORDER BY r.id LIMIT ?`, agent, protocol.MaxAgentResources+1)
+	if err != nil {
+		return r, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, version, raw string
+		var item protocol.ResourceStatus
+		if err := rows.Scan(&id, &version, &item.Generation, &raw); err != nil {
+			return r, err
+		}
+		if len(raw) > 32<<10 || protocol.StrictDecode([]byte(raw), &item.ResourceInfo) != nil || item.ID != id || item.Version != version || item.Generation <= 0 || item.Generation > r.Catalog.Generation {
+			return r, protocol.E("invalid_state", "saved resource metadata changed")
+		}
+		item.State = "ready"
+		r.Items = append(r.Items, item)
+		r.Catalog.Entries = append(r.Catalog.Entries, protocol.ResourceRef{ID: id, Version: version})
+	}
+	if err := rows.Err(); err != nil {
+		return r, err
+	}
+	if !r.Catalog.Valid() {
+		return r, protocol.E("invalid_state", "saved resource catalog is inconsistent")
+	}
+	return r, nil
 }
 
 func resourceAgent(ctx context.Context, tx *sql.Tx, agent string, writable bool) error {

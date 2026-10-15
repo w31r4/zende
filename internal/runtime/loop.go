@@ -228,17 +228,18 @@ func (c *Core) executeWork(ctx, persist context.Context, w store.Work, resume *r
 }
 
 type requestRecord struct {
-	ID              string            `json:"request_id"`
-	Model           string            `json:"model"`
-	Protocol        string            `json:"protocol"`
-	Cursor          int64             `json:"context_cursor"`
-	ViewID          string            `json:"context_view,omitempty"`
-	Tools           []tool.Descriptor `json:"tools"`
-	MaxOutputTokens int               `json:"max_output_tokens"`
-	FormatRepair    bool              `json:"format_repair"`
-	RepairAttempt   int               `json:"repair_attempt"`
-	RepairLimit     int               `json:"repair_limit"`
-	Settings        *taskSettings     `json:"settings,omitempty"`
+	ID              string                    `json:"request_id"`
+	Model           string                    `json:"model"`
+	Protocol        string                    `json:"protocol"`
+	Cursor          int64                     `json:"context_cursor"`
+	ViewID          string                    `json:"context_view,omitempty"`
+	Tools           []tool.Descriptor         `json:"tools"`
+	MaxOutputTokens int                       `json:"max_output_tokens"`
+	FormatRepair    bool                      `json:"format_repair"`
+	RepairAttempt   int                       `json:"repair_attempt"`
+	RepairLimit     int                       `json:"repair_limit"`
+	Settings        *taskSettings             `json:"settings,omitempty"`
+	ResourceCatalog *protocol.ResourceCatalog `json:"resource_catalog,omitempty"`
 }
 type invocation struct {
 	SchemaVersion int            `json:"schema_version,omitempty"`
@@ -430,8 +431,12 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 	}
 	noticePending := settings.SelectionRevision > 0 && (resume == nil || resume.Journal.Request == nil)
 	previousView := ""
+	var previousResources int64
 	if resume != nil && resume.Journal.Request != nil {
 		previousView = resume.Journal.Request.ViewID
+		if resume.Journal.Request.ResourceCatalog != nil {
+			previousResources = resume.Journal.Request.ResourceCatalog.Generation
+		}
 	}
 	conflicts := 0
 	for {
@@ -459,8 +464,15 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if noticePending || nextSettings.SelectionRevision != settings.SelectionRevision || contextSnapshot.View.ID != previousView {
 			notice = selectionNotice(nextSettings)
 		}
+		var notices []store.ContextMessage
 		if notice != "" {
-			messages = append(messages, model.Message{Role: "developer", Content: []model.Block{{Type: "text", Text: notice}}})
+			notices = append(notices, store.ContextMessage{Message: model.Message{Role: "developer", Content: []model.Block{{Type: "text", Text: notice}}}})
+		}
+		if changed := resourceNotice(contextSnapshot.Resources, previousResources, contextSnapshot.View.ID != previousView, commands); changed != nil {
+			notices = append(notices, *changed)
+		}
+		for _, item := range notices {
+			messages = append(messages, item.Message)
 		}
 		req := model.Request{ID: protocol.NewID("request"), Model: nextBinding.Model, System: system, Messages: messages, MaxOutputTokens: nextBinding.MaxOutputTokens}
 		req.Images, err = c.resolveImages(ctx, w.Agent.ID, messages, nextBinding.Images)
@@ -479,8 +491,8 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 				return "", err
 			}
 		}
-		err = c.Store.BeginModelRequest(persist, w.Agent.ID, w.Task.ID, nextSettings.SelectionRevision, cursor, notice, func(cursor int64) any {
-			return requestRecord{ID: req.ID, Model: nextBinding.Model, Protocol: nextBinding.Protocol, Cursor: cursor, ViewID: contextSnapshot.View.ID, Tools: requestDescriptors, MaxOutputTokens: req.MaxOutputTokens, FormatRepair: repairOnly, RepairAttempt: repairs, RepairLimit: limit, Settings: &nextSettings}
+		err = c.Store.BeginModelRequest(persist, w.Agent.ID, w.Task.ID, nextSettings.SelectionRevision, cursor, notices, func(cursor int64) any {
+			return requestRecord{ID: req.ID, Model: nextBinding.Model, Protocol: nextBinding.Protocol, Cursor: cursor, ViewID: contextSnapshot.View.ID, Tools: requestDescriptors, MaxOutputTokens: req.MaxOutputTokens, FormatRepair: repairOnly, RepairAttempt: repairs, RepairLimit: limit, Settings: &nextSettings, ResourceCatalog: &contextSnapshot.Resources.Catalog}
 		})
 		if isFailure(err, "request_conflict") && conflicts < 8 {
 			conflicts++
@@ -491,6 +503,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		}
 		conflicts, noticePending = 0, false
 		previousView = contextSnapshot.View.ID
+		previousResources = contextSnapshot.Resources.Catalog.Generation
 		settings, binding, w.Agent.Cwd = nextSettings, nextBinding, nextSettings.Cwd
 		var collector model.Collector
 		classifier := model.Classifier{Native: binding.NativeCategories}

@@ -680,6 +680,29 @@ go test -race ./internal/runtime ./internal/tool ./internal/store \
 
 崩溃测试的独立 core/runner 使用本包测试二进制，继承 race 构建；Git、SQLite、UDS、pipe/tmux 为真实组件，模型使用确定性夹具。未使用外部凭据、修改参考仓库或部署用户服务；主动脱离原进程组/session 的守护程序仍不在停止范围内。
 
+## 2026-10-16：请求资源版本与同任务 skill 更新
+
+7.6 已完成，累计 39/68 项。每次请求保存 skill/prompt 目录版本，发布后在下一请求追加有界发现通知。全量 `go test ./...`、`go test -race ./...` 和 OpenSpec strict 校验通过。
+
+| 验证 | 入口 | 结果 |
+| --- | --- | --- |
+| 同任务安装、更新和执行 | `TestModelInstallsRefreshesAndUsesSkillThroughBinaryCLI` | 真实 CLI、UDS、SQLite 和 shell 完成六次模型请求：安装、读旧版、更新、读两版及 prompt/脚本、执行、final；一个 Task、三次发布、五次派发，脚本效果一次 |
+| 请求与调用保留版本 | `TestResourcesRefreshBetweenRequestsWithoutReplacingContext` | 流中发布新版和 16 项资源，原请求及旧版本读取不变；后续请求看到新目录，工具结果保留两版正文，模型和 cwd 不变 |
+| 发布与请求竞态 | `TestResourceSnapshotSharesRequestBoundaryAndRollsBackNotices`、`TestResourcePublicationBeforeDispatchRebuildsWithoutLeakingNotice` | 同事务读取上下文和目录；并发发布使旧请求重建，通知与请求记录一起回滚或提交，重开后版本仍可读 |
+| 通知预算及内容边界 | `TestResourceNoticeIsBoundedConditionalAndEscaped` | 最多 8 项、12 KiB；多次发布合并，超出部分可查询，正文不自动注入；禁用自行调用的 skill 不进入提示，元数据转义，不宣传未注册入口 |
+| 重启与视图更新 | `TestResourceNoticesRecoverWithoutDuplication`、`TestResourceDiscoveryReturnsAfterContextViewChange` | 相同 generation 恢复不重复，离线新发布补通知；摘要覆盖旧提示后重新提供当前发现信息 |
+| 恢复记录校验 | `TestResourceCatalogValidation`、`TestResourceCatalogRecoveryRejectsImpossibleRecords` | 拒绝无效引用、重复/超额条目、未来或倒退 generation、同代改写；旧请求缺少 catalog 时仍可恢复 |
+
+```sh
+go test ./internal/cli -run TestModelInstallsRefreshesAndUsesSkillThroughBinaryCLI -count=1 -v
+go test -race ./internal/runtime ./internal/store ./internal/protocol ./internal/cli \
+  -run 'Resource|RequestBoundary|ResourcesRefresh|TestModelInstallsRefreshesAndUsesSkillThroughBinaryCLI' -count=3
+```
+
+CLI 集成的 core/runner 在测试进程内，命令为真实子进程，模型为确定性夹具；本轮不声称外部模型或用户部署验收通过。没有使用凭据、修改参考仓库或启动用户服务。已有资源包校验、版本留存、用户显式 skill 输入和配置档隔离用例随全量测试通过。
+
+通知参考 Pi `7bc154ad082e2f0029c19117a16d22a504439476` 的能力条件和延迟读取，格式独立标为 `zende/resources` 版本 1，核心 prompt 保持版本 11。trim-cn-tech-doc 精简说明入口，保留限额、来源、失败边界和验证命令。
+
 ## 进行中
 
-继续第 7 组的资源热加载、MCP 搜索调用及 skill 请求级更新。会话复制仍依赖第 9 组的视图和恢复能力。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。
+继续外部目录监视、MCP 搜索调用、配置/provider 热发布和独立进程插件。7.1、7.7 的 skill/prompt 请求部分已接通，整体仍未勾选。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。

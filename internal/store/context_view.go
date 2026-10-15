@@ -30,9 +30,10 @@ func (v ContextView) message() model.Message {
 }
 
 type ContextSnapshot struct {
-	Messages []model.Message
-	Cursor   int64
-	View     ContextView
+	Messages  []model.Message
+	Cursor    int64
+	View      ContextView
+	Resources ResourceSnapshot
 }
 
 func (s *Store) ContextSnapshot(ctx context.Context, agent string) (ContextSnapshot, error) {
@@ -53,7 +54,8 @@ func (s *Store) ContextSnapshot(ctx context.Context, agent string) (ContextSnaps
 		for _, entry := range entries {
 			snapshot.Messages = append(snapshot.Messages, entry.Record.Message)
 		}
-		return nil
+		snapshot.Resources, err = resourceSnapshot(ctx, tx, agent)
+		return err
 	})
 	return snapshot, err
 }

@@ -269,7 +269,7 @@ func TestSelectionRecoveryUsesDispatchedRequestSnapshot(t *testing.T) {
 			record := func(id string, s taskSettings) {
 				t.Helper()
 				_, cursor, _ := c.Store.ModelContext(ctx, a.AgentID)
-				err := c.Store.BeginModelRequest(ctx, a.AgentID, a.TaskID, s.SelectionRevision, cursor, "", func(cursor int64) any {
+				err := c.Store.BeginModelRequest(ctx, a.AgentID, a.TaskID, s.SelectionRevision, cursor, nil, func(cursor int64) any {
 					return requestRecord{ID: id, Model: s.Model, Protocol: s.Protocol, Cursor: cursor, Tools: c.Tools.Descriptors(), MaxOutputTokens: s.MaxOutputTokens, RepairLimit: s.FormatRepairs, Settings: &s}
 				})
 				if err != nil {

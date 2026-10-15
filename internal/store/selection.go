@@ -95,7 +95,7 @@ func (s *Store) Select(ctx context.Context, req protocol.Request, next Selection
 // BeginModelRequest fences against stop and concurrent context/selection
 // changes. A new runtime notice and model.started are one commit, so recovery
 // cannot see new settings attached to the previous request's pending calls.
-func (s *Store) BeginModelRequest(ctx context.Context, agent, task string, revision, cursor int64, notice string, record func(int64) any) error {
+func (s *Store) BeginModelRequest(ctx context.Context, agent, task string, revision, cursor int64, notices []ContextMessage, record func(int64) any) error {
 	return s.Transaction(ctx, func(tx *sql.Tx) error {
 		if err := activeTask(ctx, tx, agent, task); err != nil {
 			return err
@@ -118,8 +118,11 @@ func (s *Store) BeginModelRequest(ctx context.Context, agent, task string, revis
 		if pending {
 			return protocol.E("request_conflict", "steer arrived before request start; deliver before rebuilding")
 		}
-		if notice != "" {
-			event, err := appendEvent(ctx, tx, agent, task, "context.message", ContextMessage{Message: model.Message{Role: "developer", Content: []model.Block{{Type: "text", Text: notice}}}})
+		for _, notice := range notices {
+			if notice.Message.Role != "developer" || notice.RequestID != "" || notice.MessageID != "" || len(notice.MessageIDs) != 0 || notice.QuestionID != "" || notice.Summary != nil {
+				return protocol.E("invalid_params", "request notices must be developer context, not model or tool results")
+			}
+			event, err := appendEvent(ctx, tx, agent, task, "context.message", notice)
 			if err != nil {
 				return err
 			}

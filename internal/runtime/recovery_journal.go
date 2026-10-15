@@ -164,6 +164,15 @@ func (j *recoveryJournal) add(e protocol.Event) error {
 		if protocol.StrictDecode(e.Payload, &r) != nil || r.ID == "" || r.RepairAttempt != j.RepairCount || r.RepairLimit < 0 || r.FormatRepair != j.RepairOnly {
 			return recoveryInvalid()
 		}
+		if r.ResourceCatalog != nil && (!r.ResourceCatalog.Valid() || r.ResourceCatalog.Generation > r.Cursor) {
+			return recoveryInvalid()
+		}
+		if j.Request != nil && j.Request.ResourceCatalog != nil && (r.ResourceCatalog == nil || r.ResourceCatalog.Generation < j.Request.ResourceCatalog.Generation) {
+			return recoveryInvalid()
+		}
+		if j.Request != nil && j.Request.ResourceCatalog != nil && r.ResourceCatalog.Generation == j.Request.ResourceCatalog.Generation && !reflect.DeepEqual(r.ResourceCatalog, j.Request.ResourceCatalog) {
+			return recoveryInvalid()
+		}
 		if r.Settings != nil {
 			s := r.Settings
 			if !validSettings(*s) || r.Model != s.Model || r.Protocol != s.Protocol || r.MaxOutputTokens != s.MaxOutputTokens || r.RepairLimit != s.FormatRepairs || j.Settings != nil && !settingsFollow(*j.Settings, *s) {

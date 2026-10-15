@@ -1,6 +1,6 @@
 # 提示词
 
-实现入口为 `internal/runtime/prompt.go`，工具说明契约为 `internal/tool/tool.go`。组装结果在请求前保存为 `prompt.loaded`。已接入提问、资源、工作环境查询、选配、Agent 协作及 wait/result CLI；项目资源自动发现与 skill 目录的请求级更新仍归第 7 组。
+系统说明由 `internal/runtime/prompt.go` 组装，工具说明定义在 `internal/tool/tool.go`，请求前保存为 `prompt.loaded`。CLI 说明覆盖提问、资源、工作环境、选配和 Agent 协作；skill/prompt 更新在后续请求追加发现通知。外部目录监视及 MCP 接入待完成。
 
 ## Pi 参考
 
@@ -46,6 +46,28 @@ Zende 保持 exec、进程继续操作和 patch 的工具边界。Pi 的 read/ed
 版本 10 加入 `agent wait/result`。说明只在依赖子结果时等待、指定 Task、超时不取消、自动 queue、完整结果送达后去重，以及分页读取。纯结果通知无需自动回执。继续按 Pi 的已注册能力组合，详细预算与游标留给帮助；恢复旧 Task 保留原提示词。
 
 版本 11 加入 `agent stop/resume`，区分默认单 Agent 暂停和显式 `--tree`，说明完成查询、未知效果、队列保留和原 ID 重试。沿用 Pi 的能力条件短说明，完整范围和限额见帮助及 [停止与恢复](./collaboration.md#停止与恢复)。一致性测试核对命令注册、默认 `tree=false` 和不可用状态；旧 Task 仍用保存的提示词。
+
+## Skill/prompt 的请求级更新
+
+`resource.register/refresh` 校验并保存不可变文件包；失败保留上一版。任务每次请求从同一数据库事务读取上下文和当前资源目录，`model.started.resource_catalog` 保存 generation 及全部 ID/版本。它记录当时可发现的定义，不代表正文已经应用。
+
+`internal/runtime/resource_notice.go` 在目录变化后的下一请求追加 developer 通知，来源为 `zende/resources`、格式版本 1。只在 exec 和资源 list/read 入口已注册时展示，最多 8 项、12 KiB；超出部分通过 CLI 搜索和分页查询。同一资源的多次更新合并为当前版本，禁用模型自行调用的 skill 留给用户选择，正文和脚本按需读取。
+
+通知与 `model.started` 同事务提交。组装期间目录变化则重建请求，正在输出的请求保持原版本；默认模型、cwd 不随发布改变。恢复读取原请求的 generation，目录未变时不重复通知；上下文视图切换后重新提供当前发现信息。原 prompt、通知、读取结果和已发布正文保留。
+
+```sh
+zende resource register AGENT /absolute/path/to/skill
+zende resource list AGENT --kind skill --query review --limit 20
+zende resource status AGENT RESOURCE
+zende resource read AGENT RESOURCE --version VERSION
+zende resource read AGENT RESOURCE --version VERSION --path scripts/run.sh
+zende resource refresh AGENT RESOURCE
+zende resource register AGENT /absolute/path/to/prompt.md --kind prompt
+```
+
+skill 的 `SKILL.md` 与 prompt 文件使用 YAML frontmatter，要求 `name`、`description` 和非空正文。skill 包含相对路径资源，文本按 UTF-8 返回，二进制按 base64 返回。版本覆盖文件路径、字节和执行位；原安装文件更新或删除后，已发布版本仍可读。脚本通过进程工具执行，读取时不运行；执行固定版本脚本时使用该版本的字节，不把可修改的安装目录当作版本副本。
+
+通知沿用 Pi 的能力条件和“元数据发现 → 完整读取 → 使用”顺序，使用 Zende 的版本化 CLI，保留系统提示词版本 11。`TestModelInstallsRefreshesAndUsesSkillThroughBinaryCLI` 用真实 CLI、UDS 和 shell 验证同一 Task 安装、刷新、读取 skill/prompt、执行脚本；模型使用确定性夹具。
 
 ## 输出分类
 

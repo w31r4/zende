@@ -186,7 +186,7 @@ func TestContextViewConcurrentPublicationFencesRequests(t *testing.T) {
 	if onlySummary.Spawn.Messages != 1 || onlySummary.Spawn.Turns != 0 || !onlySummary.Spawn.SummaryIncluded || onlySummary.Spawn.First != 0 {
 		t.Fatal(onlySummary.Spawn)
 	}
-	if err := s.BeginModelRequest(ctx, parent.AgentID, parent.TaskID, 0, snap.Cursor, "", func(int64) any { return json.RawMessage(`{}`) }); err == nil {
+	if err := s.BeginModelRequest(ctx, parent.AgentID, parent.TaskID, 0, snap.Cursor, nil, func(int64) any { return json.RawMessage(`{}`) }); err == nil {
 		t.Fatal("stale request crossed view change")
 	}
 }

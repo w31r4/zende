@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 
+	"zende.local/harness/internal/model"
 	"zende.local/harness/internal/protocol"
 )
 
@@ -117,28 +118,31 @@ func TestRequestBoundaryFencesSelectionContextAndStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	record := func(cursor int64) any { return map[string]any{"context_cursor": cursor} }
+	notices := func(text string) []ContextMessage {
+		return []ContextMessage{{Message: model.Message{Role: "developer", Content: []model.Block{{Type: "text", Text: text}}}}}
+	}
 	// Neither a stale selection nor an unrelated new event may slip through.
-	if err := s.BeginModelRequest(ctx, a.AgentID, a.TaskID, 0, cursor, "must not append", record); err == nil {
+	if err := s.BeginModelRequest(ctx, a.AgentID, a.TaskID, 0, cursor, notices("must not append"), record); err == nil {
 		t.Fatal("stale request started")
 	}
 	_, cursor, _ = s.ModelContext(ctx, a.AgentID)
 	if err := s.AppendTaskEvent(ctx, a.AgentID, a.TaskID, "test.concurrent", struct{}{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.BeginModelRequest(ctx, a.AgentID, a.TaskID, accepted.Selection.Revision, cursor, "must not append", record); err == nil {
+	if err := s.BeginModelRequest(ctx, a.AgentID, a.TaskID, accepted.Selection.Revision, cursor, notices("must not append"), record); err == nil {
 		t.Fatal("stale context started")
 	}
 	_, cursor, _ = s.ModelContext(ctx, a.AgentID)
 	before, _ := s.Snapshot(ctx, a.AgentID)
 	// Invalid record encoding rolls back the already inserted notice.
-	if err := s.BeginModelRequest(ctx, a.AgentID, a.TaskID, accepted.Selection.Revision, cursor, "rolled back", func(int64) any { return make(chan int) }); err == nil {
+	if err := s.BeginModelRequest(ctx, a.AgentID, a.TaskID, accepted.Selection.Revision, cursor, notices("rolled back"), func(int64) any { return make(chan int) }); err == nil {
 		t.Fatal("invalid request persisted")
 	}
 	after, _ := s.Snapshot(ctx, a.AgentID)
 	if !reflect.DeepEqual(before, after) {
 		t.Fatal("notice escaped failed transaction")
 	}
-	if err := s.BeginModelRequest(ctx, a.AgentID, a.TaskID, accepted.Selection.Revision, cursor, "current settings", record); err != nil {
+	if err := s.BeginModelRequest(ctx, a.AgentID, a.TaskID, accepted.Selection.Revision, cursor, notices("current settings"), record); err != nil {
 		t.Fatal(err)
 	}
 	messages, _, _ := s.ModelContext(ctx, a.AgentID)
@@ -160,7 +164,7 @@ func TestRequestBoundaryFencesSelectionContextAndStop(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, cursor, _ = s.ModelContext(ctx, a.AgentID)
-	if err := s.BeginModelRequest(ctx, a.AgentID, a.TaskID, accepted.Selection.Revision, cursor, "", record); err == nil {
+	if err := s.BeginModelRequest(ctx, a.AgentID, a.TaskID, accepted.Selection.Revision, cursor, nil, record); err == nil {
 		t.Fatal("stopped task dispatched")
 	}
 }
