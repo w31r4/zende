@@ -20,6 +20,8 @@ import (
 )
 
 type Manager struct {
+	admission             sync.RWMutex // Orders scope freezes with starts and input dispatch.
+	stopMu                sync.Mutex
 	mu                    sync.Mutex
 	root, shell, instance string
 	maxProcesses          int
@@ -28,6 +30,8 @@ type Manager struct {
 	tmux, socket          string
 	helper                string
 	cache                 *outputCache
+	stops                 map[string]StopRecord
+	stopFault             bool // Damaged stop metadata must not silently reopen admission.
 }
 
 type entry struct {
@@ -67,6 +71,7 @@ func NewManager(root, shell string, maxProcesses int, maxOutput int64) (*Manager
 		e := recoverEntry(filepath.Join(root, dir.Name()), dir.Name())
 		m.entries[dir.Name()] = e
 	}
+	m.loadStops()
 	return m, nil
 }
 
@@ -137,6 +142,8 @@ func snapshot(s State) State {
 // Start is idempotent by process identity. Its context bounds acceptance, not
 // the lifetime of the command; disconnecting core must not cancel the process.
 func (m *Manager) Start(ctx context.Context, spec Spec) (State, error) {
+	m.admission.RLock()
+	defer m.admission.RUnlock()
 	if err := ctx.Err(); err != nil {
 		return State{}, err
 	}
@@ -172,13 +179,16 @@ func (m *Manager) Start(ctx context.Context, spec Spec) (State, error) {
 		}
 		return snapshot(e.state), nil
 	}
+	if err := m.startAllowed(spec); err != nil {
+		return State{}, err
+	}
 	active := 0
 	for _, e := range m.entries {
 		e.mu.Lock()
 		if e.state.PTY {
 			m.refreshPTY(e)
 		}
-		if e.state.Status == "running" || e.state.Status == "starting" || e.state.Status == "unknown" {
+		if (e.state.Status == "running" || e.state.Status == "starting" || e.state.Status == "unknown") && !m.stoppedProcess(e.state.ID) {
 			active++
 		}
 		e.mu.Unlock()

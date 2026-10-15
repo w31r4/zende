@@ -55,6 +55,18 @@ printf 'hello\n' | ./bin/zende --profile dev --request-id input-once process std
 
 同一进程的输入和控制串行执行。`--request-id` 在该进程内持久去重；相同 ID 和参数返回原操作结果，查询当前状态用 `inspect`。派发前记录意图，结果未知时保留 pending，重试或换 ID 都不重复发送。此时用 `process control` 检查原操作；终止入口仍可用。
 
+## 树级停止底层接口
+
+6.7 已实现 runner 内部 `process.stop.freeze/advance/inspect/release`；core 编排与 `agent stop --tree` 尚未接通，普通 stop 和 detach 保持原行为。
+
+freeze 按稳定操作 ID 保存 Agent 范围、已有进程和已派发调用 ID。捕获范围与启动串行，已进入 runner 的 stdin/resize RPC 先落定；冻结后拒绝范围内的新启动、stdin 和 resize，已完成重试仍返回原回执。未到达 runner 的调用保存为 `not_started`，释放冻结后也不能用该 ID 执行；其他 Agent 不受影响。
+
+advance 核实 boot ID、启动时间及原进程组/PTY session，保存仍存活的成员身份，再通过 pidfd 请求 SIGKILL。只有核实已无活动成员才返回 `stopped` 并释放进程容量；这不代表输出完整、Task 已落定或外部效果已回滚，也不补造崩溃 pipe 的退出码。身份缺失、内核查询失败或无法终止时保持 `frozen`，成员列出 pending/unknown 和失败原因。原输出和已退出的 tmux pane 保留。
+
+Linux 6.9 起可通过 pidfd 向原进程组发信号，覆盖扫描后派生的同组子进程。旧内核退回已核实成员的逐个 pidfd 终止；遗留成员无法确认时继续等待，不按裸 PID 猜测目标。范围与普通 terminate 相同：pipe 的原进程组、PTY 的原 POSIX session；主动脱离该范围的守护进程不在其中。实现依据 [Linux pidfd 接口](https://man7.org/linux/man-pages/man2/pidfd_send_signal.2.html)。这里不使用 SIGSTOP：tmux 会主动恢复被暂停的 pane，见 [tmux 3.3a 的 server_child_stopped](https://github.com/tmux/tmux/blob/3.3a/server.c)。
+
+`stopped` 仍保持启动冻结，由 core 确认整个树操作完成后单独 release。旧操作重试不捕获后来的工作。记录保存于 `processes/.stops/`，runner 重启后恢复；记录损坏或保存结果不明时阻止新进程效果，保留原文件及进程查询。每项停止最多 10000 个 Agent、10000 个待到达调用和 10000 个进程；单个进程的内核成员同限，记录受 IPC 帧预算约束。
+
 ## 终端选择与接管
 
 `process list [--agent AGENT --after ID --limit N]` 返回按 ID 排序的进程页，包含已结束进程；默认 20 条，上限 100，响应还受协议帧大小限制。`next` 非空时用它继续。TUI 的 `/terminal`、`/logs` 默认只列当前 Agent 的进程，方向键选择、Enter 打开、n 下一页、Esc 或 `/back` 返回。

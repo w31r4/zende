@@ -604,6 +604,31 @@ go test -race ./internal/store -run 'TreeStop|StopResume|StopAnd|MailboxPause' -
 
 说明按 trim-cn-tech-doc 区分“接受停止”和“已核实退出”，保留范围、上限和恢复条件。新增存储测试只使用隔离 SQLite 与夹具，没有发出进程终止信号或访问外部模型。
 
+## 2026-10-16：runner 的持久范围停止
+
+6.7 继续实施，完成数仍为 37/68。runner 新增冻结、推进、查询和释放接口，进程启动与 stdin/resize 共用冻结检查；尚未接入 core 的树级停止流程或 CLI。全量 `go test ./...`、`go test -race ./...` 和 OpenSpec strict 校验通过。
+
+| 验证 | 入口 | 结果 |
+| --- | --- | --- |
+| 冻结、终止与迟到请求 | `TestScopeStopPipeFreezeTerminateAndLateDispatch` | 原进程可查、旧回执可重试；新启动/输入拒绝，范围外进程继续；核实终止后输出保留，单独释放后迟到 ID 仍不能执行，旧 stop 不影响新工作 |
+| 并发与输入顺序 | `TestScopeStopConcurrentStartIsCapturedOrRejected`、`TestScopeStopFreezeWaitsForAdmittedInput` | 启动要么纳入范围，要么拒绝；冻结等已进入的 stdin 落定，不允许后续写入越过停止 |
+| PTY 与真实 runner 崩溃 | `TestScopeStopPTYAndRunnerReopen`、`TestScopeStopSurvivesRealRunnerSIGKILL` | 真实 tmux job-control 组终止，原 pane/输出保留；独立 runner 冻结后被 SIGKILL，新进程恢复原范围、终止 pipe/PTY、继续拒绝迟到命令 |
+| 身份与后代 | `TestScopeStopUnknownIdentityNeverSignalsOrReleases`、`TestScopeStopSavedWitnessSurvivesLeaderExit` | 身份不符时不发信号、不释放；保存的成员身份可在 leader 已退出后证明原组，重开后仍可终止后代 |
+| 扫描后派生 | `TestScopeStopLateForkUsesOriginalGroupHandle`、`TestScopeStopGroupFallbackUsesSameHandleOnly` | 确定性地在保存扫描结果后派生子进程，原 pidfd 组终止覆盖它；旧内核回退夹具只使用同一描述符，不改用裸 PID |
+| 损坏、失败与容量 | `TestScopeStopInvalidMetadataHoldsAdmission`、`TestScopeStopFailedSaveNeverAllowsNewEffects`、`TestScopeStopUnknownOwnershipAndCapacityAreAtomic` | 损坏/未来版本/不完整范围/虚假完成/链接/目录拒绝；保存不明时保留冻结；未知归属、范围冲突和超限不留下部分停止 |
+| 身份保留与额度 | `TestScopeStopKeepsProcessIdentityWhenMetadataDisappears`、`TestScopeStopProvedExitReleasesCapacityWithoutInventingResult` | 已停止进程元数据缺失也不重用 ID；核实无活动进程后释放并发额度，崩溃 pipe 的退出码仍未知 |
+| IPC 与重试 | `TestScopeStopRemoteContract` | 真实 Unix socket 查询同一记录；参数顺序不改变范围，冲突 ID/错误目标拒绝，释放重试不重启或重停工作 |
+
+首轮全量 race 复现扫描与 shell 派生竞争：逐个终止已扫描 PID 会留下迟到子进程。尝试暂停后扩展范围时，又验证了 tmux 自动恢复暂停 pane 的行为。最终改用 pidfd 进程组信号；修正后的停止用例在 race 下连续十轮通过，补充确定性派生和旧内核回退测试后再通过三轮。旧失败不计通过，机制和来源见 [树级停止底层接口](./processes.md#树级停止底层接口)。
+
+```sh
+go test -race ./internal/process -run ScopeStop -count=3 -timeout=90s
+```
+
+pipe、tmux、UDS、文件和 runner 崩溃为真实本地测试；独立 runner 使用本包测试二进制，继承 race 构建。当前内核为 6.18.54.1-microsoft-standard-WSL2；旧内核回退仅用调用夹具验证，未实际运行旧内核。没有访问模型、写入生产配置或进行用户级部署。
+
+说明按 trim-cn-tech-doc 合并状态解释，保留范围、限额、失败和旧内核边界。存储层的树计划与 runner 停止尚未串联，Git 终止和整个流程的恢复仍未验收，不能据此宣称整棵 Agent 树已可停止。
+
 ## 进行中
 
-继续 6.7：将持久停止范围接到 runner、worktree 和 core 恢复，再开放 CLI 并验证协作提示词。会话复制仍依赖第 6、9 组。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。
+继续 6.7：将树计划与 runner 停止串联，补 worktree 终止和 core 恢复，再开放 CLI 并验证协作提示词。会话复制仍依赖第 6、9 组。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。

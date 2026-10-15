@@ -96,6 +96,28 @@ func (s Service) Handle(ctx context.Context, req protocol.Request) (any, error) 
 			return nil, err
 		}
 		return s.Manager.ControlInspect(ctx, p)
+	case "process.stop.freeze":
+		var p StopScope
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return s.Manager.FreezeStop(ctx, req.OperationID, p)
+	case "process.stop.advance", "process.stop.inspect", "process.stop.release":
+		var p StopTarget
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if req.Method != "process.stop.inspect" && (req.OperationID == "" || req.OperationID != p.OperationID) {
+			return nil, protocol.E("invalid_params", "operation_id must match the original stop")
+		}
+		switch req.Method {
+		case "process.stop.advance":
+			return s.Manager.AdvanceStop(ctx, p.OperationID)
+		case "process.stop.release":
+			return s.Manager.ReleaseStop(ctx, p.OperationID)
+		default:
+			return s.Manager.InspectStop(ctx, p.OperationID)
+		}
 	case "process.output.reference":
 		var p ReferenceParams
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
@@ -220,3 +242,30 @@ var _ Controller = Remote{}
 var _ Controller = (*Manager)(nil)
 var _ ControlInspector = Remote{}
 var _ ControlInspector = (*Manager)(nil)
+
+func (r Remote) stopCall(ctx context.Context, method, op string, p any) (StopRecord, error) {
+	req, err := protocol.NewRequest(method, op, p)
+	var record StopRecord
+	if err == nil {
+		err = r.Client.Retry(ctx, req, &record, 3, 100*time.Millisecond)
+	}
+	return record, err
+}
+
+func (r Remote) FreezeStop(ctx context.Context, op string, p StopScope) (StopRecord, error) {
+	return r.stopCall(ctx, "process.stop.freeze", op, p)
+}
+
+func (r Remote) AdvanceStop(ctx context.Context, op string) (StopRecord, error) {
+	return r.stopCall(ctx, "process.stop.advance", op, StopTarget{OperationID: op})
+}
+
+func (r Remote) InspectStop(ctx context.Context, op string) (StopRecord, error) {
+	return r.stopCall(ctx, "process.stop.inspect", "", StopTarget{OperationID: op})
+}
+
+func (r Remote) ReleaseStop(ctx context.Context, op string) (StopRecord, error) {
+	return r.stopCall(ctx, "process.stop.release", op, StopTarget{OperationID: op})
+}
+
+var _ StopController = Remote{}

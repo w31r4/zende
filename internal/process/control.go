@@ -68,6 +68,12 @@ func (m *Manager) ControlInspect(_ context.Context, p ControlTarget) (ControlRec
 // Serialize a process's mutations and persist dispatch intent before touching
 // the external process. A pending operation after a crash is never replayed.
 func (m *Manager) control(ctx context.Context, id, op, method string, params any, act func(*entry) (ControlResult, error)) (ControlResult, error) {
+	// Freeze waits for already admitted writes. A late stdin request must not
+	// create more work after a scope has been verified stopped.
+	if method == "process.stdin" || method == "process.resize" {
+		m.admission.RLock()
+		defer m.admission.RUnlock()
+	}
 	if !processID.MatchString(op) {
 		return ControlResult{}, protocol.E("invalid_params", "stable operation_id is required")
 	}
@@ -117,6 +123,12 @@ func (m *Manager) control(ctx context.Context, id, op, method string, params any
 	// A new ID must not bypass an unresolved input/resize. Signalling remains
 	// available so a user can always stop their own uncertain process.
 	if method == "process.stdin" || method == "process.resize" {
+		m.mu.Lock()
+		admitErr := m.ownerAllowed(e.state.AgentID)
+		m.mu.Unlock()
+		if admitErr != nil {
+			return ControlResult{}, admitErr
+		}
 		files, err := os.ReadDir(dir)
 		if err != nil {
 			return ControlResult{}, err
