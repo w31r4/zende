@@ -629,6 +629,28 @@ pipe、tmux、UDS、文件和 runner 崩溃为真实本地测试；独立 runner
 
 说明按 trim-cn-tech-doc 合并状态解释，保留范围、限额、失败和旧内核边界。存储层的树计划与 runner 停止尚未串联，Git 终止和整个流程的恢复仍未验收，不能据此宣称整棵 Agent 树已可停止。
 
+## 2026-10-16：worktree 的可恢复停止步骤
+
+6.7 继续实施，完成数仍为 37/68。Git 创建使用独立进程组，PID 身份和停止证据追加到原历史；确认组已结束且继承锁释放后，才保存 cancelled。全量 `go test ./...`、`go test -race ./...` 和 OpenSpec strict 校验通过。内部步骤已实现，尚未注册树级停止 CLI 或接入总调度。
+
+| 验证 | 入口 | 结果 |
+| --- | --- | --- |
+| 活动检出与文件保留 | `TestWorktreeStopTerminatesLiveCheckoutAndRetainsFiles` | 终止真实 Git/过滤器，保留未跟踪修改与原目录；同 ID 不重跑、不发布子 Agent，树操作仍为 stopping |
+| 派发窗口与锁 | `TestWorktreeStopWaitsForLateIdentityAndInheritedLock` | Git 已启动、身份尚未保存时返回 busy；迟到身份可保存，随后结束原组并落定取消 |
+| 真实 core 崩溃 | `TestWorktreeStopRecoversAfterRealCoreSIGKILL` | 测试 core 在检出中途被 SIGKILL；新 core 从 SQLite 读取原身份，终止存活的 Git/过滤器并保留目录，检出仅一次 |
+| 先记录后终止 | `TestWorktreeStopDoesNotSignalBeforeEvidenceCommit`、`TestTrackedWorktreeIdentityFailureDoesNotAbandonLiveGroup` | 停止证据写入失败不发信号；启动身份保存失败尽力终止本次创建，返回脱敏错误并释放已结束组的锁 |
+| 持久证据与原子取消 | `TestWorktreeStopIdentityEvidenceAndCancellation`、`TestWorktreeStopRejectsScopeChangesAndRollsBack`、`TestWorktreeProcessWriteFailureLeavesNoPartialIdentity` | 原进程身份不可替换，重复观察不增历史；重开保留成员证据，越界操作及未核实取消拒绝，事件故障完整回滚；整树解除冻结后旧创建仍不能复活 |
+| 缺失与错误身份 | `TestWorktreeStopMissingIdentityAndMalformedEvidence`、`TestExternalGroupSharesVerifiedKernelStop` | 缺少身份由运行时锁检查约束；损坏记录不当作无进程，PID 生命周期不符不发信号；复用原 pidfd 停止逻辑 |
+
+新增用例在 race 下连续十轮通过；补充停止证据提交失败测试后再通过三轮，缺失进程身份的停止记录补测也通过三轮。后者确保解码不沿用原对象字段，不把不完整记录当作已核实退出。
+
+```sh
+go test -race ./internal/process ./internal/workspace ./internal/store ./internal/runtime \
+  -run 'WorktreeStop|WorktreeProcessWrite|TrackedWorktree|ExternalGroup' -count=3 -timeout=90s
+```
+
+崩溃用例使用独立的本包测试进程，继承 race 构建；Git、过滤器、文件锁和 SQLite 为真实本地组件。启动至身份保存的窗口使用确定性暂停夹具。没有访问模型、修改参考仓库或写入生产配置。说明按 trim-cn-tech-doc 合并状态解释，保留目录、未知身份及原进程组的边界。
+
 ## 进行中
 
-继续 6.7：将树计划与 runner 停止串联，补 worktree 终止和 core 恢复，再开放 CLI 并验证协作提示词。会话复制仍依赖第 6、9 组。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。
+继续 6.7：由 core 串联树计划、runner 和 worktree 停止，补 Task 核实、完成条件与调度恢复，再开放 CLI 并验证协作提示词。会话复制仍依赖第 6、9 组。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。

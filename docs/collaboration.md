@@ -105,13 +105,16 @@ zende --profile dev operation inspect isolated-1
 
 创建前先检查上下文、调用来源和容量；接受子 Agent 前再次检查，并继承此时的上下文与模型设置。检出期间父目录或 HEAD 变化，不改变已保存的源和目标。若最终接受失败，保留已准备的 worktree，不留下半个子 Agent。
 
-`operation inspect` 在接受前返回 `prepared / creating / ready / unknown`；接受后返回原 Agent/Task 回执。`creating` 表示已记录派发意图，不保证进程仍活着。重试必须复用原 ID 和参数：
+`operation inspect` 在接受前返回 `prepared / creating / ready / unknown / cancelled`；接受后返回原 Agent/Task 回执。`creating` 表示已记录派发意图，不保证进程仍活着。重试必须复用原 ID 和参数：
 
 - Git 继承操作文件锁；core 退出后原 Git 仍运行时，重试返回 `worktree_busy`。
 - 原操作没有成功记录时，只核实原目录的仓库、所有者标记、保存提交、detached 状态和干净检出；无法确认则保留 `unknown`，不重建。
 - `ready` 已确认创建成功，允许后续修改；接受前仍检查目录归属。已接受的重试直接返回原回执。
+- `cancelled` 保留原目录、目标预留和停止操作 ID；重试不再执行 Git 或创建子 Agent。目前由内部树停止步骤写入，公开停止入口尚未接通。
 
 core 存活时，创建等待上限为两分钟；CLI 等待上限仍为十秒，客户端超时不取消后台准备。core 崩溃后原 Git 的超时计时不再生效，以实际锁释放为准。每个 profile 保留目标预留与创建历史，不能换 ID 重用该目标。
+
+Git checkout 使用独立进程组，启动后追加 PID、boot ID 和启动时间。内部停止步骤先保存已核实的成员身份，再复用 runner 的 pidfd 终止机制；确认该组已无活动进程并取得原操作锁后，才写入 cancelled。停止证据写入失败时不发信号；原进程身份写入失败时尽力结束本次创建并报错，存活过滤器仍持锁。core 在启动与身份保存之间崩溃时，锁释放前保持等待，不猜测 PID。已脱离原进程组的程序不在信号范围内，若仍持继承锁则继续阻止取消落定。
 
 Git 自身的失败清理由 Git 决定，harness 不执行 reset、prune 或目录删除。创建禁用 hooks、fsmonitor 和自动 GC；检出仍遵循可信仓库配置的过滤器，不构成沙箱。跨 core 崩溃续接覆盖进程退出，不作为断电后的文件持久性保证。
 
@@ -129,7 +132,7 @@ runner 在 pipe 和 PTY 的 shell 环境中写入 `ZENDE_CALLER`：启动它的 
 
 runner 已有持久冻结、进程终止核实、查询和单独释放接口，能保留迟到命令 ID，并在重启后继续原停止范围。细节见 [树级停止底层接口](./processes.md#树级停止底层接口)。
 
-存储层与 runner 尚未由 core 串联；Git 终止、整个流程的恢复、CLI 和协作提示词验收仍待完成。保存停止范围只表示 `stopping`，Task 全部取消也不能证明进程已结束。当前帮助与提示词只列已注册能力。
+worktree 已有内部停止步骤和崩溃续接测试，复用同一内核身份校验，不新增后台管理服务。树计划、runner 和该步骤尚未接入 core 总调度；Task 恢复、整树完成条件、CLI 和协作提示词验收仍待完成。保存停止范围只表示 `stopping`，Task 全部取消也不能证明进程已结束。当前帮助与提示词只列已注册能力。
 
 本地链路复现：
 

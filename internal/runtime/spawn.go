@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"zende.local/harness/internal/process"
 	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/workspace"
 )
@@ -77,7 +78,11 @@ func (c *Core) spawnInWorktree(ctx context.Context, req protocol.Request, p prot
 		if err != nil {
 			return failure(err)
 		}
-		if err := workspace.CreateWorktree(ctx, record.Operation.Workspace, lock); err != nil {
+		if err := workspace.CreateTrackedWorktree(ctx, record.Operation.Workspace, lock, func(group process.Group) error {
+			persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
+			defer cancel()
+			return c.Store.RecordWorktreeProcess(persist, req, group)
+		}); err != nil {
 			persist, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 			defer cancel()
 			wire := safeFailure(err, "worktree_unknown", "Git checkout was interrupted; inspect the original operation")
@@ -110,6 +115,9 @@ func (c *Core) spawnInWorktree(ctx context.Context, req protocol.Request, p prot
 		}
 	}
 	if record.Operation.State != "ready" {
+		if record.Operation.State == "cancelled" {
+			return failure(protocol.E("cancelled", "workspace creation was cancelled; existing files are preserved"))
+		}
 		return failure(protocol.E("worktree_pending", "workspace is not ready"))
 	}
 	if err := workspace.VerifyWorktree(ctx, record.Operation.Workspace, false); err != nil {

@@ -10,9 +10,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/unix"
+	"zende.local/harness/internal/process"
 	"zende.local/harness/internal/protocol"
 )
 
@@ -38,6 +40,10 @@ func LockWorktree(path string) (*os.File, error) {
 }
 
 func worktreeGit(ctx context.Context, cwd string, lock *os.File, args ...string) ([]byte, error) {
+	return trackedWorktreeGit(ctx, cwd, lock, nil, args...)
+}
+
+func trackedWorktreeGit(ctx context.Context, cwd string, lock *os.File, started func(process.Group) error, args ...string) ([]byte, error) {
 	query, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	options := []string{"--no-pager", "--no-optional-locks", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false", "-c", "gc.auto=0"}
@@ -46,6 +52,7 @@ func worktreeGit(ctx context.Context, cwd string, lock *os.File, args ...string)
 	cmd.WaitDelay = 100 * time.Millisecond
 	if lock != nil {
 		cmd.ExtraFiles = []*os.File{lock}
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	}
 	out, diagnostic := &boundedOutput{limit: maxGitOutput, cancel: cancel}, &boundedOutput{limit: 16 << 10, cancel: cancel}
 	cmd.Stdout, cmd.Stderr = out, diagnostic
@@ -60,7 +67,29 @@ func worktreeGit(ctx context.Context, cwd string, lock *os.File, args ...string)
 		defer discard.Close()
 		cmd.Stdout, cmd.Stderr = discard, discard
 	}
-	err := cmd.Run()
+	err := cmd.Start()
+	var saveErr error
+	if err == nil {
+		if started != nil {
+			group, _ := process.CaptureGroup(cmd.Process.Pid)
+			// A fast exit can lose its /proc identity. Still record the PID;
+			// the operation lock and absence check decide cancellation later.
+			saveErr = started(group)
+			if saveErr != nil {
+				observed, ended, observeErr := process.ObserveGroup(group)
+				if observeErr == nil && !ended {
+					_ = process.KillGroup(observed)
+				}
+				// Kill uses the original os.Process handle if group observation
+				// failed. Any surviving filter still retains the operation lock.
+				_ = cmd.Process.Kill()
+			}
+		}
+		err = cmd.Wait()
+	}
+	if saveErr != nil {
+		return nil, protocol.E("persistence_failed", "Git process identity could not be saved; inspect the original operation")
+	}
 	if ctx.Err() != nil {
 		return nil, ctx.Err()
 	}
@@ -124,6 +153,12 @@ func PrepareWorktree(ctx context.Context, source, target string) (protocol.Workt
 }
 
 func CreateWorktree(ctx context.Context, plan protocol.Worktree, lock *os.File) error {
+	return CreateTrackedWorktree(ctx, plan, lock, nil)
+}
+
+// started runs after Git starts and before Wait, while core and Git both hold
+// the operation lock. A lost core never authorizes a second checkout.
+func CreateTrackedWorktree(ctx context.Context, plan protocol.Worktree, lock *os.File, started func(process.Group) error) error {
 	if lock == nil {
 		return protocol.E("worktree_busy", "workspace creation requires its operation lock")
 	}
@@ -135,7 +170,7 @@ func CreateWorktree(ctx context.Context, plan protocol.Worktree, lock *os.File) 
 	if _, err := os.Lstat(plan.Path); !errors.Is(err, os.ErrNotExist) {
 		return protocol.E("worktree_exists", "worktree target appeared after preparation; preserved without changes")
 	}
-	_, err = worktreeGit(ctx, plan.Repository, lock, "--git-dir="+plan.Repository, "worktree", "add", "--detach", "--lock", "--reason="+plan.Owner, "--", plan.Path, plan.Commit)
+	_, err = trackedWorktreeGit(ctx, plan.Repository, lock, started, "--git-dir="+plan.Repository, "worktree", "add", "--detach", "--lock", "--reason="+plan.Owner, "--", plan.Path, plan.Commit)
 	return err
 }
 

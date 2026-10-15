@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"zende.local/harness/internal/process"
 	"zende.local/harness/internal/protocol"
 )
 
@@ -215,6 +216,40 @@ func TestWorktreeLockSurvivesOwnerClose(t *testing.T) {
 	again, err := LockWorktree(path)
 	if err != nil {
 		t.Fatal("terminal child still blocks", err)
+	}
+	again.Close()
+}
+
+func TestTrackedWorktreeIdentityFailureDoesNotAbandonLiveGroup(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	source := seedWorktreeRepo(t)
+	plan, err := PrepareWorktree(ctx, source, filepath.Join(t.TempDir(), "checkout"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "lock")
+	lock, err := LockWorktree(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	var group process.Group
+	err = CreateTrackedWorktree(ctx, plan, lock, func(g process.Group) error {
+		group = g
+		return errors.New("fixture persistence failure containing sensitive diagnostics")
+	})
+	var wire *protocol.Error
+	if !errors.As(err, &wire) || wire.Data.Kind != "persistence_failed" || strings.Contains(err.Error(), "sensitive") || group.PID <= 1 {
+		t.Fatal(group, err)
+	}
+	if _, ended, err := process.ObserveGroup(group); err != nil || !ended {
+		t.Fatal("failed identity persistence abandoned Git", ended, err)
+	}
+	lock.Close()
+	again, err := LockWorktree(path)
+	if err != nil {
+		t.Fatal("failed identity write retained operation lock", err)
 	}
 	again.Close()
 }

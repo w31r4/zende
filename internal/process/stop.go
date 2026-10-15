@@ -43,10 +43,7 @@ type StopProcess struct {
 	Witnesses []stopWitness `json:"witnesses,omitempty"`
 }
 
-type stopWitness struct {
-	PID      int    `json:"pid"`
-	Identity string `json:"identity"`
-}
+type stopWitness = GroupMember
 
 type StopRecord struct {
 	Version     int           `json:"version"`

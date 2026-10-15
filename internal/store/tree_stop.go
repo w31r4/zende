@@ -173,29 +173,36 @@ func (s *Store) BeginTreeStop(ctx context.Context, req protocol.Request, root st
 func (s *Store) TreeStop(ctx context.Context, id string) (TreeStopRecord, error) {
 	var result TreeStopRecord
 	err := s.Transaction(ctx, func(tx *sql.Tx) error {
-		var data []byte
-		err := tx.QueryRowContext(ctx, `SELECT e.payload FROM operations o
- JOIN events e ON e.agent_id=json_extract(o.result,'$.agent_id')
- WHERE o.id=? AND e.kind='tree_stop.started' AND json_extract(e.payload,'$.operation_id')=o.id`, id).Scan(&data)
-		if errors.Is(err, sql.ErrNoRows) {
-			return protocol.E("not_found", "tree stop not found")
-		}
-		if err != nil {
-			return err
-		}
-		if err := json.Unmarshal(data, &result.TreeStopPlan); err != nil {
-			return err
-		}
-		var completed bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE agent_id=? AND kind='tree_stop.completed'
- AND json_extract(payload,'$.operation_id')=?)`, result.AgentID, id).Scan(&completed); err != nil {
-			return err
-		}
-		result.State = "stopping"
-		if completed {
-			result.State = "stopped"
-		}
-		return nil
+		var err error
+		result, err = treeStop(ctx, tx, id)
+		return err
 	})
 	return result, err
+}
+
+func treeStop(ctx context.Context, q rowQuerier, id string) (TreeStopRecord, error) {
+	var result TreeStopRecord
+	var data []byte
+	err := q.QueryRowContext(ctx, `SELECT e.payload FROM operations o
+ JOIN events e ON e.agent_id=json_extract(o.result,'$.agent_id')
+ WHERE o.id=? AND e.kind='tree_stop.started' AND json_extract(e.payload,'$.operation_id')=o.id`, id).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return result, protocol.E("not_found", "tree stop not found")
+	}
+	if err != nil {
+		return result, err
+	}
+	if err := json.Unmarshal(data, &result.TreeStopPlan); err != nil {
+		return result, err
+	}
+	var completed bool
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM events WHERE agent_id=? AND kind='tree_stop.completed'
+ AND json_extract(payload,'$.operation_id')=?)`, result.AgentID, id).Scan(&completed); err != nil {
+		return result, err
+	}
+	result.State = "stopping"
+	if completed {
+		result.State = "stopped"
+	}
+	return result, nil
 }
