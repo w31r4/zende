@@ -116,7 +116,7 @@ Git 查询使用 [porcelain v2](https://git-scm.com/docs/git-status#_porcelain_f
 
 ## 数据与恢复边界
 
-SQLite schema 为 13，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。版本 8 加入上下文视图事件，9 保存 worktree 准备，10 加入 mailbox，11 保存结果投递回执，12 加入整树停止事件与调度保护，13 保存资源准备状态。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答与资源版本；更高版本拒绝打开。
+SQLite schema 为 14，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。版本 8 加入上下文视图事件，9 保存 worktree 准备，10 加入 mailbox，11 保存结果投递回执，12 加入整树停止事件与调度保护，13 保存资源准备状态，14 保存 MCP 调用与结果回执。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答、资源版本与已完成的 MCP 回执；更高版本拒绝打开。
 
 core 启动先将中断任务置为待核实，再按原身份恢复。取消中的任务保留 cancelling 和暂停选择；核实完成后结束取消，不恢复执行。历史、已接受输入和原 Task ID 保留。
 
@@ -297,9 +297,9 @@ CLI 用 `agent submit AGENT --skill RESOURCE@VERSION` 或 `question answer AGENT
 
 资源发布后，下一模型请求追加有界发现通知，按实际目录保存版本；旧 Task 的基础提示词和旧正文保持原样。限额、恢复与读取入口见 [请求级更新](./prompts.md#skillprompt-的请求级更新)。`resource_dirs` 自动发现和目录监视仍在实施。
 
-## MCP 注册与搜索
+## MCP 注册、搜索与调用
 
-MCP 复用资源注册、刷新和状态入口；`mcp search` 搜索指定服务，`resource list --kind mcp` 发现服务。Core 管理 stdio 与 Streamable HTTP 连接，将完整目录保存为不可变资源版本。默认上下文只列服务元数据和搜索入口，按需返回工具定义。调用底层已实现，CLI、模型入口和调用日志仍待 7.4 接入。
+MCP 复用资源注册、刷新和状态入口；`resource list --kind mcp` 发现服务。Core 管理 stdio 与 Streamable HTTP 连接，将完整目录保存为不可变资源版本。模型只注册 `tool_search`、`tool_invoke` 两个入口，默认上下文不平铺服务工具；CLI 提供搜索及原调用的只读查询。
 
 安装完成后，将非敏感配置写入 YAML 或 JSON 文件：
 
@@ -348,7 +348,32 @@ zende resource refresh AGENT RESOURCE
 
 配置替换会停止旧连接接收新租约，已有调用结束后再关闭；Core 退出可强制关闭当前及旧连接。HTTP 取消不保证远端停止或回滚。固定的是本地定义、校验和连接；同一远端服务器自行改变实现时，MCP 没有通用的版本执行保证。
 
-调用日志、幂等恢复、附件落盘和上下文预算尚未接通，因而这些调用能力暂未注册到 CLI 或模型工具目录。
+模型调用示例（Agent、Task 和操作 ID 由 host 填入，不接受模型指定）：
+
+```json
+{"server_id":"RESOURCE","query":"files","limit":8,"max_bytes":65536}
+```
+
+上面传给 `tool_search`；取得完整定义后，将下面的对象传给 `tool_invoke`，其中 arguments 必须满足返回的 inputSchema：
+
+```json
+{"server_id":"RESOURCE","tool_ref":"RETURNED_REF","arguments":{"path":"example.txt"}}
+```
+
+派发前保存 Agent/Task、参数指纹、发布版本、generation、完整工具定义和目录版本，再执行一次 `tools/call`。同一操作重复进入只读取原回执，参数不同报冲突。调用返回后先保存结果，再把有界回执送回模型；`result.is_error` 表示远端工具报告失败，内容仍保留。原生搜索还检查编码后的模型结果预算，超限要求缩小结果，不截断定义。
+
+完整结果按 SHA-256 保存在数据库同级的 `mcp-results/`，文件 fsync 后才提交回执和事件。普通事件与上下文仅保留回执：最多 8 个部件预览、每项文本最多 1024 字节；`more` 表示还需读取。完整 JSON 包含 SDK 支持的内容和元数据；二进制部件按引用保存，不自动下载资源链接。结果文件持续保留，当前没有自动清理。
+
+```sh
+zende mcp inspect AGENT OPERATION
+zende mcp result AGENT OPERATION
+zende mcp result AGENT OPERATION --part structured
+zende mcp result AGENT OPERATION --part 0 --offset 0 --limit 65536
+```
+
+`--part` 接受完整 `result`、`structured` 或从 0 开始的内容序号。分页默认 64 KiB，允许 4–256 KiB；按 `next` 继续，直到 `more=false`。文本页保持 UTF-8 边界，图片、音频和内嵌二进制以 JSON base64 返回。每次读取核对完整结果的长度与哈希，缺失、损坏、符号链接或非普通文件明确报错。
+
+Core 重启后，已保存结果可补入原工具结果位置，无须重连 MCP。只保存派发、未保存结果的调用保持 unknown，原任务等待核实，禁止自动换 ID 重试。没有 MCP 派发记录则可确认尚未执行。远端可能已经产生效果，读取回执不会消除这种不确定性；恢复不承诺远端 exactly-once。当前 CLI 没有单独的执行命令，执行入口是模型的 `tool_invoke`。
 
 ## Responses 接入
 

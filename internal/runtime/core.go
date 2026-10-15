@@ -140,6 +140,25 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 			return nil, err
 		}
 		return c.Store.Resources(ctx, p)
+	case "mcp.inspect":
+		var p protocol.MCPCallTarget
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		record, err := c.Store.MCPCall(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		if record == nil {
+			return nil, protocol.E("not_found", "MCP invocation was not found")
+		}
+		return record.Receipt, nil
+	case "mcp.result":
+		var p protocol.MCPResultRead
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.Store.ReadMCPResult(ctx, p)
 	case "resource.read":
 		var p protocol.ResourceRead
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

@@ -789,6 +789,26 @@ go test ./internal/resource/mcp \
 
 测试使用 SDK 内存通道、本地 HTTP 和受管测试子进程。未使用外部服务、模型或用户凭据；没有修改提示词、数据库 schema 或主界面。开发说明按 trim-cn-tech-doc 保留限额和恢复边界，OpenSpec 7.4 继续保留未完成状态。
 
+## 2026-10-16：MCP 原生工具、持久回执与结果读取
+
+7.4 完成，累计 41/68 项。`tool_search`、`tool_invoke` 已注册到 core；schema 14 保存派发定义与回执，完整结果保存到文件，CLI `mcp inspect/result` 只读原调用。7.5 的同任务安装闭环和第 10 组的四协议选路仍待交付。
+
+| 检查 | 测试 | 结果 |
+| --- | --- | --- |
+| 模型闭环 | `TestMCPNativeLoopSearchInvokeFinal` | 确定性模型完成搜索、调用、结果回填和 final；注册目录只有两个稳定 MCP 工具 |
+| 回执与分页 | `TestMCPNativeReceiptRecoveryAndParts` | 副作用前已有派发记录；重复调用读取原回执；中文分页、二进制附件、资源链接及跨 Agent 查询通过；重开数据库补回原工具结果 |
+| 完整任务恢复 | `TestMCPNativeCoreRestartFinishesOriginalTask` | 成功或工具报错的回执均在新 core 恢复原 Task，继续到 final；原提示词、调用 ID 保留，远端只执行一次 |
+| 未知结果 | `TestMCPNativeInterruptedDispatchDoesNotReplay`、`TestMCPNativeCancellationRetainsUnknown` | 未派发与已派发未保存分开恢复；后者保持 unknown，不重试；已有未验证响应仍可读取 |
+| 热替换 | `TestMCPNativeInFlightPublicationKeepsOriginalReceipt` | 发布新连接后旧调用完成，回执保留原定义与版本；新调用的旧引用明确过期 |
+| 无关新增 | `TestCallUnrelatedAdditionKeepsReferenceInvokable`、既有目录变化测试 | 新增其他工具后旧引用仍能实际调用；替换、删除及原输出 schema 校验继续通过 |
+| 输入与预算 | `TestMCPNativePreDispatchValidationAndResultBudget`、`TestStrictDecodePreservesOpaqueLargeNumbers` | 参数错误、过期引用、缺派发记录不执行；模型结果超限明确报错；原始大整数及指数不被形状检查转为浮点数 |
+| 保存与完整性 | `TestMCPReceiptAtomicCompletionAndRetention`、`TestMCPArtifactsBoundsTypesAndIntegrity` | 事件提交失败回滚回执，已完成结果不可覆写；大元数据有界；文本/音频/资源可读，损坏、缺失、FIFO、符号链接拒绝读取 |
+| CLI 与迁移 | `TestMCPCLIRegistersAndSearchesOverIPC`、`TestMCPSchemaMigratesVersion13` | 经 UDS 查询原回执、续读文本，服务关闭后仍可读；错误 JSON 与退出码正确，13→14 保留既有历史 |
+
+验证通过：`go test ./...`、`go test -race ./...`，MCP 定向 race 三轮、完整任务重启恢复三轮、引用变化三轮，以及 `mcp result --help` 和 OpenSpec strict 校验。只使用本地 HTTP/SDK 通道、隔离状态和确定性模型；没有使用外部 MCP、真实模型或凭据，不能据此宣称真实端点或部署验收完成。
+
+提示词版本升至 14，继续参考本地 Pi 的短说明、规则与能力条件组装。文档按 trim-cn-tech-doc 精简，保留预算、原始结果与 SDK 表示的区别，以及未知副作用的边界。CLI 按 tui-design 核对帮助和机器输出；主界面未增加文字。
+
 ## 进行中
 
-继续 MCP 调用日志、附件和模型入口，再接同任务安装调用；另有外部目录监视、配置/provider 热发布和独立进程插件。7.2 已覆盖 skill/prompt 状态和 MCP 连接准备；目录安装完成的判定方式已提问，待用户选择。7.1、7.7 整体未完成。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。
+继续 7.5 同任务安装调用；另有外部目录监视、配置/provider 热发布和独立进程插件。7.2 已覆盖 skill/prompt 状态和 MCP 连接准备；目录安装完成的判定方式已提问，待用户选择。7.1、7.7 整体未完成。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。

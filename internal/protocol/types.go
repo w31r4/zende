@@ -93,6 +93,7 @@ func (r Request) Validate() error {
 // are deliberately omitted from errors, since malformed input can contain keys.
 func StrictDecode(data []byte, target any) error {
 	d := json.NewDecoder(bytes.NewReader(data))
+	d.UseNumber() // Shape checks must not round or reject opaque numeric arguments.
 	if err := checkValue(d); err != nil {
 		return E("invalid_params", "invalid JSON or duplicate fields")
 	}

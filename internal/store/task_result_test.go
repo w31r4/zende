@@ -329,7 +329,7 @@ func TestTaskResultPagingValidationCapacityAndSchemaTenMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := s2.Snapshot(ctx, a.AgentID)
-	if _, err := s2.db.Exec(`DROP TABLE resource_updates; DROP TABLE wait_receipts; DROP TRIGGER mail_result_identity; DROP TRIGGER mail_queue_identity;
+	if _, err := s2.db.Exec(`DROP TABLE mcp_calls; DROP TABLE resource_updates; DROP TABLE wait_receipts; DROP TRIGGER mail_result_identity; DROP TRIGGER mail_queue_identity;
 DROP TRIGGER mail_task; DROP INDEX mail_result; DROP INDEX mail_queue_task;
 DROP INDEX mail_delivery; CREATE UNIQUE INDEX mail_delivery ON mailbox(agent_id,delivered_seq) WHERE delivered_seq>0;
 ALTER TABLE mailbox DROP COLUMN result_task; ALTER TABLE mailbox DROP COLUMN result_seq; ALTER TABLE mailbox DROP COLUMN queued_task;

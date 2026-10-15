@@ -61,3 +61,20 @@ func TestEventRoundTrip(t *testing.T) {
 		t.Fatal(out)
 	}
 }
+
+func TestStrictDecodePreservesOpaqueLargeNumbers(t *testing.T) {
+	var p MCPInvoke
+	raw := []byte(`{"server_id":"s","tool_ref":"r","arguments":{"n":1e900,"integer":9007199254740993}}`)
+	if err := StrictDecode(raw, &p); err != nil {
+		t.Fatal(err)
+	}
+	if string(p.Arguments) != `{"n":1e900,"integer":9007199254740993}` {
+		t.Fatal(string(p.Arguments))
+	}
+	var typed struct {
+		Value float64 `json:"value"`
+	}
+	if err := StrictDecode([]byte(`{"value":1e900}`), &typed); err == nil {
+		t.Fatal("overflow into typed float was accepted")
+	}
+}

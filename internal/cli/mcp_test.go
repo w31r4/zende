@@ -10,14 +10,18 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
+	"sync/atomic"
 	"testing"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"zende.local/harness/internal/model"
 	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/resource"
 	"zende.local/harness/internal/resource/mcp"
 	"zende.local/harness/internal/runtime"
 	"zende.local/harness/internal/store"
+	"zende.local/harness/internal/tool"
 )
 
 func TestMCPCLIRegistersAndSearchesOverIPC(t *testing.T) {
@@ -40,9 +44,10 @@ func TestMCPCLIRegistersAndSearchesOverIPC(t *testing.T) {
 	defer s.Close()
 	core := runtime.New(s, resource.Effective{Config: resource.Defaults(dir)})
 	fixture := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "fixture", Version: "1"}, &mcpsdk.ServerOptions{Logger: slog.New(slog.NewTextHandler(io.Discard, nil)), SupportedProtocolVersions: []string{"2025-11-25"}})
+	var calls atomic.Int32
 	fixture.AddTool(&mcpsdk.Tool{Name: "test_tool", Description: "Local search fixture", InputSchema: map[string]any{"type": "object"}}, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
-		t.Error("search invoked a tool")
-		return nil, nil
+		calls.Add(1)
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "saved response"}}}, nil
 	})
 	httpServer := httptest.NewServer(mcpsdk.NewStreamableHTTPHandler(func(*http.Request) *mcpsdk.Server { return fixture }, nil))
 	defer httpServer.Close()
@@ -92,7 +97,49 @@ func TestMCPCLIRegistersAndSearchesOverIPC(t *testing.T) {
 	if code != 2 || out.Len() != 0 || json.Unmarshal(diagnostics.Bytes(), &failure) != nil || failure.Data.Kind != "invalid_params" {
 		t.Fatal(code, out.String(), diagnostics.String())
 	}
-	for _, args := range [][]string{{"mcp", "search", "--help"}, {"resource", "register", "--help"}} {
+	if calls.Load() != 0 {
+		t.Fatal("search invoked a tool")
+	}
+	input := protocol.Submit{AgentID: agent.AgentID, Input: "invoke"}
+	req, _ := protocol.NewRequest("agent.submit", "submit", input)
+	accepted, err := s.Submit(ctx, req, input, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.ClaimNext(ctx, agent.AgentID); err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(protocol.MCPInvoke{ServerID: registered.Resource.ID, ToolRef: result.Tools[0].Ref, Arguments: json.RawMessage(`{}`)})
+	call := tool.Call{ID: "original-mcp", AgentID: agent.AgentID, TaskID: accepted.TaskID, Arguments: args}
+	if err := s.AppendTaskEvent(ctx, agent.AgentID, accepted.TaskID, "tool.dispatching", map[string]any{"operation_id": call.ID, "call": model.ToolCall{ID: "model-call", Name: "tool_invoke", Arguments: args}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := core.MCPExecutors()[1].Execute(ctx, call); err != nil {
+		t.Fatal(err)
+	}
+	core.CloseResources()
+	var receipt protocol.MCPCallReceipt
+	if err := json.Unmarshal(run("mcp", "inspect", agent.AgentID, call.ID), &receipt); err != nil || receipt.State != "completed" {
+		t.Fatal(receipt, err)
+	}
+	var page protocol.MCPResultPage
+	if err := json.Unmarshal(run("mcp", "result", agent.AgentID, call.ID, "--part", "0", "--limit", "4"), &page); err != nil || page.Text != "save" || page.Next != 4 || !page.More {
+		t.Fatal(page, err)
+	}
+	if err := json.Unmarshal(run("mcp", "result", agent.AgentID, call.ID, "--part", "0", "--offset", "4"), &page); err != nil || page.Text != "d response" || page.More {
+		t.Fatal(page, err)
+	}
+	for _, args := range [][]string{{"mcp", "inspect", agent.AgentID, "missing"}, {"mcp", "result", agent.AgentID, call.ID, "--part", "wrong"}} {
+		out.Reset()
+		diagnostics.Reset()
+		if code := Run(ctx, append([]string{"--profile", "mcp"}, args...), nil, &out, &diagnostics, BuildInfo{}); code == 0 || out.Len() != 0 || !strings.Contains(diagnostics.String(), `"kind"`) {
+			t.Fatal(code, out.String(), diagnostics.String())
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatal("read-only commands invoked again", calls.Load())
+	}
+	for _, args := range [][]string{{"mcp", "search", "--help"}, {"resource", "register", "--help"}, {"mcp", "inspect", "--help"}, {"mcp", "result", "--help"}} {
 		if len(run(args...)) == 0 {
 			t.Fatal("empty help")
 		}

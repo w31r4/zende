@@ -334,7 +334,8 @@ func (a *app) serve(cmd *cobra.Command, _ []string) error {
 	}
 	runner := process.Remote{Client: protocol.Client{Socket: p.RunnerSocket}}
 	core.Runner = runner
-	core.Tools, err = tool.NewRegistry(append(tool.ProcessExecutors(runner), tool.DurablePatchExecutor(filepath.Join(p.State, "patches")))...)
+	executors := append(tool.ProcessExecutors(runner), tool.DurablePatchExecutor(filepath.Join(p.State, "patches")))
+	core.Tools, err = tool.NewRegistry(append(executors, core.MCPExecutors()...)...)
 	if err != nil {
 		ctx, cancel := context.WithCancel(cmd.Context())
 		cancel()

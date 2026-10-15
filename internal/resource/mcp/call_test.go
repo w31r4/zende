@@ -244,6 +244,29 @@ func TestCallCancellationAndSingleUseDoNotRetry(t *testing.T) {
 	}
 }
 
+func TestCallUnrelatedAdditionKeepsReferenceInvokable(t *testing.T) {
+	server := fixtureServer("2025-11-25")
+	var calls atomic.Int32
+	server.AddTool(&mcpsdk.Tool{Name: "act", InputSchema: json.RawMessage(`{"type":"object"}`)}, func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
+		calls.Add(1)
+		return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "original target"}}}, nil
+	})
+	c := connectMemory(t, server)
+	ref := callRef(t, c, "act")
+	addTool(server, tool("unrelated"))
+	if err := c.Refresh(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := c.PrepareCall(t.Context(), ref, []byte(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := prepared.Invoke(t.Context())
+	if err != nil || calls.Load() != 1 || !strings.Contains(string(result.Result), "original target") {
+		t.Fatal(result, err, calls.Load())
+	}
+}
+
 func TestHeaderValuesAreBoundedAndUnambiguous(t *testing.T) {
 	for _, value := range []string{"你好", " x", "x ", "\n", "=?base64?eA==?="} {
 		encoded, ok := headerValue(value)

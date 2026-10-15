@@ -209,7 +209,7 @@ func TestMailboxAtomicAcceptanceDeliveryAndSchemaNineMigration(t *testing.T) {
 	s, path := newStore(t)
 	_, a := create(t, s)
 	before, _ := s.Snapshot(ctx, a.AgentID)
-	if _, err := s.db.Exec("DROP TABLE resource_updates; DROP TABLE wait_receipts; DROP TABLE mailbox; PRAGMA user_version=9"); err != nil {
+	if _, err := s.db.Exec("DROP TABLE mcp_calls; DROP TABLE resource_updates; DROP TABLE wait_receipts; DROP TABLE mailbox; PRAGMA user_version=9"); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()
