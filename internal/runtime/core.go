@@ -37,6 +37,19 @@ func New(s *store.Store, config resource.Effective) *Core {
 
 func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 	switch req.Method {
+	case "agent.selection":
+		var p protocol.Target
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		s, err := c.Store.Selection(ctx, p.AgentID)
+		return s.Choice, err
+	case "agent.select":
+		var p protocol.SelectAgent
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.selectAgent(ctx, req, p)
 	case "workspace.directory":
 		var p protocol.DirectoryQuery
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

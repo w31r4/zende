@@ -169,6 +169,7 @@ func (a *app) command() *cobra.Command {
 	}}
 	recoverCommand.Flags().StringVar(&recoverTask, "task", "", "Held task identity")
 	agent.AddCommand(recoverCommand)
+	a.selectionCommands(agent)
 	root.AddCommand(agent)
 	operation := &cobra.Command{Use: "operation", Short: "Look up acceptance after a connection failure"}
 	operation.AddCommand(&cobra.Command{Use: "inspect ID", Short: "Inspect a stable mutation request", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -276,6 +277,7 @@ func (a *app) serve(cmd *cobra.Command, _ []string) error {
 	if exe, err := os.Executable(); err == nil {
 		core.Commands = append(questionHints(exe, a.profile), resourceHints(exe, a.profile)...)
 		core.Commands = append(core.Commands, workspaceHints(exe, a.profile)...)
+		core.Commands = append(core.Commands, selectionHints(exe, a.profile)...)
 	}
 	configuredModels, err := provider.New(e.Config, os.Getenv)
 	if err != nil {

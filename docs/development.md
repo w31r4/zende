@@ -102,11 +102,21 @@ model: local/my-model
 
 Git 查询使用 [porcelain v2](https://git-scm.com/docs/git-status#_porcelain_format_version_2) 和 NUL 分隔，关闭可选索引写入及 fsmonitor hook，忽略启动环境中的仓库重定向。默认限时 3 秒，stdout 2 MiB、诊断 16 KiB；错误不回传 Git 原始诊断。模型可通过 exec 调用这些 CLI，文件读取仍可自由使用终端命令。
 
-这些接口为 5.8 的选择页提供数据；模型/cwd 的持久切换、请求边界应用及 TUI 交互仍在实现。
+## 持久选配
+
+`zende agent selection AGENT` 查询已接受的 cwd、模型、力度及 revision；`agent select AGENT --cwd PATH` 切换工作目录，`--model CONNECTION/MODEL --effort VALUE` 选择配置中的型号和力度。可在一条命令中同时设置。省略 model 保留模型设置；选择模型时，空或省略 effort 使用供应商默认力度。
+
+`--expected-revision` 防止覆盖其他客户端的新选择，`--catalog-version` 核对模型目录版本。两者冲突均拒绝保存，重新查询后再选。切换使用稳定 `--request-id` 去重；已接受重试返回原回执，不重新检查相对路径、目录版本或模型能力。公开回执只含选择，端点与凭据引用保存在运行快照中。
+
+接受选择与 `agent.selection` 事件一起提交。当前响应及其工具仍用原设置；下一请求前追加 developer 变更说明，并与 `model.started.settings` 原子保存。旧提示词、消息和工具结果保留。并发选择、上下文变化或 stop 通过事务核对；准备冲突最多重试 8 次，持续变化时报错。
+
+预检检查图片和协议私有数据兼容性，允许工具尚未返回；实际请求须等调用全部落定。认证与网络在发送时检查。不兼容返回明确错误并保留历史；跨模型私有数据迁移仍待 10.6 实现。选择不解除暂停或待核实状态。未配置默认模型时，可显式选配后处理原来 accepted 的任务。
+
+TUI 的模型/力度选择页、单页目录导航与 Git 刷新仍属 5.8 待办。
 
 ## 数据与恢复边界
 
-SQLite schema 为 6，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答与资源版本；更高版本拒绝打开。
+SQLite schema 为 7，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答与资源版本；更高版本拒绝打开。
 
 core 启动先将中断任务置为待核实，再按原身份恢复。取消中的任务保留 cancelling 和暂停选择；核实完成后结束取消，不恢复执行。历史、已接受输入和原 Task ID 保留。
 
@@ -125,7 +135,7 @@ core 启动先将中断任务置为待核实，再按原身份恢复。取消中
 
 调度器每次启动为每个待核实 Task 自动尝试一次。进程工具查询原进程及控制记录，patch 查询独立结果记录。已核实结果与对应工具消息同事务提交；仍有未知调用时继续保持 unknown，新输入只入队。核实状态改变后，用 `zende --request-id CHECK agent recover AGENT [--task TASK]` 请求再次核实；相同 ID 去重。它返回 accepted，实际进度查 recovery/history。
 
-Task 保存原 cwd、模型、端点、思考力度、输出上限、格式修复额度和提示词。重启后即使默认配置改变或原连接已从目录移除，也按保存的连接恢复；只保存凭据引用，请求时读取当前值。设置缺失、版本不兼容或待派发工具版本变化时保留待核实。配置热更新的请求级规则由第 7 组接入。
+Task 保存启动设置和提示词；每次 `model.started` 另存实际 cwd、模型、端点、力度、输出上限和选择版本，格式修复额度在 Task 内固定。恢复先按原请求快照核实、处理旧调用，再为下一请求应用待生效选择；当前目录移除连接也不改变保存的绑定。快照只含凭据引用，请求时读取当前值。设置缺失、版本不兼容或待派发工具版本变化时保留待核实。配置自动热更新由第 7 组接入。
 
 未完整提交的模型流保留原始片段，下次请求使用已提交上下文；已派发的格式修复计入原额度，重启不刷新次数。恢复提交使用事件游标核对并发 stop/新输入，冲突时重读，最多 4 次；持续冲突可显式 recover。
 
@@ -157,7 +167,7 @@ stop/resume 使用稳定 `--request-id` 去重。重试旧 stop 只返回原接�
 
 原始 delta 保留，跨 UTF-8 字节的片段另用 base64 `text_bytes` 保存原字节。单块/单个工具结果上限 1 MiB，响应组装上限 4 MiB、128 块，分类结果也限 128 块。具体标记与历史事件见 [输出分类](./prompts.md#输出分类)。
 
-core 注册 `exec_command`、`write_stdin`、`apply_patch`。进程调用经 Unix socket 交给 runner，文本改动由 [patch](./patch.md) 应用。未配置默认模型时，`model_loop` 为 `unavailable`，新任务保持 accepted；已有任务仍可按保存的模型绑定恢复。配置 Responses 后，core 使用 HTTP adapter；`running` 只表示调度器运行，连通性与模型能力需另行验证。
+core 注册 `exec_command`、`write_stdin`、`apply_patch`。进程调用经 Unix socket 交给 runner，文本改动由 [patch](./patch.md) 应用。没有默认模型且 Agent 未选配时，新任务保持 accepted；已有任务可按保存的绑定恢复。`model_loop: running` 表示调度器运行，连通性、凭据和具体型号能力在请求时检查；没有模型解析器则为 `unavailable`。
 
 ## 本地 CLI 链路验证
 
@@ -234,7 +244,7 @@ zende --request-id answer-1 question answer AGENT QUESTION --file ANSWER.md --im
 zende question inspect AGENT QUESTION
 ```
 
-`ask` 只接受正在运行且未暂停的 Task，返回 `question_id`。问题最多 8 KiB UTF-8；同一 Agent 最多 8 个待回答或待投递问题。`answer` 接受最多 1 MiB UTF-8、图片引用和 skill 版本，可仅附图片或 skill。图片限额沿用图片输入；能力检查读取 Task 保存的配置，失败时问题保持待回答，附件保留。
+`ask` 只接受正在运行且未暂停的 Task，返回 `question_id`。问题最多 8 KiB UTF-8；同一 Agent 最多 8 个待回答或待投递问题。`answer` 接受最多 1 MiB UTF-8、图片引用和 skill 版本，可仅附图片或 skill。图片限额沿用图片输入；能力检查读取最后已发出请求的配置，旧记录回退到 Task 启动配置，失败时问题保持待回答，附件保留。
 
 当前工具全部结束后，Agent 等待全部回答，再按问题创建顺序追加 user 消息。文字、图片和所选 skill 正文一起投递；`context.message` 的 `question_id`、资源引用与投递游标同事务保存，重启和重试只投递一次。等待不占用 IPC 请求；其他 Agent 继续调度。普通输入仍排入任务队列。
 

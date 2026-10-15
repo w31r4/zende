@@ -1,6 +1,6 @@
 # 提示词
 
-实现入口为 `internal/runtime/prompt.go`，工具说明契约为 `internal/tool/tool.go`。组装结果在请求前保存为 `prompt.loaded`。已接入提问、资源和工作环境查询 CLI；协作命令、项目资源自动发现及 skill 目录的请求级更新仍归第 6、7 组。
+实现入口为 `internal/runtime/prompt.go`，工具说明契约为 `internal/tool/tool.go`。组装结果在请求前保存为 `prompt.loaded`。已接入提问、资源、工作环境查询与选配 CLI；协作命令、项目资源自动发现及 skill 目录的请求级更新仍归第 6、7 组。
 
 ## Pi 参考
 
@@ -32,6 +32,8 @@ Zende 保持 exec、进程继续操作和 patch 的工具边界。Pi 的 read/ed
 版本 3 增加 `resource list/read/register` 说明，沿用同一 exec 能力条件和路径引用。参考 Pi `packages/coding-agent/src/core/skills.ts`，先查询名称、描述和来源，再按返回版本完整读取正文；禁用模型自行调用的 skill 需用户明确选择。安装完成后 register，修改后 refresh，失败保留旧版；脚本通过进程执行。说明只列常用入口，完整参数留给 `--help`。
 
 版本 4 增加 `workspace directory/git` 和 `model connections` 查询入口，仍按 exec 能力组合短说明。目录查询只浏览；Git 读本地状态；型号与力度通过 `model list CONNECTION` 查询。adapter 支持标记与端点/凭据健康状态分开，长参数留给 `--help`。旧 Task 恢复时沿用原提示词。
+
+版本 5 增加 `agent selection/select`，说明下一请求生效、默认力度和原进程 cwd。基础提示词允许后续 developer 选配通知更新 cwd 与输出格式；通知复用同一份分类规则，路径和型号用 JSON 字符串引用。通知与实际请求快照同事务追加，旧请求和提示词保留。结构继续参考 Pi 的按能力组合短说明，完整参数由 CLI 帮助提供。
 
 ## 输出分类
 

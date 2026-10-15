@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"path/filepath"
+	"reflect"
 
 	"zende.local/harness/internal/model"
 	"zende.local/harness/internal/protocol"
@@ -64,6 +65,25 @@ type RecoveryReport struct {
 
 func recoveryInvalid() error {
 	return protocol.E("recovery_invalid", "task lifecycle records are inconsistent; original history is preserved")
+}
+
+func validSettings(s taskSettings) bool {
+	return (s.Version == 1 || s.Version == 2) && filepath.IsAbs(s.Cwd) && s.Model != "" && s.Protocol != "" && s.FormatRepairs >= 0 && s.SelectionRevision >= 0 && s.ModelRevision >= 0 && s.ModelRevision <= s.SelectionRevision
+}
+
+func settingsFollow(previous, next taskSettings) bool {
+	if next.SelectionRevision < previous.SelectionRevision || next.ModelRevision < previous.ModelRevision || next.FormatRepairs != previous.FormatRepairs {
+		return false
+	}
+	previous.Version, next.Version = 2, 2 // Legacy request snapshots may be upgraded.
+	if next.SelectionRevision == previous.SelectionRevision {
+		return reflect.DeepEqual(previous, next)
+	}
+	if next.ModelRevision == previous.ModelRevision {
+		previous.Cwd, previous.SelectionRevision = next.Cwd, next.SelectionRevision
+		return reflect.DeepEqual(previous, next)
+	}
+	return true
 }
 
 func readRecoveryJournal(ctx context.Context, s *store.Store, agent, task string) (*recoveryJournal, error) {
@@ -128,7 +148,7 @@ func (j *recoveryJournal) add(e protocol.Event) error {
 	switch e.Kind {
 	case "task.config":
 		var settings taskSettings
-		if j.Settings != nil || protocol.StrictDecode(e.Payload, &settings) != nil || settings.Version != 1 || !filepath.IsAbs(settings.Cwd) || settings.Model == "" || settings.Protocol == "" || settings.FormatRepairs < 0 {
+		if j.Settings != nil || protocol.StrictDecode(e.Payload, &settings) != nil || !validSettings(settings) {
 			return recoveryInvalid()
 		}
 		j.Settings = &settings
@@ -142,6 +162,15 @@ func (j *recoveryJournal) add(e protocol.Event) error {
 		}
 		var r requestRecord
 		if protocol.StrictDecode(e.Payload, &r) != nil || r.ID == "" || r.RepairAttempt != j.RepairCount || r.RepairLimit < 0 || r.FormatRepair != j.RepairOnly {
+			return recoveryInvalid()
+		}
+		if r.Settings != nil {
+			s := r.Settings
+			if !validSettings(*s) || r.Model != s.Model || r.Protocol != s.Protocol || r.MaxOutputTokens != s.MaxOutputTokens || r.RepairLimit != s.FormatRepairs || j.Settings != nil && !settingsFollow(*j.Settings, *s) {
+				return recoveryInvalid()
+			}
+			j.Settings = s
+		} else if j.Settings != nil && j.Settings.Version == 2 {
 			return recoveryInvalid()
 		}
 		j.Request = &r

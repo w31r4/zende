@@ -138,7 +138,7 @@ func (c *Core) prepareResume(ctx context.Context, j *recoveryJournal) (*resumedT
 		if j.Request != nil {
 			return nil, protocol.E("model_snapshot_missing", "original model settings were not recorded; task remains held")
 		}
-		if c.Models == nil {
+		if c.modelResolver() == nil {
 			return nil, protocol.E("model_unavailable", "no model is configured for this not-yet-dispatched task")
 		}
 		return nil, nil // Claimed before any settings/request: start same Task.

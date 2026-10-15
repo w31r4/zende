@@ -89,6 +89,10 @@ func sameJSON(a, b []byte) bool {
 }
 
 func buildRequest(request model.Request, endpoint, effort string) ([]byte, error) {
+	return encodeRequest(request, endpoint, effort, false)
+}
+
+func encodeRequest(request model.Request, endpoint, effort string, allowPending bool) ([]byte, error) {
 	if request.Model == "" || request.MaxOutputTokens < 1 {
 		return nil, protocol.E("invalid_params", "Responses requires a model and positive output budget")
 	}
@@ -239,7 +243,7 @@ func buildRequest(request model.Request, endpoint, effort string) ([]byte, error
 			return nil, wireError("unsupported history role")
 		}
 	}
-	if len(pending) != 0 {
+	if len(pending) != 0 && !allowPending {
 		return nil, wireError("historical calls are missing results")
 	}
 	tools := []any{}

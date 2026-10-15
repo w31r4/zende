@@ -204,13 +204,14 @@ type Snapshot struct {
 }
 
 type Accepted struct {
-	OperationID string        `json:"operation_id"`
-	AgentID     string        `json:"agent_id"`
-	TaskID      string        `json:"task_id,omitempty"`
-	QuestionID  string        `json:"question_id,omitempty"`
-	State       string        `json:"state"`
-	Attachment  *Attachment   `json:"attachment,omitempty"`
-	Resource    *ResourceInfo `json:"resource,omitempty"`
+	OperationID string          `json:"operation_id"`
+	AgentID     string          `json:"agent_id"`
+	TaskID      string          `json:"task_id,omitempty"`
+	QuestionID  string          `json:"question_id,omitempty"`
+	State       string          `json:"state"`
+	Attachment  *Attachment     `json:"attachment,omitempty"`
+	Resource    *ResourceInfo   `json:"resource,omitempty"`
+	Selection   *AgentSelection `json:"selection,omitempty"`
 }
 
 type CreateAgent struct {

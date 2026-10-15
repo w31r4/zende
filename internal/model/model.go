@@ -98,6 +98,21 @@ type Resolver interface {
 	Resolve(context.Context, string) (Binding, error)
 }
 
+type SelectionResolver interface {
+	ResolveSelection(context.Context, string, string, string) (Binding, error)
+}
+
+// Optional transport preflight. It must not resolve credentials or send data.
+type RequestValidator interface {
+	ValidateRequest(Request) error
+}
+
+// ContextValidator checks a candidate model without sending a request. Unlike
+// request validation, pending tool calls are permitted during selection.
+type ContextValidator interface {
+	ValidateContext(Request) error
+}
+
 // Restorer recreates the original transport from saved settings, independent
 // of the current defaults/catalog. Unsupported or missing versions must fail.
 type Restorer interface {

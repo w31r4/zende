@@ -429,6 +429,23 @@ go test -race ./internal/render ./internal/store ./internal/cli -run 'Skill|Sche
 
 按 trim-cn-tech-doc 合并查询说明，保留来源、限额和错误条件。所有文件、Git 仓库、服务和模型端点均为临时测试对象；模型使用 HTTP 夹具。TUI 选择页、确认后持久切换和请求边界应用仍待实现，本节不作为 V21 全项通过或用户级部署验收。
 
+## 2026-10-15：持久选配与请求边界
+
+5.8 的 core/CLI 选配已实现，完成数仍为 30/68。schema 7 保存期望设置；每次请求保存实际设置，旧调用按原快照执行和恢复。全量 `go test ./...`、`go test -race ./...` 和 OpenSpec strict 校验通过，选配相关用例在 race 下连续 3 次通过。
+
+| 验证 | 入口 | 结果 |
+| --- | --- | --- |
+| 持久化与竞争 | `TestSelectionDurableAtomicAndIdempotent`、`TestSelectionRollbackAndHeldStates`、`TestConcurrentSelectionHasOneWinner` | 重开、旧请求重试、版本冲突及接受失败回滚通过；暂停/unknown 保持，复制中或归档拒绝；同一版本并发只有一项成功 |
+| 请求事务 | `TestRequestBoundaryFencesSelectionContextAndStop` | 选择或上下文变化拒绝旧准备；notice 与 model.started 一起保存、一起回滚；stop 阻止新派发 |
+| 模型预检 | `TestExplicitSelectionEffortAndCatalogFence`、`TestSelectionPreflightAllowsPendingCallsButRequestDoesNot`、`TestSelectionRejectsIncompatibleHistoryWithoutChangingIt` | 显式空力度不被 profile 默认覆盖；预检不解析凭据，允许未完成工具，实际请求拒绝；私有数据不兼容时保留设置与历史 |
+| 循环与恢复 | `TestSelectionTakesEffectAfterOldResponseAndCalls`、`TestSelectionRecoveryUsesDispatchedRequestSnapshot`、`TestRequestSettingsJournalRejectsUnversionedChanges` | 流中切换不改旧工具 cwd；下一请求和重启恢复按对应快照；无版本变更的设置篡改被拒绝，旧上下文保留 |
+| 默认值与图片 | `TestExplicitSelectionRunsWithoutProfileDefault`、`TestQuestionImagesUseLastDispatchedSelection`、`TestSchemaSixMigrationPreservesHistory` | 无默认模型时保留 accepted，选配后继续；回答按最新已发请求检查图片能力；6→7 保留旧输入和历史 |
+| CLI 与真实二进制 | `TestSelectionCLIUsesPersistedAcceptance`、`TestSelectionPromptHintsMatchCLI`、`TestBinaryModelSelectsThroughCLIAtRequestBoundary` | 真实 UDS 验证选配、重试及错误通道；模型夹具经 exec 调用 CLI，原命令在旧目录产生效果，下一请求用新力度并在新目录执行 patch；三个请求、两个派发、一个 Task |
+
+提示词版本 5 按 Pi 的能力组合方式提供选配入口；基础提示词允许后续 developer 通知更新工作目录和分类格式，通知复用同一分类规则。说明按 trim-cn-tech-doc 合并生效与恢复条件，保留参数、限额和错误。首轮测试将等待状态误写为 queued，按实际 accepted 状态修正；旧失败不计通过。
+
+测试使用临时目录、SQLite、runner 与本地 HTTP 模型夹具，未访问外部模型。TUI 选择页与 Git 刷新仍待接入；跨模型私有数据迁移归 10.6，本节不作为 V21 全项或部署验收通过。
+
 ## 进行中
 
-继续 5.8：接入 TUI 模型/力度选择、单页目录导航、确认后的持久切换与 Git 刷新；旧请求和工具固定原设置，显式选择在后续合法请求应用。会话复制依赖第 6、9 组；协作提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成。
+继续 5.8：接入 TUI 模型/力度选择、单页目录导航、选择确认与 Git 刷新。持久选配和请求边界已由 core/CLI 提供。会话复制依赖第 6、9 组；协作提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成。

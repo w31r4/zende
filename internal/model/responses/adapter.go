@@ -123,3 +123,25 @@ func (a *Adapter) Stream(ctx context.Context, request model.Request, emit func(m
 	}
 	return err
 }
+
+func (a *Adapter) ValidateRequest(request model.Request) error {
+	return a.validate(request, false)
+}
+
+func (a *Adapter) ValidateContext(request model.Request) error {
+	return a.validate(request, true)
+}
+
+func (a *Adapter) validate(request model.Request, allowPending bool) error {
+	if !a.config.Images {
+		for _, message := range request.Messages {
+			for _, block := range message.Content {
+				if block.Type == "image" {
+					return protocol.E("unsupported_capability", "selected Responses model does not declare image input")
+				}
+			}
+		}
+	}
+	_, err := encodeRequest(request, a.endpoint, a.config.Effort, allowPending)
+	return err
+}

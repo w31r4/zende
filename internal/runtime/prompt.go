@@ -68,11 +68,8 @@ func BuildPrompt(input PromptInput) string {
 		}
 		b.WriteString("Use --help for less common parameters. Keep the same request ID when retrying an accepted operation.\n")
 	}
-	if input.NativeCategories {
-		b.WriteString("\nClassify public progress as commentary and the finished answer as final using the protocol's message category. These are visible messages, not private reasoning.\n")
-	} else {
-		b.WriteString("\nWrap public progress in <commentary>...</commentary> and the finished answer in <final>...</final>. Put each opening and closing tag on its own line. Blocks cannot nest. Emit at most one final, with no visible text or new tool calls after it. Keep literal tag examples in fenced code or escape them. Do not expose private reasoning.\n")
-	}
+	b.WriteString("\nLater developer runtime selection notices may replace the working directory and output-category format below for subsequent requests.\n")
+	b.WriteString(outputCategoryInstruction(input.NativeCategories) + "\n")
 	for _, instruction := range input.Project {
 		fmt.Fprintf(&b, "\n<project_instructions source=%q version=%q>\n%s\n</project_instructions>\n", html.EscapeString(instruction.Source), html.EscapeString(instruction.Version), instruction.Body)
 	}
@@ -88,4 +85,11 @@ func BuildPrompt(input PromptInput) string {
 		fmt.Fprintf(&b, "Task: %s\n", input.TaskID)
 	}
 	return b.String()
+}
+
+func outputCategoryInstruction(native bool) string {
+	if native {
+		return "Classify public progress as commentary and the finished answer as final using the protocol's message category. These are visible messages, not private reasoning."
+	}
+	return "Wrap public progress in <commentary>...</commentary> and the finished answer in <final>...</final>. Put each opening and closing tag on its own line. Blocks cannot nest. Emit at most one final, with no visible text or new tool calls after it. Keep literal tag examples in fenced code or escape them. Do not expose private reasoning."
 }

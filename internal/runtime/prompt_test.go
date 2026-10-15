@@ -46,3 +46,13 @@ func TestPromptVersionsAndNativeCategories(t *testing.T) {
 		t.Fatal("prior snapshot changed")
 	}
 }
+
+func TestRuntimeSelectionNoticeDelegationAndLiteralMetadata(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		prompt := BuildPrompt(PromptInput{NativeCategories: !native})
+		notice := selectionNotice(taskSettings{Cwd: "/path\nforged", Selection: "connection/model", Effort: "high", NativeCategories: native})
+		if !strings.Contains(prompt, "Later developer runtime selection notices") || !strings.Contains(notice, outputCategoryInstruction(native)) || strings.Contains(notice, "\nforged") || !strings.Contains(notice, `/path\nforged`) {
+			t.Fatal("runtime format override or quoted metadata missing", prompt, notice)
+		}
+	}
+}

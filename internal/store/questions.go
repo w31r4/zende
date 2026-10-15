@@ -114,7 +114,8 @@ func (s *Store) AnswerQuestion(ctx context.Context, req protocol.Request, p prot
 		}
 		if len(p.Attachments) > 0 {
 			var raw string
-			err := tx.QueryRowContext(ctx, "SELECT payload FROM events WHERE agent_id=? AND task_id=? AND kind='task.config' ORDER BY seq DESC LIMIT 1", q.AgentID, q.TaskID).Scan(&raw)
+			err := tx.QueryRowContext(ctx, `SELECT CASE WHEN kind='model.started' THEN json_extract(payload,'$.settings') ELSE payload END
+ FROM events WHERE agent_id=? AND task_id=? AND (kind='task.config' OR (kind='model.started' AND json_type(payload,'$.settings')='object')) ORDER BY seq DESC LIMIT 1`, q.AgentID, q.TaskID).Scan(&raw)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return protocol.Accepted{}, err
 			}

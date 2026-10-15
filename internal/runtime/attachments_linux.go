@@ -64,10 +64,11 @@ func (c *Core) checkImageCapability(ctx context.Context, agent string) error {
 	if selection == "" {
 		selection = c.Config.Config.Model
 	}
-	if c.Models == nil {
+	resolver := c.modelResolver()
+	if resolver == nil {
 		return protocol.E("unsupported_capability", "select a model with image input; draft attachments are retained")
 	}
-	binding, err := c.Models.Resolve(ctx, selection)
+	binding, err := resolver.Resolve(ctx, selection)
 	if err != nil {
 		return safeFailure(err, "model_unavailable", "selected model is unavailable; draft attachments are retained")
 	}

@@ -49,8 +49,19 @@ func New(config resource.Config, env func(string) string) (*Resolver, error) {
 }
 
 func (r *Resolver) Resolve(ctx context.Context, selection string) (model.Binding, error) {
+	effort := ""
+	if selection == r.config.Model {
+		effort = r.config.Effort
+	}
+	return r.ResolveSelection(ctx, selection, effort, "")
+}
+
+func (r *Resolver) ResolveSelection(ctx context.Context, selection, effort, version string) (model.Binding, error) {
 	if err := ctx.Err(); err != nil {
 		return model.Binding{}, err
+	}
+	if version != "" && version != r.version {
+		return model.Binding{}, protocol.E("catalog_changed", "model configuration changed; restart selection")
 	}
 	connection, id, ok := strings.Cut(selection, "/")
 	conn, exists := r.config.Connections[connection]
@@ -67,9 +78,14 @@ func (r *Resolver) Resolve(ctx context.Context, selection string) (model.Binding
 	if selected == nil {
 		return model.Binding{}, protocol.E("model_unavailable", "selected model is not configured")
 	}
-	effort := ""
-	if selection == r.config.Model {
-		effort = r.config.Effort
+	if effort != "" {
+		found := false
+		for _, option := range selected.Efforts {
+			found = found || option == effort
+		}
+		if !found {
+			return model.Binding{}, protocol.E("unsupported_capability", "selected model does not support this effort")
+		}
 	}
 	// Retain only the selected model, not every connection in the catalog.
 	conn.Models = []resource.ModelConfig{*selected}

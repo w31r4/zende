@@ -17,7 +17,7 @@ import (
 func (c *Core) loopStatus() string {
 	c.loopMu.Lock()
 	defer c.loopMu.Unlock()
-	if c.Models == nil {
+	if c.modelResolver() == nil {
 		return "unavailable"
 	}
 	if !c.loopRunning {
@@ -78,8 +78,22 @@ func (c *Core) Run(ctx context.Context) error {
 				candidates = append(candidates, candidate{agent: h.AgentID, held: &h})
 			}
 		}
-		if c.Models != nil {
+		if c.modelResolver() != nil {
 			for _, id := range ids {
+				// A configured catalog without a default may still run an
+				// explicitly selected Agent. Others keep their accepted work.
+				if c.Models == nil {
+					a, err := c.Store.Agent(ctx, id)
+					if err != nil {
+						if ctx.Err() != nil {
+							return nil
+						}
+						return err
+					}
+					if a.Model == "" {
+						continue
+					}
+				}
 				candidates = append(candidates, candidate{agent: id})
 			}
 		}
@@ -215,6 +229,7 @@ type requestRecord struct {
 	FormatRepair    bool              `json:"format_repair"`
 	RepairAttempt   int               `json:"repair_attempt"`
 	RepairLimit     int               `json:"repair_limit"`
+	Settings        *taskSettings     `json:"settings,omitempty"`
 }
 type invocation struct {
 	SchemaVersion int            `json:"schema_version,omitempty"`
@@ -230,16 +245,19 @@ type toolOutcome struct {
 }
 
 type taskSettings struct {
-	Version          int             `json:"version"`
-	Selection        string          `json:"selection"`
-	Cwd              string          `json:"cwd"`
-	Model            string          `json:"model"`
-	Protocol         string          `json:"protocol"`
-	NativeCategories bool            `json:"native_categories"`
-	Images           bool            `json:"images,omitempty"`
-	MaxOutputTokens  int             `json:"max_output_tokens"`
-	FormatRepairs    int             `json:"format_repairs"`
-	Binding          json.RawMessage `json:"binding,omitempty"`
+	Version           int             `json:"version"`
+	Selection         string          `json:"selection"`
+	Cwd               string          `json:"cwd"`
+	Model             string          `json:"model"`
+	Protocol          string          `json:"protocol"`
+	NativeCategories  bool            `json:"native_categories"`
+	Images            bool            `json:"images,omitempty"`
+	MaxOutputTokens   int             `json:"max_output_tokens"`
+	FormatRepairs     int             `json:"format_repairs"`
+	Binding           json.RawMessage `json:"binding,omitempty"`
+	Effort            string          `json:"effort,omitempty"`
+	SelectionRevision int64           `json:"selection_revision,omitempty"`
+	ModelRevision     int64           `json:"model_revision,omitempty"`
 }
 
 type resumedTask struct {
@@ -248,6 +266,15 @@ type resumedTask struct {
 }
 
 func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resumedTask) (string, error) {
+	var choice store.Selection
+	if resume == nil {
+		var err error
+		choice, err = c.Store.Selection(persist, w.Agent.ID)
+		if err != nil {
+			return "", err
+		}
+		w.Agent.Cwd, w.Agent.Model = choice.Choice.Cwd, choice.Choice.Model
+	}
 	selection := w.Agent.Model
 	if selection == "" {
 		selection = c.Config.Config.Model
@@ -255,7 +282,15 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 	var binding model.Binding
 	var err error
 	if resume == nil {
-		binding, err = c.Models.Resolve(ctx, selection)
+		if choice.Choice.ModelRevision > 0 {
+			resolver, ok := c.modelResolver().(model.SelectionResolver)
+			if !ok {
+				return "", protocol.E("model_unavailable", "model selection is unavailable")
+			}
+			binding, err = resolver.ResolveSelection(ctx, selection, choice.Choice.Effort, "")
+		} else {
+			binding, err = c.modelResolver().Resolve(ctx, selection)
+		}
 		if err != nil {
 			return "", safeFailure(err, "model_unavailable", "selected model is unavailable")
 		}
@@ -286,22 +321,26 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		return nil
 	}
 	limit := c.Config.Config.Limits.FormatRepairs
+	settings := taskSettings{Version: 2, Selection: selection, Cwd: w.Agent.Cwd, Model: binding.Model, Protocol: binding.Protocol, NativeCategories: binding.NativeCategories, Images: binding.Images, MaxOutputTokens: binding.MaxOutputTokens, FormatRepairs: limit, Binding: binding.Snapshot, SelectionRevision: choice.Choice.Revision, ModelRevision: choice.Choice.ModelRevision, Effort: choice.Choice.Effort}
+	if choice.Choice.ModelRevision == 0 && selection == c.Config.Config.Model {
+		settings.Effort = c.Config.Config.Effort
+	}
 	if resume == nil {
-		settings := taskSettings{Version: 1, Selection: selection, Cwd: w.Agent.Cwd, Model: binding.Model, Protocol: binding.Protocol, NativeCategories: binding.NativeCategories, Images: binding.Images, MaxOutputTokens: binding.MaxOutputTokens, FormatRepairs: limit, Binding: binding.Snapshot}
 		if err := appendEvent("task.config", settings); err != nil {
 			return "", err
 		}
-		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "4", Body: system}); err != nil {
+		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "5", Body: system}); err != nil {
 			return "", err
 		}
 	} else {
 		if resume.Journal.Settings != nil {
+			settings = *resume.Journal.Settings
 			limit = resume.Journal.Settings.FormatRepairs
 		}
 		if resume.Journal.Prompt.Body != "" {
 			system = resume.Journal.Prompt.Body
 		} else {
-			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "4", Body: system}); err != nil {
+			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "5", Body: system}); err != nil {
 				return "", err
 			}
 		}
@@ -376,6 +415,8 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 			}
 		}
 	}
+	noticePending := settings.SelectionRevision > 0 && (resume == nil || resume.Journal.Request == nil)
+	conflicts := 0
 	for {
 		if err := ctx.Err(); err != nil {
 			return "", err
@@ -383,12 +424,23 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if err := c.waitForAnswers(ctx, persist, w.Agent.ID, w.Task.ID); err != nil {
 			return "", err
 		}
+		nextSettings, nextBinding, err := c.requestSelection(ctx, w.Agent.ID, settings, binding)
+		if err != nil {
+			return "", err
+		}
+		notice := ""
+		if noticePending || nextSettings.SelectionRevision != settings.SelectionRevision {
+			notice = selectionNotice(nextSettings)
+		}
 		messages, cursor, err := c.Store.ModelContext(persist, w.Agent.ID)
 		if err != nil {
 			return "", protocol.E("persistence_failed", "model context could not be read")
 		}
-		req := model.Request{ID: protocol.NewID("request"), Model: binding.Model, System: system, Messages: messages, MaxOutputTokens: binding.MaxOutputTokens}
-		req.Images, err = c.resolveImages(ctx, w.Agent.ID, messages, binding.Images)
+		if notice != "" {
+			messages = append(messages, model.Message{Role: "developer", Content: []model.Block{{Type: "text", Text: notice}}})
+		}
+		req := model.Request{ID: protocol.NewID("request"), Model: nextBinding.Model, System: system, Messages: messages, MaxOutputTokens: nextBinding.MaxOutputTokens}
+		req.Images, err = c.resolveImages(ctx, w.Agent.ID, messages, nextBinding.Images)
 		if err != nil {
 			return "", err
 		}
@@ -399,9 +451,23 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		for _, d := range requestDescriptors {
 			req.Tools = append(req.Tools, d.Tool)
 		}
-		if err := appendEvent("model.started", requestRecord{ID: req.ID, Model: binding.Model, Protocol: binding.Protocol, Cursor: cursor, Tools: requestDescriptors, MaxOutputTokens: req.MaxOutputTokens, FormatRepair: repairOnly, RepairAttempt: repairs, RepairLimit: limit}); err != nil {
-			return "", err
+		if validator, ok := nextBinding.Adapter.(model.RequestValidator); ok {
+			if err := validator.ValidateRequest(req); err != nil {
+				return "", err
+			}
 		}
+		err = c.Store.BeginModelRequest(persist, w.Agent.ID, w.Task.ID, nextSettings.SelectionRevision, cursor, notice, func(cursor int64) any {
+			return requestRecord{ID: req.ID, Model: nextBinding.Model, Protocol: nextBinding.Protocol, Cursor: cursor, Tools: requestDescriptors, MaxOutputTokens: req.MaxOutputTokens, FormatRepair: repairOnly, RepairAttempt: repairs, RepairLimit: limit, Settings: &nextSettings}
+		})
+		if isFailure(err, "request_conflict") && conflicts < 8 {
+			conflicts++
+			continue
+		}
+		if err != nil {
+			return "", safeFailure(err, "persistence_failed", "model request could not be saved")
+		}
+		conflicts, noticePending = 0, false
+		settings, binding, w.Agent.Cwd = nextSettings, nextBinding, nextSettings.Cwd
 		var collector model.Collector
 		classifier := model.Classifier{Native: binding.NativeCategories}
 		var emitErr error
