@@ -834,6 +834,22 @@ go test ./internal/resource/mcp \
 
 安装与配置说明见 [本地开发](./development.md#skill-与-prompt-资源)，通知预算和版本规则见 [提示词](./prompts.md#skillprompt-的请求级更新)。说明按 trim-cn-tech-doc 保留操作和限制；本次只补测试与文档，未改变模型提示词。模型及安装执行器为夹具，真实安装链路由前节验证；外部目录监视和真实端点仍待完成。
 
+## 2026-10-16：插件 manifest 与独立进程启动
+
+8.1 完成，累计 44/68 项。新增严格 manifest 解析、凭据边界解析、版本/身份/能力协商及独立 stdio 进程。初始化成功返回候选实例，运行时能力发布仍由后续任务接入。
+
+| 检查 | 测试 | 结果 |
+| --- | --- | --- |
+| 配置与准备 | `TestParsePluginManifest`、`TestPreparePluginFailuresNeverYieldPreparedPackage` | JSON/YAML 类型一致；重复/未知字段、别名、null、多文档、超限、FIFO、缺凭据或执行文件、初始化期间修改源文件均拒绝候选 |
+| 协商与隔离 | `TestPluginInitializationLifetimeAndIsolation`、`TestPluginInitializationRejectsProtocolFailures` | 版本、身份、能力和响应信封严格匹配；失败实例回收，另一就绪实例保留；成功后取消准备上下文不影响实例 |
+| 通道与诊断 | `TestPluginDiagnosticsAreSeparateBoundedAndRedacted`、`TestDiagnosticRedactionAcrossEverySplit`、`TestPluginIdleStdoutPollutionClosesOnlyItsInstance`、`TestPluginShutdownDrainsDiagnosticTail` | stdout 污染关闭实例；stderr 有界、跨块脱敏、控制字符转义，关闭前排空尾部 |
+| 取消与回收 | `TestPluginTimeoutAndBlockedWriter`、`TestPluginCancellationInterruptsBlockedWriter`、初始化失败中的 child-exit 场景 | 不读 stdin 也能超时/取消；主进程退出后仍持管道的同组子进程收到终止，主进程被回收 |
+| 凭据与状态 | `TestPreparePluginResolvesOnlyAtProcessBoundary`、`TestPluginManifestValidationAndDigest` | env/file 引用在启动时解析；候选配置、Info 和诊断不保存已解析凭据，摘要和公开限额可查询 |
+
+最终代码通过 `go test ./...`、`go test -race ./...`、插件定向 race 三轮、资源包 `go vet` 和 OpenSpec strict 校验。首轮发现管道 deadline 先于 context timer 时的错误分类，以及测试立即检查 SIGKILL 目标的竞态；分别修正分类和有界退出观察后重跑通过。
+
+测试运行真实本地子进程和临时文件，不访问外部模型、插件服务或用户凭据。协议和限额加入开发说明，按 trim-cn-tech-doc 保留操作、失败与可信执行边界；未改提示词或 TUI。插件工具、CLI、provider、资源/事件能力、热替换和持久恢复仍由 8.2–8.5 完成。
+
 ## 进行中
 
-继续独立进程插件。7.1、7.2 的配置/provider 热发布与外部目录监视尚未完成；目录安装完成的判定方式已提问，待用户选择。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。
+继续 8.2 的插件工具与 CLI 调用。7.1、7.2 的配置/provider 热发布与外部目录监视尚未完成；目录安装完成的判定方式已提问，待用户选择。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。

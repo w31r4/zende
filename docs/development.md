@@ -377,6 +377,34 @@ zende mcp result AGENT OPERATION --part 0 --offset 0 --limit 65536
 
 Core 重启后，已保存结果可补入原工具结果位置，无须重连 MCP。只保存派发、未保存结果的调用保持 unknown，原任务等待核实，禁止自动换 ID 重试。没有 MCP 派发记录则可确认尚未执行。远端可能已经产生效果，读取回执不会消除这种不确定性；恢复不承诺远端 exactly-once。当前 CLI 没有单独的执行命令，执行入口是模型的 `tool_invoke`。
 
+## 插件启动与协议协商
+
+`resource.PreparePlugin` 读取 YAML/JSON manifest、解析环境引用、启动独立进程并完成协商。当前交付启动层；CLI 注册、五类能力接线和版本退役由 OpenSpec 8.2–8.5 完成。准备成功只返回候选实例，不向模型发布能力。
+
+```yaml
+schema_version: 1
+id: local-extension
+version: '1.0'
+protocol_versions: [1]
+command: /absolute/path/to/plugin
+args: [--stdio]
+capabilities: [tools, commands]
+env:
+  API_KEY: env:MY_PLUGIN_KEY
+```
+
+`id` 为最多 64 字节的小写字母、数字和单连字符；`version` 为最多 128 字节的非空、无空格 ASCII 发布标识。`capabilities` 接受 tools、providers、commands、resources、events，至少一项且不能重复。配置拒绝未知/重复字段、null、别名、错误类型和多文档 YAML。manifest 最多 128 KiB；协议版本列表最多 8 项。
+
+执行文件直接启动，参数不作 shell 展开；命令名按 Core 的 PATH 查找。cwd 默认 manifest 目录，也可指定绝对路径。子进程继承 Core 环境，env 覆盖只接受 `env:NAME` 或 `file:/absolute/path` 引用，值在启动前解析。不要把凭据写进 command、args 或版本字段。准备后复读 manifest，内容变化即关闭候选并报 resource_changed。
+
+stdin/stdout 使用 [JSON-RPC 2.0](https://www.jsonrpc.org/specification)，UTF-8、每行一个对象，末尾换行。宿主发送 `plugin.initialize`，params 包含 protocol_versions、host/plugin 身份、instance_id、capabilities 和 limits；插件响应所选 protocol_version、plugin 身份及 capabilities。当前宿主只提供版本 1，身份和能力须与 manifest 一致。响应须匹配请求 ID，result/error 二选一；错误版本、无效响应、stdout 日志或未经请求的帧均关闭该实例。日志写 stderr。调用/通知协议将随能力接线扩展。
+
+初始化最多 30 秒，调用方可提前取消；准备上下文结束不关闭已就绪实例。所有者调用 Close 时先请求 `plugin.shutdown`，最多等 2 秒，再对进程组发送 TERM，最多等 300 ms 后发送 KILL，回收主进程并关闭管道。退出时诊断最多再排空 100 ms；脱离原进程组的外部进程不在此回收保证内。
+
+协议帧上限 8 MiB。stderr 持续读取，保存脱敏后的末尾 64 KiB，记录读取和淘汰字节数，展示时转义控制字符。显式环境引用值，以及继承环境中名称含 KEY/TOKEN/SECRET/PASSWORD/PASSWD/CREDENTIAL/AUTH 的值用于脱敏；单值最多 64 KiB、最多收集 256 项。跨读取边界的凭据仍脱敏，最多暂存最长凭据长度减一的尾部，关闭时冲刷。未知或编码后的敏感值需插件自行处理。
+
+Info 返回实例身份、manifest 摘要、协商版本、状态、PID、能力、限额和 trusted_execution。摘要覆盖启动配置，不是可执行文件哈希。插件按当前用户权限运行；进程分离用于生命周期管理，外部副作用不随关闭回滚。初始化错误返回的实例已关闭，仅供诊断，失败候选不影响其他实例。
+
 ## Responses 接入
 
 连接使用 `protocol: responses`，`base_url` 为 API 根地址，adapter 追加 `/responses`。型号、输出上限和可选思考力度均来自配置。`native_categories: true` 仅用于已确认支持 assistant `phase` 的具体型号，默认使用显式文本标签。其他三种协议的配置元数据已接受，adapter 由后续任务交付；当前选择它们会明确报不支持。
