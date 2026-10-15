@@ -87,6 +87,18 @@ func TestMCPCLIRegistersAndSearchesOverIPC(t *testing.T) {
 	if err := json.Unmarshal(run("--request-id", "install", "resource", "register", agent.AgentID, "mcp.json", "--kind", "mcp"), &registered); err != nil || registered.Resource == nil {
 		t.Fatal(registered, err)
 	}
+	var status protocol.ResourceStatus
+	if err := json.Unmarshal(run("resource", "status", agent.AgentID, registered.Resource.ID), &status); err != nil || status.State != "ready" || status.Update == nil || status.Update.State != "ready" || status.Version != registered.Resource.Version {
+		t.Fatal("documented ready query failed", status, err)
+	}
+	var resources protocol.ResourcePage
+	if err := json.Unmarshal(run("resource", "list", agent.AgentID, "--kind", "mcp"), &resources); err != nil || len(resources.Items) != 1 || resources.Items[0].ID != registered.Resource.ID {
+		t.Fatal("documented server discovery failed", resources, err)
+	}
+	var refreshed protocol.Accepted
+	if err := json.Unmarshal(run("--request-id", "refresh", "resource", "refresh", agent.AgentID, registered.Resource.ID), &refreshed); err != nil || refreshed.Resource == nil || refreshed.Resource.Version != registered.Resource.Version {
+		t.Fatal("unchanged configuration changed its published version", refreshed, err)
+	}
 	var result mcp.SearchResult
 	if err := json.Unmarshal(run("mcp", "search", agent.AgentID, registered.Resource.ID, "--query", "fixture", "--limit", "1", "--max-bytes", "1024"), &result); err != nil || len(result.Tools) != 1 || result.Generation == 0 || result.ResourceVersion != registered.Resource.Version {
 		t.Fatal(result, err)

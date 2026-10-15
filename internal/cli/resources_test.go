@@ -101,6 +101,10 @@ func TestResourceCLIUsesDurableVersionedCore(t *testing.T) {
 	if err := json.Unmarshal(updated, &refreshed); err != nil || refreshed.Resource == nil || refreshed.Resource.Version == version {
 		t.Fatal(refreshed, err)
 	}
+	var ready protocol.ResourceStatus
+	if err := json.Unmarshal(run("resource", "status", created.AgentID, id), &ready); err != nil || ready.State != "ready" || ready.Update == nil || ready.Update.State != "ready" || ready.Version != refreshed.Resource.Version {
+		t.Fatal("documented ready query failed", ready, err)
+	}
 	var content protocol.ResourceContent
 	if err := json.Unmarshal(run("resource", "read", created.AgentID, id, "--version", version), &content); err != nil || content.Text != v1 {
 		t.Fatal(content, err)

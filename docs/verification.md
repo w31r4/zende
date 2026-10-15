@@ -824,6 +824,16 @@ go test ./internal/resource/mcp \
 
 模型为确定性夹具，core/runner 在测试进程内运行，安装源为本地测试程序。测试未访问外部模型或 MCP、未使用用户凭据，真实端点和本机部署仍待验收。说明按 trim-cn-tech-doc 保留步骤、等待预算和失败查询；tui-design 用于 CLI 输出及超时核对，主界面与提示词未改。
 
+## 2026-10-16：连续发布的有界通知与安装说明
+
+7.7 完成，累计 43/68 项。既有通知机制覆盖 MCP、skill 和 prompt；补齐混合连续发布与文档入口验证。
+
+`TestMixedResourceBatchesKeepDiscoveryBoundedAndAppendOnly` 分两批准备真实资源和本地 HTTP MCP。首批 11 项只通知 8 项并标记 more；第二批新增一个 MCP、更新 skill/prompt，只通知 3 项变化。10 个服务共 640 个工具定义留在目录，按需搜索才返回；原消息前缀、工具面、系统提示词及运行选择保持不变。请求记录分别保存 0、11、12 项资源版本。
+
+`TestMCPCLIRegistersAndSearchesOverIPC` 和 `TestResourceCLIUsesDurableVersionedCore` 补齐安装说明中的 register/refresh → status.ready、服务列表与原版本查询。混合发布、既有通知/恢复及 CLI 入口的定向 race 均连续三轮通过；最终全量 `go test ./...`、`go test -race ./...` 和 OpenSpec strict 校验通过。
+
+安装与配置说明见 [本地开发](./development.md#skill-与-prompt-资源)，通知预算和版本规则见 [提示词](./prompts.md#skillprompt-的请求级更新)。说明按 trim-cn-tech-doc 保留操作和限制；本次只补测试与文档，未改变模型提示词。模型及安装执行器为夹具，真实安装链路由前节验证；外部目录监视和真实端点仍待完成。
+
 ## 进行中
 
-继续 7.7 能力通知与安装说明；另有外部目录监视、配置/provider 热发布和独立进程插件。7.2 已覆盖 skill/prompt 状态和 MCP 连接准备；目录安装完成的判定方式已提问，待用户选择。7.1、7.7 整体未完成。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。
+继续独立进程插件。7.1、7.2 的配置/provider 热发布与外部目录监视尚未完成；目录安装完成的判定方式已提问，待用户选择。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。

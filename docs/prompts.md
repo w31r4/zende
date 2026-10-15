@@ -59,6 +59,8 @@ Zende 保持 exec、进程继续操作和 patch 的工具边界。Pi 的 read/ed
 
 `internal/runtime/resource_notice.go` 在目录变化后的下一请求追加 developer 通知，来源为 `zende/resources`、格式版本 1。只在 exec 和资源 list/read 入口已注册时展示，最多 8 项、12 KiB；超出部分通过 CLI 搜索和分页查询。同一资源的多次更新合并为当前版本，禁用模型自行调用的 skill 留给用户选择，正文和脚本按需读取。
 
+MCP 使用同一通知，只列服务元数据；完整工具定义通过 tool_search 或 CLI mcp search 按需获取。安装或更新失败不推进发布 generation；后续请求保留上次可用目录，失败详情由 resource status 查询。
+
 通知与 `model.started` 同事务提交。组装期间目录变化则重建请求，正在输出的请求保持原版本；默认模型、cwd 不随发布改变。恢复读取原请求的 generation，目录未变时不重复通知；上下文视图切换后重新提供当前发现信息。原 prompt、通知、读取结果和已发布正文保留。
 
 ```sh
