@@ -1,0 +1,16 @@
+/bin/
+/coverage.out
+/.zende/config.local.yaml
+/.research/
+
+# Local credentials, runtime state and editor/test artifacts.
+.env
+.env.*
+!.env.example
+*.db
+*.db-shm
+*.db-wal
+*.sock
+*.test
+__pycache__/
+node_modules/
