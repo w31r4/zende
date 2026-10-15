@@ -80,6 +80,44 @@ func TestCatalogReferenceBindingAndImmutableCopies(t *testing.T) {
 	}
 }
 
+func TestCatalogPersistenceAndPublishedSearchBudget(t *testing.T) {
+	s := snapshot(t, "local", "config", tool("one"), tool("two"))
+	data := s.Export()
+	restored, err := Restore(t.Context(), "local", "config", data)
+	if err != nil || restored.Version() != s.Version() {
+		t.Fatal(restored, err)
+	}
+	for _, change := range []func(*Catalog){
+		func(c *Catalog) { c.Version = "wrong" },
+		func(c *Catalog) { c.Tools[0].Ref = "wrong" },
+		func(c *Catalog) { c.Tools[0].ServerID = "other" },
+		func(c *Catalog) { c.Tools[0].Tool = []byte(`{"name":"changed","inputSchema":{"type":"object"}}`) },
+	} {
+		copy := s.Export()
+		change(&copy)
+		if _, err := Restore(t.Context(), "local", "config", copy); err == nil {
+			t.Fatal("corrupt saved catalog accepted")
+		}
+	}
+	if _, err := Restore(t.Context(), "local", "other-binding", data); err == nil {
+		t.Fatal("binding mismatch accepted")
+	}
+	data.Tools[0].Tool[0] = '!'
+	if _, err := Restore(t.Context(), "local", "config", s.Export()); err != nil {
+		t.Fatal("export aliases immutable bytes")
+	}
+	for _, budget := range []int{1024, 1200, 2048} {
+		result, err := s.SearchPublished(SearchRequest{MaxBytes: budget}, strings.Repeat("a", 64), 99)
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, _ := json.Marshal(result)
+		if len(b) > budget || result.Generation != 99 || result.ResourceVersion != strings.Repeat("a", 64) {
+			t.Fatal(len(b), result)
+		}
+	}
+}
+
 func TestCatalogPaginationAndFailureAreAllOrNothing(t *testing.T) {
 	var calls []string
 	list := func(_ context.Context, cursor string) (*mcpsdk.ListToolsResult, error) {

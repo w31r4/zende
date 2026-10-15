@@ -1,6 +1,6 @@
 # 提示词
 
-系统说明由 `internal/runtime/prompt.go` 组装，工具说明定义在 `internal/tool/tool.go`，请求前保存为 `prompt.loaded`。CLI 说明覆盖提问、资源、工作环境、选配和 Agent 协作；skill/prompt 更新在后续请求追加发现通知。外部目录监视及 MCP 接入待完成。
+系统说明由 `internal/runtime/prompt.go` 组装，工具说明定义在 `internal/tool/tool.go`，请求前保存为 `prompt.loaded`。CLI 说明覆盖提问、资源、工作环境、选配和 Agent 协作；资源更新在后续请求追加发现通知。MCP 已接入注册和搜索，执行与外部目录监视待完成。
 
 ## Pi 参考
 
@@ -48,6 +48,8 @@ Zende 保持 exec、进程继续操作和 patch 的工具边界。Pi 的 read/ed
 版本 11 加入 `agent stop/resume`，区分默认单 Agent 暂停和显式 `--tree`，说明完成查询、未知效果、队列保留和原 ID 重试。沿用 Pi 的能力条件短说明，完整范围和限额见帮助及 [停止与恢复](./collaboration.md#停止与恢复)。一致性测试核对命令注册、默认 `tree=false` 和不可用状态；旧 Task 仍用保存的提示词。
 
 版本 12 更新资源 CLI 短说明：`status` 区分已有版本可用和最近更新失败。沿用 Pi 的按能力组合方式，参数和状态细节留给帮助及资源文档；旧 Task 保留原提示词。
+
+版本 13 增加 `mcp.search` 和 `resource register --kind mcp`。先发现服务，再搜索完整工具定义及版本引用；不平铺目录，服务端描述仍是数据。MCP 发现通知要求搜索入口已注册。继续参考 Pi 的短说明与能力条件组装，旧 Task 的基础提示词不变；工具执行未实现，不提前提供调用说明。
 
 ## Skill/prompt 的请求级更新
 

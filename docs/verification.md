@@ -755,6 +755,23 @@ go test ./internal/resource/mcp \
 
 文档按 trim-cn-tech-doc 合并机制与边界说明，保留限额和未完成范围。本轮不改 OpenSpec 勾选；7.3 还需多服务目录及模型入口，7.4、7.5 尚未完成。
 
+## 2026-10-16：MCP 运行时注册与搜索
+
+7.3 完成，累计 40/68 项。MCP 配置、连接和目录已接入持久资源发布、CLI 与模型可用的搜索入口。工具执行、结果附件及同任务安装调用闭环留在 7.4、7.5。
+
+| 检查 | 测试 | 结果 |
+| --- | --- | --- |
+| 配置与引用 | `TestMCPConfigStrictAndNonsecret`、`TestMCPConfigAndCredentialFIFOAreRejected` | 拒绝混合传输、未知/重复字段、明文凭据字段、非法 URL/header 和 FIFO；JSON/YAML 配置可往返 |
+| 真实 stdio | `TestMCPManagedStdioAndImmutablePackage`、`TestMCPStdioLeaderExitClosesInheritedPipes` | 启动测试服务器，保存可校验目录；组长退出后回收仍持有管道的子进程，导出不共享可变字节 |
+| HTTP 与准备失败 | `TestMCPHTTPReferencesRedirectsAndRedaction`、`TestMCPPreparationRejectsMissingDependencyAndChangedSource` | 连接前解析引用；拒绝重定向，固定错误不回显密钥；缺依赖和连接期间改写配置不发布 |
+| 发布与重连 | `TestMCPRegisterSearchHotCatalogAndReconnect` | 接受回执重试不重连；失败保留旧连接；通知持久发布；重启只用已发布配置重连，初始状态不假报在线 |
+| 入口与预算 | `TestMCPCLIRegistersAndSearchesOverIPC`、`TestCatalogPersistenceAndPublishedSearchBudget` | CLI 经 UDS 注册/搜索，返回 schema/ref/目录版本/资源版本/generation；字节预算包含发布信息，非法参数 JSON 输出到 stderr、退出 2 |
+| 默认上下文 | `TestMCPNoticeNeedsSearchCapability`、运行时注册测试 | 只有搜索入口存在时才通知 MCP；上下文快照、提示词及普通事件不展开完整工具目录 |
+
+全量 `go test ./...`、`go test -race ./...`、MCP 定向 race 三轮及 OpenSpec strict 校验通过。首轮修正了旧“mcp 为非法类型”断言、测试字段引用和 CLI 退出码断言；重复测试还补齐 `/proc` 在进程退出瞬间返回 ESRCH 的断言。失败轮不计通过。测试只使用本地 HTTP、真实测试子进程和隔离状态目录，没有使用外部模型、MCP 服务或用户凭据。
+
+核心提示词升至 13，沿用 Pi 的能力条件短说明；旧任务的已存提示词不改。开发说明和验证记录按 trim-cn-tech-doc 精简，保留配置、恢复、限额和未完成范围；CLI 帮助与错误出口按 tui-design 核对，主界面未增加文字。
+
 ## 进行中
 
-继续外部目录监视、MCP 运行时注册与搜索调用、配置/provider 热发布和独立进程插件。7.2 的 skill/prompt 状态部分已接通，目录监视与 MCP 依赖、凭据检查仍待完成；目录安装完成的判定方式已提问，待用户选择。7.1、7.7 整体也未勾选。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。
+继续 MCP 版本绑定调用、外部目录监视、配置/provider 热发布和独立进程插件。7.2 已覆盖 skill/prompt 状态和 MCP 连接准备；目录安装完成的判定方式已提问，待用户选择。7.1、7.7 整体未完成。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。

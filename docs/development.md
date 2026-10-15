@@ -295,11 +295,38 @@ TUI 输入 `$` 或 `/skill` 打开当前 Agent 的已发布目录，候选在输
 
 CLI 用 `agent submit AGENT --skill RESOURCE@VERSION` 或 `question answer AGENT QUESTION --skill RESOURCE@VERSION`，`--skill` 可重复，也支持纯 skill 输入。提交时 core 核实该 Agent 发布过确切版本，将引用与输入原子保存；任务开始或回答投递时追加该版本正文、来源和版本到 user 消息。`disable-model-invocation` 允许用户显式选择；这不赋予正文 developer/system 权限。刷新和源文件删除不改已接受输入；辅助文件用 `resource read --version` 读取，脚本走进程接口。
 
-资源发布后，下一模型请求追加有界发现通知，按实际目录保存版本；旧 Task 的基础提示词和旧正文保持原样。限额、恢复与读取入口见 [请求级更新](./prompts.md#skillprompt-的请求级更新)。`resource_dirs` 自动发现、目录监视及 MCP 的运行时接入仍在第 7 组实施。
+资源发布后，下一模型请求追加有界发现通知，按实际目录保存版本；旧 Task 的基础提示词和旧正文保持原样。限额、恢复与读取入口见 [请求级更新](./prompts.md#skillprompt-的请求级更新)。`resource_dirs` 自动发现和目录监视仍在实施。
 
-## MCP 目录准备层
+## MCP 注册与搜索
 
-`internal/resource/mcp` 已提供连接、目录校验和有界搜索，尚未注册到 CLI、模型工具或持久资源目录。它接收一个 SDK transport；连接配置、凭据解析和多服务目录由后续 host 接入，不能据此宣称 MCP 安装调用链已完成。
+MCP 复用资源注册、刷新和状态入口；`mcp search` 搜索指定服务，`resource list --kind mcp` 发现服务。Core 管理 stdio 与 Streamable HTTP 连接，将完整目录保存为不可变资源版本。默认上下文只列服务元数据和搜索入口，按需返回工具定义。工具执行仍待 7.4 实现。
+
+安装完成后，将非敏感配置写入 YAML 或 JSON 文件：
+
+```yaml
+schema_version: 1
+name: local-tools
+description: Project utilities
+transport: stdio
+command: /absolute/path/to/mcp-server
+args: [--stdio]
+env:
+  API_KEY: env:MY_SERVICE_KEY
+```
+
+stdio 的 `cwd` 可选，默认为配置文件目录；继承 Core 环境，`env` 仅接受 `env:NAME` 或 `file:/absolute/path` 引用。HTTP 配置使用 `transport: streamable-http` 和 `url`，可选 `credential`（Bearer 引用）或 `headers`（请求头到引用的映射）。URL 不接受账号、查询参数和片段，不跟随重定向。不要把密钥放在 command、args、URL 或描述中；解析和保存配置时不读取引用值，连接前才解析。
+
+```sh
+zende resource register AGENT /absolute/path/to/mcp.yaml --kind mcp
+zende resource status AGENT RESOURCE
+zende resource list AGENT --kind mcp
+zende mcp search AGENT RESOURCE --query files --limit 8 --max-bytes 65536
+zende resource refresh AGENT RESOURCE
+```
+
+搜索返回完整 definition、`tool_ref`、`catalog_version`、`resource_version`、发布 `generation` 和可选 `next_cursor`。用相同查询和 `--cursor` 翻页；目录更新后游标失效。服务配置最多 128 KiB，保存在该资源的入口文件中，可按版本读取；目录通过搜索读取。
+
+连接、全页校验和配置复读通过后才发布。失败保留旧连接和旧版，状态区分当前可用性与最近更新失败。变更通知先持久发布，再替换搜索快照；请求回执重试不重连。Core 重启后状态为 unavailable，首次搜索从最后发布的配置重连并校验，磁盘上的未发布修改不参与恢复。关闭 TUI 不关闭连接；Core 正常退出回收连接及 stdio 进程组。
 
 连接使用 [官方 Go SDK v1.8.0](https://github.com/modelcontextprotocol/go-sdk/releases/tag/v1.8.0)。协商和首次目录读取成功后才返回，准备限时 30 秒；返回后由所有者显式 Close。初始请求结束不关闭连接；连接断开后查询报 unavailable。收到工具变更通知会合并触发刷新，显式 Refresh 总是重新读取，不使用 SDK 的页缓存。
 

@@ -22,7 +22,7 @@ func TestIdentityIsStableBeforeInstallation(t *testing.T) {
 			t.Fatal("accepted invalid source", len(input))
 		}
 	}
-	if _, err := Identity("mcp", "/mcp/config"); err == nil {
+	if _, err := Identity("unknown", "/mcp/config"); err == nil {
 		t.Fatal("accepted unsupported kind")
 	}
 	source := filepath.Join(t.TempDir(), "prompt.md")

@@ -65,6 +65,17 @@ type ResourceTarget struct {
 	AgentID string `json:"agent_id"`
 	ID      string `json:"resource_id"`
 }
+
+// MCPSearch searches one registered server. Resource listing discovers servers
+// without expanding their tool catalogs into model context.
+type MCPSearch struct {
+	AgentID  string `json:"agent_id"`
+	ID       string `json:"id"`
+	Query    string `json:"query,omitempty"`
+	Cursor   string `json:"cursor,omitempty"`
+	Limit    int    `json:"limit,omitempty"`
+	MaxBytes int    `json:"max_bytes,omitempty"`
+}
 type ResourceRead struct {
 	AgentID string `json:"agent_id"`
 	ID      string `json:"resource_id"`
@@ -91,6 +102,7 @@ type ResourceStatus struct {
 	State      string          `json:"state"`
 	Generation int64           `json:"generation"`
 	Update     *ResourceUpdate `json:"update,omitempty"`
+	Error      *Error          `json:"error,omitempty"`
 }
 
 // ResourceUpdate exposes preparation status independently of content versions.

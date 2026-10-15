@@ -29,6 +29,9 @@ type Core struct {
 	loopMu        sync.Mutex
 	loopRunning   bool
 	workers       map[string]context.CancelFunc // task ID, never just Agent ID
+	mcpMu         sync.Mutex
+	mcpSlots      map[protocol.ResourceTarget]*mcpSlot
+	mcpClosed     bool
 }
 
 func New(s *store.Store, config resource.Effective) *Core {
@@ -124,7 +127,13 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 		if req.Method == "resource.refresh" {
 			return c.refreshResource(ctx, req, p)
 		}
-		return c.Store.ResourceStatus(ctx, p)
+		return c.resourceStatus(ctx, p)
+	case "mcp.search":
+		var p protocol.MCPSearch
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.searchMCP(ctx, p)
 	case "resource.list":
 		var p protocol.ResourceList
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

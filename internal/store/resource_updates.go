@@ -167,6 +167,8 @@ func (s *Store) FailResourceUpdate(ctx context.Context, agent string, attempt Re
 		"resource_changed": "Source or publication changed during preparation; retry refresh.",
 		"resource_limit":   "Resource exceeds file, byte or catalog limits.",
 		"cancelled":        "Resource preparation was cancelled; retry refresh.",
+		"timeout":          "Resource connection or preparation timed out; retry refresh.",
+		"unavailable":      "Resource connection or credential reference unavailable; retry refresh.",
 		"interrupted":      "Core stopped during resource preparation; retry refresh.",
 		"internal":         "Resource publication failed; retry refresh after checking core state.",
 	}

@@ -58,7 +58,7 @@ func (c *Core) prepareResource(ctx context.Context, req protocol.Request, agent,
 		var known *protocol.Error
 		if errors.As(err, &known) {
 			switch known.Data.Kind {
-			case "invalid_resource", "resource_limit", "resource_changed":
+			case "invalid_resource", "resource_limit", "resource_changed", "unavailable", "timeout", "cancelled":
 				reason = known.Data.Kind
 			}
 			// Copy, never modify a shared error owned by another layer.
@@ -82,6 +82,13 @@ func (c *Core) prepareResource(ctx context.Context, req protocol.Request, agent,
 			err = failure
 		}
 	}()
+	if kind == "mcp" {
+		prepared, conn, prepareErr := resource.PrepareMCP(ctx, identity.Source, nil)
+		if prepareErr != nil {
+			return protocol.Accepted{}, prepareErr
+		}
+		return c.publishMCP(ctx, req, agent, prepared, conn, attempt)
+	}
 	prepared, err := resource.Prepare(ctx, kind, identity.Source)
 	if err != nil {
 		return protocol.Accepted{}, err

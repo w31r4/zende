@@ -26,9 +26,11 @@ type SearchRequest struct {
 }
 
 type SearchResult struct {
-	Version    string       `json:"catalog_version"`
-	Tools      []Definition `json:"tools"`
-	NextCursor string       `json:"next_cursor,omitempty"`
+	Version         string       `json:"catalog_version"`
+	ResourceVersion string       `json:"resource_version,omitempty"`
+	Generation      int64        `json:"generation,omitempty"`
+	Tools           []Definition `json:"tools"`
+	NextCursor      string       `json:"next_cursor,omitempty"`
 }
 
 type searchCursor struct {
@@ -40,18 +42,37 @@ type searchCursor struct {
 // Search has deterministic lexical ranking, complete definitions, and a byte
 // budget covering the entire JSON result. A too-large first hit is an error,
 // not a truncated schema or a cursor that silently skips it.
-func (s *Snapshot) Search(req SearchRequest) (SearchResult, error) {
+func (req SearchRequest) Validate() error {
 	if len(req.Query) > MaxQueryBytes || !utf8.ValidString(req.Query) || strings.ContainsRune(req.Query, 0) || len(req.Cursor) > 512 {
-		return SearchResult{}, protocol.E("invalid_params", "MCP search query or cursor is invalid")
+		return protocol.E("invalid_params", "MCP search query or cursor is invalid")
+	}
+	if req.Limit < 0 || req.Limit > MaxSearchLimit || req.MaxBytes != 0 && (req.MaxBytes < 1024 || req.MaxBytes > MaxSearchBytes) {
+		return protocol.E("invalid_params", "MCP search limit must be 1..50 and max_bytes 1024..1048576")
+	}
+	return nil
+}
+
+func (s *Snapshot) Search(req SearchRequest) (SearchResult, error) {
+	return s.search(req, SearchResult{})
+}
+
+// SearchPublished includes durable provenance in the same result byte budget.
+func (s *Snapshot) SearchPublished(req SearchRequest, version string, generation int64) (SearchResult, error) {
+	if len(version) != 64 || generation <= 0 {
+		return SearchResult{}, protocol.E("invalid_state", "MCP catalog has no publication")
+	}
+	return s.search(req, SearchResult{ResourceVersion: version, Generation: generation})
+}
+
+func (s *Snapshot) search(req SearchRequest, result SearchResult) (SearchResult, error) {
+	if err := req.Validate(); err != nil {
+		return SearchResult{}, err
 	}
 	if req.Limit == 0 {
 		req.Limit = DefaultSearchLimit
 	}
 	if req.MaxBytes == 0 {
 		req.MaxBytes = DefaultSearchBytes
-	}
-	if req.Limit < 1 || req.Limit > MaxSearchLimit || req.MaxBytes < 1024 || req.MaxBytes > MaxSearchBytes {
-		return SearchResult{}, protocol.E("invalid_params", "MCP search limit must be 1..50 and max_bytes 1024..1048576")
 	}
 	query := strings.Join(strings.Fields(strings.ToLower(req.Query)), " ")
 	queryHash := digest(query)
@@ -91,7 +112,7 @@ func (s *Snapshot) Search(req SearchRequest) (SearchResult, error) {
 	if offset > len(matches) {
 		return SearchResult{}, protocol.E("stale_cursor", "MCP search cursor is outside the result set; restart search")
 	}
-	result := SearchResult{Version: s.version, Tools: []Definition{}}
+	result.Version, result.Tools = s.version, []Definition{}
 	for i := offset; i < len(matches) && len(result.Tools) < req.Limit; i++ {
 		previousCursor := result.NextCursor
 		result.Tools = append(result.Tools, copyDefinition(s.entries[matches[i].index].definition))

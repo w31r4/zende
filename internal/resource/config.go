@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 
 	"go.yaml.in/yaml/v3"
 	"zende.local/harness/internal/protocol"
@@ -265,11 +266,14 @@ func ResolveCredential(ref string, env func(string) string) (string, error) {
 	if strings.HasPrefix(ref, "env:") {
 		value = env(strings.TrimPrefix(ref, "env:"))
 	} else {
-		file, err := os.Open(strings.TrimPrefix(ref, "file:"))
+		file, err := os.OpenFile(strings.TrimPrefix(ref, "file:"), os.O_RDONLY|syscall.O_NONBLOCK, 0)
 		if err != nil {
 			return "", fmt.Errorf("credential file unavailable")
 		}
 		defer file.Close()
+		if st, err := file.Stat(); err != nil || !st.Mode().IsRegular() {
+			return "", fmt.Errorf("credential file must be regular")
+		}
 		b, err := io.ReadAll(io.LimitReader(file, 65537))
 		if err != nil || len(b) > 65536 {
 			return "", fmt.Errorf("credential file unreadable or too large")

@@ -48,6 +48,53 @@ type Snapshot struct {
 	refs    map[string]int
 }
 
+// Catalog is the durable, nonsecret representation of a prepared snapshot.
+// Restore validates both definitions and their binding-dependent references.
+type Catalog struct {
+	Version string       `json:"version"`
+	Tools   []Definition `json:"tools"`
+}
+
+func (s *Snapshot) Export() Catalog {
+	d := Catalog{Version: s.version, Tools: make([]Definition, len(s.entries))}
+	for i, e := range s.entries {
+		d.Tools[i] = copyDefinition(e.definition)
+	}
+	return d
+}
+
+func Restore(ctx context.Context, serverID, bindingVersion string, data Catalog) (*Snapshot, error) {
+	if len(data.Tools) > MaxTools {
+		return nil, catalogLimit()
+	}
+	tools := make([]*mcpsdk.Tool, len(data.Tools))
+	total := 0
+	for i, d := range data.Tools {
+		total += len(d.Tool)
+		if len(d.Tool) > MaxDefinitionBytes || total > MaxCatalogBytes {
+			return nil, catalogLimit()
+		}
+		if err := json.Unmarshal(d.Tool, &tools[i]); err != nil {
+			return nil, invalidCatalog()
+		}
+	}
+	s, err := prepare(ctx, serverID, bindingVersion, func(context.Context, string) (*mcpsdk.ListToolsResult, error) {
+		return &mcpsdk.ListToolsResult{Tools: tools}, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	if s.version != data.Version {
+		return nil, invalidCatalog()
+	}
+	for i, e := range s.entries {
+		if e.definition.Ref != data.Tools[i].Ref || e.definition.ServerID != data.Tools[i].ServerID || string(e.definition.Tool) != string(data.Tools[i].Tool) {
+			return nil, invalidCatalog()
+		}
+	}
+	return s, nil
+}
+
 func (s *Snapshot) Version() string { return s.version }
 func (s *Snapshot) Len() int        { return len(s.entries) }
 

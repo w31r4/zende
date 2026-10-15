@@ -219,7 +219,7 @@ func TestResourceMetadataPaginationAndValidation(t *testing.T) {
 	if page, err := s.Resources(ctx, protocol.ResourceList{AgentID: a.AgentID, Query: "中文"}); err != nil || len(page.Items) != 5 {
 		t.Fatal(page, err)
 	}
-	for _, q := range []protocol.ResourceList{{AgentID: a.AgentID, Kind: "mcp"}, {AgentID: a.AgentID, Limit: 101}, {AgentID: a.AgentID, Limit: -1}, {AgentID: a.AgentID, Query: strings.Repeat("x", 257)}, {AgentID: "absent"}} {
+	for _, q := range []protocol.ResourceList{{AgentID: a.AgentID, Kind: "unknown"}, {AgentID: a.AgentID, Limit: 101}, {AgentID: a.AgentID, Limit: -1}, {AgentID: a.AgentID, Query: strings.Repeat("x", 257)}, {AgentID: "absent"}} {
 		if _, err := s.Resources(ctx, q); err == nil {
 			t.Fatal("accepted invalid query", q)
 		}

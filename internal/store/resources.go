@@ -40,18 +40,24 @@ PRAGMA user_version=5;
 
 func validatedPackage(p resource.Package) (resource.Package, error) {
 	checked, err := resource.BuildPackage(p.Info.Kind, p.Info.Source, p.Entry, p.Files)
+	if p.Info.Kind == "mcp" && p.MCP != nil {
+		checked, err = resource.BuildMCPPackage(p.Info.Source, p.Files, *p.MCP)
+	}
 	if err != nil || !reflect.DeepEqual(checked, p) {
 		return resource.Package{}, protocol.E("invalid_resource", "resource metadata or bytes do not match their version")
 	}
 	return checked, nil
 }
 func decodePackage(raw string) (resource.Package, error) {
-	if len(raw) > 12<<20 {
+	if len(raw) > 20<<20 {
 		return resource.Package{}, protocol.E("invalid_state", "saved resource exceeds package limit")
 	}
 	var p resource.Package
 	if json.Unmarshal([]byte(raw), &p) != nil {
 		return p, protocol.E("invalid_state", "saved resource is unreadable")
+	}
+	if p.Info.Kind != "mcp" && len(raw) > 12<<20 {
+		return resource.Package{}, protocol.E("invalid_state", "saved resource exceeds package limit")
 	}
 	p, err := validatedPackage(p)
 	if err != nil {
@@ -89,7 +95,7 @@ func (s *Store) publishResource(ctx context.Context, req protocol.Request, agent
 			return protocol.Accepted{}, err
 		}
 		if previous == p.Info.Version {
-			return protocol.Accepted{AgentID: agent, Resource: &p.Info}, finishResourcePreparation(ctx, tx, agent, attempt)
+			return protocol.Accepted{AgentID: agent, Resource: &p.Info, ResourceGeneration: generation}, finishResourcePreparation(ctx, tx, agent, attempt)
 		}
 		if baseGeneration < 0 || generation > baseGeneration {
 			return protocol.Accepted{}, protocol.E("resource_changed", "resource was published during preparation; refresh again")
@@ -134,7 +140,7 @@ func (s *Store) publishResource(ctx context.Context, req protocol.Request, agent
 ON CONFLICT(agent_id,id) DO UPDATE SET version=excluded.version,generation=excluded.generation`, agent, p.Info.ID, p.Info.Version, event.Seq); err != nil {
 			return protocol.Accepted{}, err
 		}
-		return protocol.Accepted{AgentID: agent, Resource: &p.Info}, finishResourcePreparation(ctx, tx, agent, attempt)
+		return protocol.Accepted{AgentID: agent, Resource: &p.Info, ResourceGeneration: event.Seq}, finishResourcePreparation(ctx, tx, agent, attempt)
 	})
 }
 
@@ -266,8 +272,8 @@ func (s *Store) ReadResource(ctx context.Context, target protocol.ResourceRead) 
 }
 
 func (s *Store) Resources(ctx context.Context, query protocol.ResourceList) (protocol.ResourcePage, error) {
-	if query.Limit < 0 || query.Limit > 100 || len(query.Query) > 256 || !utf8.ValidString(query.Query) || len(query.After) > 128 || query.Kind != "" && query.Kind != "skill" && query.Kind != "prompt" {
-		return protocol.ResourcePage{}, protocol.E("invalid_params", "resource list accepts kind skill/prompt, a 256-byte query and limit 1–100")
+	if query.Limit < 0 || query.Limit > 100 || len(query.Query) > 256 || !utf8.ValidString(query.Query) || len(query.After) > 128 || query.Kind != "" && query.Kind != "skill" && query.Kind != "prompt" && query.Kind != "mcp" {
+		return protocol.ResourcePage{}, protocol.E("invalid_params", "resource list accepts kind skill/prompt/mcp, a 256-byte query and limit 1–100")
 	}
 	if query.Limit == 0 {
 		query.Limit = 20
@@ -308,4 +314,30 @@ func (s *Store) Resources(ctx context.Context, query protocol.ResourceList) (pro
 		return rows.Err()
 	})
 	return result, err
+}
+
+// PublishedResource loads the current immutable package for a managed runtime
+// on a writable Agent. It does not infer live readiness from the publication.
+func (s *Store) PublishedResource(ctx context.Context, target protocol.ResourceTarget) (resource.Package, int64, error) {
+	var p resource.Package
+	var generation int64
+	err := s.Transaction(ctx, func(tx *sql.Tx) error {
+		if err := resourceAgent(ctx, tx, target.AgentID, true); err != nil {
+			return err
+		}
+		var raw string
+		err := tx.QueryRowContext(ctx, `SELECT v.package,r.generation FROM agent_resources r JOIN resource_versions v ON r.id=v.id AND r.version=v.version WHERE r.agent_id=? AND r.id=?`, target.AgentID, target.ID).Scan(&raw, &generation)
+		if errors.Is(err, sql.ErrNoRows) {
+			return protocol.E("not_found", "resource is not published for this Agent")
+		}
+		if err != nil {
+			return err
+		}
+		p, err = decodePackage(raw)
+		if err == nil && p.Info.ID != target.ID {
+			return protocol.E("invalid_state", "saved resource identity changed")
+		}
+		return err
+	})
+	return p, generation, err
 }

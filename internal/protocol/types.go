@@ -205,17 +205,18 @@ type Snapshot struct {
 }
 
 type Accepted struct {
-	MessageID   string          `json:"message_id,omitempty"`
-	OperationID string          `json:"operation_id"`
-	AgentID     string          `json:"agent_id"`
-	TaskID      string          `json:"task_id,omitempty"`
-	QuestionID  string          `json:"question_id,omitempty"`
-	State       string          `json:"state"`
-	Attachment  *Attachment     `json:"attachment,omitempty"`
-	Resource    *ResourceInfo   `json:"resource,omitempty"`
-	Selection   *AgentSelection `json:"selection,omitempty"`
-	Spawn       *SpawnSource    `json:"spawn,omitempty"`
-	Workspace   *Worktree       `json:"workspace,omitempty"`
+	MessageID          string          `json:"message_id,omitempty"`
+	OperationID        string          `json:"operation_id"`
+	AgentID            string          `json:"agent_id"`
+	TaskID             string          `json:"task_id,omitempty"`
+	QuestionID         string          `json:"question_id,omitempty"`
+	State              string          `json:"state"`
+	Attachment         *Attachment     `json:"attachment,omitempty"`
+	Resource           *ResourceInfo   `json:"resource,omitempty"`
+	ResourceGeneration int64           `json:"resource_generation,omitempty"`
+	Selection          *AgentSelection `json:"selection,omitempty"`
+	Spawn              *SpawnSource    `json:"spawn,omitempty"`
+	Workspace          *Worktree       `json:"workspace,omitempty"`
 }
 
 type CreateAgent struct {
