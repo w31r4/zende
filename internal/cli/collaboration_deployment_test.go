@@ -77,7 +77,7 @@ func binarySpawn(t *testing.T, binary string, pty bool) {
 		}
 		_, rest, _ := strings.Cut(request.Instructions, "\nAgent: ")
 		agent := strings.SplitN(rest, "\n", 2)[0]
-		if agent == "" || !strings.Contains(request.Instructions, "agent spawn --task-file") || strings.Contains(request.Instructions, "agent wait") {
+		if agent == "" || !strings.Contains(request.Instructions, "agent spawn --task-file") || !strings.Contains(request.Instructions, "agent wait") {
 			t.Error("invalid caller/capabilities")
 			return
 		}
@@ -122,7 +122,7 @@ func binarySpawn(t *testing.T, binary string, pty bool) {
 				} else if n != 2 || !strings.Contains(input, "follow-up") {
 					t.Error("unexpected child request", n)
 				}
-			} else {
+			} else if n == 2 {
 				if n != 2 || len(request.Input) < 3 {
 					t.Error("unexpected parent continuation", n, request.Input)
 					return
@@ -155,6 +155,9 @@ func binarySpawn(t *testing.T, binary string, pty bool) {
 					t.Error("spawn retry created another identity", receipts)
 					return
 				}
+			} else if n > 4 || !strings.Contains(input, "peer output") || !strings.Contains(input, "child done") {
+				t.Error("invalid automatic result continuation", n, input)
+				return
 			}
 			item = map[string]any{"type": "message", "id": fmt.Sprintf("answer-%d", n), "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": "<final>\n" + answer + "\n</final>", "annotations": []any{}}}}
 		}
@@ -306,9 +309,20 @@ func binarySpawn(t *testing.T, binary string, pty bool) {
 	if len(final.Tasks) != 2 || final.Tasks[0].ID != snap.Tasks[0].ID || final.Tasks[1].Input != "follow-up" {
 		t.Fatal("reuse replaced Agent history", final)
 	}
+	for deadline := time.Now().Add(8 * time.Second); ; {
+		var mail protocol.MailboxPage
+		must(&mail, "mailbox", "list", "--agent", parent.AgentID)
+		if len(mail.Items) == 2 && mail.Items[0].State == "processed" && mail.Items[1].State == "processed" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("automatic results not processed", mail)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
 	mu.Lock()
 	defer mu.Unlock()
-	if counts[parent.AgentID] != 2 || counts[child.ID] != 2 || len(counts) != 2 {
+	if counts[parent.AgentID] != 4 || counts[child.ID] != 2 || len(counts) != 2 {
 		t.Fatal("unexpected loops", counts)
 	}
 }

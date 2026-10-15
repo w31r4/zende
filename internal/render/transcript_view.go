@@ -44,6 +44,9 @@ func (p *Transcript) viewRows(width, rows, scroll int, fold bool, overrides map[
 			if entry.Mail.Source != nil {
 				sender = entry.Mail.Source.Caller.AgentID
 			}
+			if entry.Mail.Result != nil {
+				sender = entry.Mail.Result.AgentID
+			}
 			prefix = "@ " + sender + separator + entry.Mail.Delivery + separator + entry.State + "\n"
 		case "question":
 			prefix = "? "

@@ -93,6 +93,21 @@ func TestSpawnCLIAttributionIdempotencyAndReuse(t *testing.T) {
 	if err := s.FinishTask(ctx, child.AgentID, child.TaskID, "completed", "done", nil); err != nil {
 		t.Fatal(err)
 	}
+	var waited protocol.TaskOutcome
+	if err := json.Unmarshal(run("", "agent", "wait", child.AgentID, "--task", child.TaskID, "--wait-ms", "0"), &waited); err != nil || !waited.Terminal || waited.Result == nil || waited.MessageID == "" {
+		t.Fatal(waited, err)
+	}
+	var result protocol.TaskResultPage
+	if err := json.Unmarshal(run("", "agent", "result", child.AgentID, "--task", child.TaskID, "--limit", "2"), &result); err != nil || result.Text != "do" || result.Next != 2 || !result.More {
+		t.Fatal(result, err)
+	}
+	if err := json.Unmarshal(run("", "agent", "result", child.AgentID, "--task", child.TaskID, "--offset", "2"), &result); err != nil || result.Text != "ne" || result.More {
+		t.Fatal(result, err)
+	}
+	pending, err := s.Mail(ctx, waited.MessageID)
+	if err != nil || pending.DeliveredSeq != 0 || pending.State != "accepted" {
+		t.Fatal("reference consumed result", pending, err)
+	}
 	follow := run("continue", "agent", "submit", child.AgentID, "--file", "-")
 	if repeated := run("continue", "agent", "submit", child.AgentID, "--file", "-"); !bytes.Equal(repeated, follow) {
 		t.Fatal("submission retry duplicated task")
@@ -175,6 +190,14 @@ func TestSpawnCLIAttributionIdempotencyAndReuse(t *testing.T) {
 		t.Fatal("child followed parent cwd change")
 	}
 	for _, args := range [][]string{
+		{"agent", "wait", child.AgentID},
+		{"agent", "wait", child.AgentID, "--task", child.TaskID, "--wait-ms", "-1"},
+		{"agent", "wait", child.AgentID, "--task", child.TaskID, "--wait-ms", "30001"},
+		{"agent", "wait", parent.AgentID, "--task", child.TaskID},
+		{"agent", "result", child.AgentID},
+		{"agent", "result", child.AgentID, "--task", child.TaskID, "--offset", "-1"},
+		{"agent", "result", child.AgentID, "--task", child.TaskID, "--limit", "0"},
+		{"agent", "result", child.AgentID, "--task", child.TaskID, "--limit", "65537"},
 		{"agent", "spawn", "--parent", "another", "bad"},
 		{"agent", "spawn", "--context", "last:0", "invalid count"},
 		{"agent", "spawn", "--workspace", "invalid", "bad"},

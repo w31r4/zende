@@ -109,3 +109,28 @@ func TestMailboxProjectionRejectsMalformedEventsAndBoundsRetention(t *testing.T)
 		t.Fatal(p.bytes, accounted)
 	}
 }
+
+func TestTaskResultProjectionShowsOneBody(t *testing.T) {
+	p := Transcript{Agent: protocol.Agent{ID: "agent", State: "running"}}
+	mail := protocol.Mail{MailInfo: protocol.MailInfo{ID: "message", AgentID: "agent", OperationID: "result-child-task", SenderKind: "agent", Delivery: "queue", Seq: 1, State: "accepted", Result: &protocol.TaskResultRef{AgentID: "child", TaskID: "child-task", Seq: 10}}, Input: "结果中文 é 🙂"}
+	mail.Bytes = len(mail.Input)
+	appendProjection(t, &p, "mailbox.accepted", mail)
+	appendProjection(t, &p, "tool.completed", map[string]any{
+		"invocation":      map[string]any{"operation_id": "exec", "request_id": "request", "call": map[string]string{"id": "call", "name": "exec_command"}},
+		"result":          map[string]any{"process_id": "process", "content": []map[string]string{{"type": "text", "text": "observed"}, {"type": "text", "text": protocol.MailResultText(mail)}}},
+		"result_messages": []string{mail.ID},
+	})
+	mail.DeliveredSeq, mail.State, mail.TaskID, mail.TaskState = p.Cursor, "delivered", "task", "running"
+	appendProjection(t, &p, "mailbox.delivered", mail.MailInfo)
+	for _, width := range []int{80, 60, 48} {
+		view := strings.Join(p.Lines(width, 24, 0, false), "\n")
+		if strings.Count(view, "结果中文") != 1 || !strings.Contains(view, "@ child") || strings.Contains(view, "peer output") {
+			t.Fatal(width, view)
+		}
+		for _, line := range strings.Split(view, "\n") {
+			if ansi.StringWidth(line) > width {
+				t.Fatal("overflow", line)
+			}
+		}
+	}
+}

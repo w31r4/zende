@@ -12,19 +12,20 @@ type SendMessage struct {
 
 // MailInfo separates durable delivery from the receiving task's outcome.
 type MailInfo struct {
-	ID           string      `json:"message_id"`
-	AgentID      string      `json:"agent_id"`
-	OperationID  string      `json:"operation_id"`
-	Source       *CallSource `json:"source,omitempty"`
-	SenderKind   string      `json:"sender_kind"`
-	Delivery     string      `json:"delivery"`
-	Seq          int64       `json:"accepted_seq"`
-	SentSeq      int64       `json:"sent_seq,omitempty"`
-	Bytes        int         `json:"bytes"`
-	TaskID       string      `json:"task_id,omitempty"`
-	DeliveredSeq int64       `json:"delivered_seq,omitempty"`
-	State        string      `json:"state"`
-	TaskState    string      `json:"task_state,omitempty"`
+	ID           string         `json:"message_id"`
+	AgentID      string         `json:"agent_id"`
+	OperationID  string         `json:"operation_id"`
+	Source       *CallSource    `json:"source,omitempty"`
+	Result       *TaskResultRef `json:"result,omitempty"`
+	SenderKind   string         `json:"sender_kind"`
+	Delivery     string         `json:"delivery"`
+	Seq          int64          `json:"accepted_seq"`
+	SentSeq      int64          `json:"sent_seq,omitempty"`
+	Bytes        int            `json:"bytes"`
+	TaskID       string         `json:"task_id,omitempty"`
+	DeliveredSeq int64          `json:"delivered_seq,omitempty"`
+	State        string         `json:"state"`
+	TaskState    string         `json:"task_state,omitempty"`
 }
 type Mail struct {
 	MailInfo

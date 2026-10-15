@@ -104,7 +104,7 @@ func TestRecoveryContinuesOriginalTaskAtDispatchBoundaries(t *testing.T) {
 					if err != nil {
 						t.Fatal(err)
 					}
-					if err := c.Store.RecordToolResult(context.Background(), a.AgentID, a.TaskID, op.RequestID, toolOutcome{op, result, nil}, message); err != nil {
+					if err := c.Store.RecordToolResult(context.Background(), a.AgentID, a.TaskID, op.RequestID, toolOutcome{Invocation: op, Result: result}, message); err != nil {
 						t.Fatal(err)
 					}
 				}

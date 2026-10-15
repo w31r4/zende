@@ -15,7 +15,7 @@ import (
 	"zende.local/harness/internal/protocol"
 )
 
-const SchemaVersion = 10
+const SchemaVersion = 11
 
 type Store struct {
 	db   *sql.DB
@@ -114,7 +114,12 @@ PRAGMA user_version=2;`); err != nil {
 				return err
 			}
 		}
-		_, err := tx.Exec(mailboxSchema)
+		if version < 10 {
+			if _, err := tx.Exec(mailboxSchema); err != nil {
+				return err
+			}
+		}
+		_, err := tx.Exec(taskResultSchema)
 		return err
 	})
 }

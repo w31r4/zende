@@ -12,12 +12,19 @@ func (p *Transcript) applyMail(e protocol.Event) error {
 		return err
 	}
 	validID := func(s string) bool { return s != "" && utf8.ValidString(s) }
+	limit, minimum := protocol.MaxMailboxBytes, 1
+	if m.Result != nil {
+		limit, minimum = protocol.MaxTaskResultBytes, 0
+	}
 	if !validID(m.ID) || !validID(m.OperationID) || m.AgentID != e.AgentID ||
-		m.Bytes < 1 || m.Bytes > protocol.MaxMailboxBytes ||
+		m.Bytes < minimum || m.Bytes > limit ||
 		(m.Delivery != "queue" && m.Delivery != "steer") ||
 		(m.SenderKind != "user" && m.SenderKind != "agent") ||
-		(m.SenderKind == "user") != (m.Source == nil) {
+		(m.SenderKind == "user") != (m.Source == nil && m.Result == nil) {
 		return protocol.E("invalid_state", "invalid mailbox event")
+	}
+	if r := m.Result; r != nil && (!validID(r.AgentID) || !validID(r.TaskID) || r.Seq < 1 || m.Source != nil || m.Delivery != "queue") {
+		return protocol.E("invalid_state", "invalid task result source")
 	}
 	if s := m.Source; s != nil && (!validID(s.Caller.AgentID) || !validID(s.Caller.TaskID) ||
 		!validID(s.Caller.OperationID) || !validID(s.RequestID) || !validID(s.CallID)) {
@@ -58,6 +65,9 @@ func mailBytes(m *protocol.MailInfo) int {
 		return 0
 	}
 	n := len(m.ID) + len(m.AgentID) + len(m.OperationID) + len(m.TaskID)
+	if m.Result != nil {
+		n += len(m.Result.AgentID) + len(m.Result.TaskID)
+	}
 	if s := m.Source; s != nil {
 		n += len(s.Caller.AgentID) + len(s.Caller.TaskID) + len(s.Caller.OperationID) + len(s.RequestID) + len(s.CallID)
 	}

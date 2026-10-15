@@ -15,6 +15,7 @@ type Work struct {
 	Task  protocol.Task
 }
 type ContextMessage struct {
+	MessageIDs []string               `json:"message_ids,omitempty"`
 	MessageID  string                 `json:"message_id,omitempty"`
 	RequestID  string                 `json:"request_id,omitempty"`
 	QuestionID string                 `json:"question_id,omitempty"`
@@ -107,8 +108,13 @@ func (s *Store) ClaimNext(ctx context.Context, id string) (*Work, error) {
 			return err
 		}
 		content = append(content, skills...)
-		if _, err := appendEvent(ctx, tx, id, t.ID, "context.message", ContextMessage{Resources: t.Skills, Message: model.Message{Role: "user", Content: content}}); err != nil {
-			return err
+		// A resume task can outlive its mailbox reservation if an in-flight
+		// tool already delivered that result. Continue the saved context without
+		// a second input or a transport-invalid empty user message.
+		if len(content) > 0 {
+			if _, err := appendEvent(ctx, tx, id, t.ID, "context.message", ContextMessage{Resources: t.Skills, Message: model.Message{Role: "user", Content: content}}); err != nil {
+				return err
+			}
 		}
 		work = w
 		return nil
@@ -186,7 +192,7 @@ func (s *Store) RecordFormatRepair(ctx context.Context, agent, task, request str
 	})
 }
 
-func (s *Store) RecordToolResult(ctx context.Context, agent, task, request string, result any, message model.Message) error {
+func (s *Store) RecordToolResult(ctx context.Context, agent, task, request string, result any, message model.Message, deliveries ...ToolMailDelivery) error {
 	return s.Transaction(ctx, func(tx *sql.Tx) error {
 		if err := runningTask(ctx, tx, agent, task); err != nil {
 			return err
@@ -194,9 +200,25 @@ func (s *Store) RecordToolResult(ctx context.Context, agent, task, request strin
 		if _, err := appendEvent(ctx, tx, agent, task, "tool.completed", result); err != nil {
 			return err
 		}
-		_, err := appendEvent(ctx, tx, agent, task, "context.message", ContextMessage{RequestID: request, Message: message})
-		return err
+		return appendToolContext(ctx, tx, agent, task, request, message, deliveries)
 	})
+}
+
+func appendToolContext(ctx context.Context, tx *sql.Tx, agent, task, request string, message model.Message, deliveries []ToolMailDelivery) error {
+	var ids []string
+	for _, d := range deliveries {
+		ids = append(ids, d.Messages...)
+	}
+	e, err := appendEvent(ctx, tx, agent, task, "context.message", ContextMessage{RequestID: request, Message: message, MessageIDs: ids})
+	if err != nil {
+		return err
+	}
+	for _, d := range deliveries {
+		if err := consumeWaitResults(ctx, tx, agent, task, e.Seq, message, d); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Store) ModelContext(ctx context.Context, agent string) ([]model.Message, int64, error) {
@@ -303,11 +325,14 @@ func (s *Store) FinishTask(ctx context.Context, agent, task, state, result strin
 				return err
 			}
 		}
-		_, err := appendEvent(ctx, tx, agent, task, "task."+state, struct {
+		e, err := appendEvent(ctx, tx, agent, task, "task."+state, struct {
 			State  string          `json:"state"`
 			Result string          `json:"result,omitempty"`
 			Error  *protocol.Error `json:"error,omitempty"`
 		}{state, result, failure})
+		if err == nil && state == "completed" {
+			return returnTaskResult(ctx, tx, agent, task, result, e.Seq)
+		}
 		return err
 	})
 }

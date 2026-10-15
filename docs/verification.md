@@ -558,6 +558,29 @@ go test -race ./internal/render ./internal/store ./internal/runtime ./internal/c
 
 提示词版本 9 继续按 Pi 的已注册能力组合，区分接受、投递和处理完成；按 trim-cn-tech-doc 合并规则并保留限额与恢复条件。tui-design 用于复用输出区和窄屏检查，零新增边框/按钮，邮箱状态只用一处文字标记。Git、SQLite、UDS 和二进制是真实本地组件；模型为本地夹具，未使用外部凭据或执行用户级部署。
 
+## 2026-10-16：子任务结果回流与 wait
+
+6.6 已完成，累计 37/68 项。schema 11 保存结果来源、wait 观察关联和消息投递关系；final 与回流消息同事务提交，完整正文进入工具上下文后才去重。全量 `go test ./...`、`go test -race ./...`、wait/result 帮助和 OpenSpec strict 校验通过；新增用例在 race 下连续 3 次通过。
+
+| 验证 | 入口 | 结果 |
+| --- | --- | --- |
+| 完成与投递事务 | `TestTaskResultAtomicReturnWaitReceiptAndContextConsumption` | 注入回流写入、投递游标失败均完整回滚；重开保留观察关联；仅有引用、重复投递拒绝，人类查询不改变历史 |
+| 自动回流与暂停 | `TestTaskResultPauseQueueAndNoAutomaticAcknowledgement` | 子 final 保留来源与原记录，暂停不唤醒；纯通知处理不自动回执，正常业务 Task 仍回报结果 |
+| 父等待与结果身份 | `TestTaskWaitLoopDoesNotWaitForParentMailboxOrRepeatDelivery`、`TestTaskWaitWriteStdinUsesOriginalProcessAndRecipient` | 子任务完成即可返回；原 process ID 关联 exec/续读，其他 Agent 不误消费；一个父 Task、一次投递、无重复唤醒 |
+| 显式恢复与并发结果 | `TestTaskResultWaitKeepsExplicitResumeAndConsumesMultipleResultsAtomically`、`TestTaskWaitHonorsResumeBeforeOldToolSettles` | 多个结果可进入同一工具上下文；停止后立即 resume 保留已接受的新 Task，旧 Task 取消，正文不再投递，也不添加空 user 消息 |
+| 超时、分页与容量 | `TestTaskWaitTimeoutCancellationFailureAndLargeResult`、`TestTaskResultPagingValidationCapacityAndSchemaTenMigration` | 观察超时/取消不停止子任务；1 MiB 结果超工具预算时继续 queue，UTF-8 页可还原原文；send 达限不丢 final，10→11 保留旧消息与历史 |
+| CLI 与显示 | `TestSpawnCLIAttributionIdempotencyAndReuse`、`TestTaskResultProjectionShowsOneBody` | wait/result 经 UDS 查询，非法参数拒绝；80、60、48 列只显示一份结果，保留发送者、状态及原始工具记录 |
+| 真实 core 崩溃 | `TestBinaryTaskWaitRecoversCLIOutputBeforeContext` | CLI 已输出完成引用、工具尚未入上下文时 SIGKILL；重启沿用原 Task/进程，正文投递一次，命令效果一次，实际历史可由 TUI 重放 |
+
+```sh
+go test -race ./internal/runtime ./internal/store ./internal/render ./internal/cli \
+  -run 'TaskWait|TaskResult' -count=3 -timeout=120s
+```
+
+首次真实链路复现同一结果在工具与 mailbox 重复显示，已增加明确的消息引用供显示去重，原始记录与模型上下文保留。复查 stop/resume 后，修正了去重取消用户续接 Task 的问题。测试夹具另修正旧 schema 遗留 wait 表、显示事件 Task ID 不匹配；原失败不计通过。
+
+提示词版本 10 参考 Pi 的按能力组合短说明，文档按 trim-cn-tech-doc 合并过时待办并保留预算、游标、暂停与恢复条件。tui-design 用于沿用输出区和窄屏验证，零新增边框或按钮。二进制、SQLite、UDS、pipe/tmux 为真实本地组件；模型为本地 HTTP 夹具，子二进制为常规构建，宿主与包内并发由 race 检查。V18 本地链路完成，未进行真实供应商或用户级部署验收。
+
 ## 进行中
 
-继续 6.6 的自动结果回流和 wait 去重。会话复制依赖第 6、9 组；协作提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。
+继续 6.7 的树级停止与协作提示词验收。会话复制仍依赖第 6、9 组。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。

@@ -37,6 +37,18 @@ func New(s *store.Store, config resource.Effective) *Core {
 
 func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 	switch req.Method {
+	case "agent.wait":
+		var p protocol.WaitTask
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.waitTask(ctx, p)
+	case "agent.result":
+		var p protocol.ReadTaskResult
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.Store.ReadTaskResult(ctx, p)
 	case "agent.send":
 		var p protocol.SendMessage
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

@@ -1,6 +1,6 @@
 # 提示词
 
-实现入口为 `internal/runtime/prompt.go`，工具说明契约为 `internal/tool/tool.go`。组装结果在请求前保存为 `prompt.loaded`。已接入提问、资源、工作环境查询、选配、Agent 创建/复用及 mailbox CLI；wait/自动回流、项目资源自动发现及 skill 目录的请求级更新仍归第 6、7 组。
+实现入口为 `internal/runtime/prompt.go`，工具说明契约为 `internal/tool/tool.go`。组装结果在请求前保存为 `prompt.loaded`。已接入提问、资源、工作环境查询、选配、Agent 协作及 wait/result CLI；项目资源自动发现与 skill 目录的请求级更新仍归第 7 组。
 
 ## Pi 参考
 
@@ -42,6 +42,8 @@ Zende 保持 exec、进程继续操作和 patch 的工具边界。Pi 的 read/ed
 版本 8 补充显式 worktree 参数、提交检出与保留目录规则，以及未知创建使用原请求 ID 核实的入口。仍放在已注册 spawn 的短说明中，完整限制见 [Worktree](./collaboration.md#worktree)；旧 Task 的提示词不改。
 
 版本 9 加入 `agent send` 和 `mailbox list/inspect`。短说明给出 queue/steer 的时点、暂停保护、三种消息状态及原 ID 重试；参数与额度留给帮助。沿用 Pi 的能力条件组装，旧任务继续用已保存的提示词；自动回流和 wait 实现后再加入。
+
+版本 10 加入 `agent wait/result`。说明只在依赖子结果时等待、指定 Task、超时不取消、自动 queue、完整结果送达后去重，以及分页读取。纯结果通知无需自动回执。继续按 Pi 的已注册能力组合，详细预算与游标留给帮助；恢复旧 Task 保留原提示词。
 
 ## 输出分类
 

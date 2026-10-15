@@ -132,7 +132,7 @@ func TestQuestionWaitingSurvivesRecoveryWithoutRepeatingTool(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := c.Store.RecordToolResult(ctx, a.AgentID, a.TaskID, op.RequestID, toolOutcome{op, outcome, nil}, message); err != nil {
+			if err := c.Store.RecordToolResult(ctx, a.AgentID, a.TaskID, op.RequestID, toolOutcome{Invocation: op, Result: outcome}, message); err != nil {
 				t.Fatal(err)
 			}
 			answer := protocol.AnswerQuestion{AgentID: a.AgentID, ID: q.QuestionID, Answer: "retained answer"}

@@ -35,7 +35,7 @@ CREATE TRIGGER mail_no_delete BEFORE DELETE ON mailbox BEGIN SELECT RAISE(ABORT,
 PRAGMA user_version=10;
 `
 
-const mailColumns = `m.id,m.agent_id,m.operation_id,m.source,m.delivery,m.seq,m.sent_seq,length(CAST(m.input AS BLOB)),coalesce(m.task_id,''),m.delivered_seq,coalesce(t.state,'')`
+const mailColumns = `m.id,m.agent_id,m.operation_id,m.source,m.delivery,m.seq,m.sent_seq,length(CAST(m.input AS BLOB)),coalesce(m.task_id,''),m.delivered_seq,coalesce(t.state,''),coalesce(m.result_task,''),m.result_seq,coalesce(m.sender_id,'')`
 
 // A resume drains already waiting mail in receipt order. Only steer accepted
 // after that resume may overtake the older queue at a new request boundary.
@@ -45,7 +45,10 @@ const readySteer = `m.task_id IS NULL AND m.delivery='steer' AND m.seq >
 func scanMail(row interface{ Scan(...any) error }, body bool) (protocol.Mail, error) {
 	var m protocol.Mail
 	var source []byte
+	var resultTask, sender string
+	var resultSeq int64
 	args := []any{&m.ID, &m.AgentID, &m.OperationID, &source, &m.Delivery, &m.Seq, &m.SentSeq, &m.Bytes, &m.TaskID, &m.DeliveredSeq, &m.TaskState}
+	args = append(args, &resultTask, &resultSeq, &sender)
 	if body {
 		args = append(args, &m.Input)
 	}
@@ -60,8 +63,11 @@ func scanMail(row interface{ Scan(...any) error }, body bool) (protocol.Mail, er
 		return m, err
 	}
 	m.SenderKind = "user"
-	if m.Source != nil {
+	if m.Source != nil || resultTask != "" {
 		m.SenderKind = "agent"
+	}
+	if resultTask != "" {
+		m.Result = &protocol.TaskResultRef{AgentID: sender, TaskID: resultTask, Seq: resultSeq}
 	}
 	m.State = "accepted"
 	if m.DeliveredSeq > 0 {
@@ -237,7 +243,7 @@ func nextQueuedTask(ctx context.Context, tx *sql.Tx, agent string) (protocol.Tas
 	if err != nil {
 		return t, err
 	}
-	_, err = tx.ExecContext(ctx, "UPDATE mailbox SET task_id=? WHERE id=?", t.ID, id)
+	_, err = tx.ExecContext(ctx, "UPDATE mailbox SET task_id=?,queued_task=? WHERE id=?", t.ID, t.ID, id)
 	return t, err
 }
 
@@ -248,6 +254,18 @@ func deliverMail(ctx context.Context, tx *sql.Tx, m protocol.Mail, task string) 
 		}
 	}
 	m.TaskID = task
+	if m.Result != nil {
+		e, err := appendEvent(ctx, tx, m.AgentID, task, "context.message", ContextMessage{MessageID: m.ID, Message: model.Message{Role: "user", Content: []model.Block{{Type: "text", Text: protocol.MailResultHeader(m)}, {Type: "text", Text: m.Input}}}})
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, "UPDATE mailbox SET delivered_seq=? WHERE id=?", e.Seq, m.ID); err != nil {
+			return err
+		}
+		m.DeliveredSeq, m.State, m.TaskState = e.Seq, "delivered", "running"
+		_, err = appendEvent(ctx, tx, m.AgentID, task, "mailbox.delivered", m.MailInfo)
+		return err
+	}
 	// Role is a transport choice; the envelope preserves Agent attribution and
 	// never promotes another Agent's text into developer instructions.
 	body, err := json.Marshal(struct {

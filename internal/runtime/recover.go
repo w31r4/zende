@@ -111,12 +111,17 @@ func (c *Core) verifyCalls(ctx context.Context, j *recoveryJournal) ([]store.Ver
 			failure = r.Error
 			continue
 		}
-		message, err := toolMessage(op.Call, r.Result, r.Error)
+		result, delivery, err := c.attachWaitResults(ctx, j.Work.Agent.ID, op.Call, r.Result)
 		if err != nil {
 			failure = err
 			continue
 		}
-		verified = append(verified, store.VerifiedResult{RequestID: op.RequestID, OperationID: op.ID, Outcome: toolOutcome{*op, r.Result, r.Error}, Message: message})
+		message, err := toolMessage(op.Call, result, r.Error)
+		if err != nil {
+			failure = err
+			continue
+		}
+		verified = append(verified, store.VerifiedResult{RequestID: op.RequestID, OperationID: op.ID, Outcome: toolOutcome{Invocation: *op, Result: result, Error: r.Error, ResultMessages: delivery.Messages}, Message: message, Delivery: delivery})
 	}
 	return verified, failure
 }

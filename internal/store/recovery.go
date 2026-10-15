@@ -76,6 +76,7 @@ func heldTask(ctx context.Context, tx *sql.Tx, agent, task string, cursor int64)
 }
 
 type VerifiedResult struct {
+	Delivery    ToolMailDelivery
 	RequestID   string
 	OperationID string
 	Outcome     any
@@ -96,7 +97,7 @@ func (s *Store) RecordVerifiedResults(ctx context.Context, agent, task string, c
 			if _, err := appendEvent(ctx, tx, agent, task, "tool.completed", r.Outcome); err != nil {
 				return err
 			}
-			if _, err := appendEvent(ctx, tx, agent, task, "context.message", ContextMessage{RequestID: r.RequestID, Message: r.Message}); err != nil {
+			if err := appendToolContext(ctx, tx, agent, task, r.RequestID, r.Message, []ToolMailDelivery{r.Delivery}); err != nil {
 				return err
 			}
 		}

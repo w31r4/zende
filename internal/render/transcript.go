@@ -434,8 +434,9 @@ func (p *Transcript) applyTool(e protocol.Event) error {
 			Content   []model.Block `json:"content"`
 			ProcessID string        `json:"process_id"`
 		} `json:"result"`
-		Error  *protocol.Error `json:"error"`
-		Reason string          `json:"reason"`
+		Error          *protocol.Error `json:"error"`
+		Reason         string          `json:"reason"`
+		ResultMessages []string        `json:"result_messages"`
 	}
 	if err := decodePayload(e, &data); err != nil {
 		return err
@@ -446,6 +447,16 @@ func (p *Transcript) applyTool(e protocol.Event) error {
 	}
 	if op.ID == "" {
 		return protocol.E("invalid_state", "tool event has no operation identity")
+	}
+	if len(data.ResultMessages) > len(data.Result.Content) {
+		return protocol.E("invalid_state", "tool result message references exceed content")
+	}
+	seen := map[string]bool{}
+	for _, id := range data.ResultMessages {
+		if id == "" || seen[id] {
+			return protocol.E("invalid_state", "invalid tool result message reference")
+		}
+		seen[id] = true
 	}
 	entry := p.entry(e, "tool:"+op.ID, "tool")
 	entry.OperationID = op.ID
@@ -460,7 +471,9 @@ func (p *Transcript) applyTool(e protocol.Event) error {
 		entry.ProcessID = data.Result.ProcessID
 	}
 	var text strings.Builder
-	for _, block := range data.Result.Content {
+	// Host-added result blocks are already shown by mailbox.accepted. The
+	// explicit suffix mapping avoids guessing from arbitrary shell output.
+	for _, block := range data.Result.Content[:len(data.Result.Content)-len(data.ResultMessages)] {
 		if block.Type == "text" {
 			if text.Len() > 0 {
 				text.WriteByte('\n')

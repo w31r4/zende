@@ -177,6 +177,7 @@ func (a *app) command() *cobra.Command {
 	a.selectionCommands(agent)
 	a.collaborationCommands(agent)
 	a.sendCommand(agent)
+	a.resultCommands(agent)
 	root.AddCommand(agent)
 	operation := &cobra.Command{Use: "operation", Short: "Look up acceptance after a connection failure"}
 	operation.AddCommand(&cobra.Command{Use: "inspect ID", Short: "Inspect a stable mutation request", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -262,7 +263,11 @@ func (a *app) call(cmd *cobra.Command, method string, mutation bool, params any)
 		}
 		req.OperationID = "call_" + fingerprint
 	}
-	ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+	timeout := 10 * time.Second
+	if p, ok := params.(protocol.WaitTask); ok {
+		timeout = time.Duration(p.WaitMS)*time.Millisecond + 5*time.Second
+	}
+	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
 	defer cancel()
 	var result json.RawMessage
 	socket := p.Socket

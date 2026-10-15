@@ -107,10 +107,14 @@ func (c *Core) settleCalls(ctx, persist context.Context, w store.Work, request s
 			}
 		}
 		if failure != nil && (failure.Data.Kind == "transport_unknown" || failure.Data.Kind == "operation_unknown") {
-			if err := appendEvent("tool.unknown", toolOutcome{op, result, failure}); err != nil {
+			if err := appendEvent("tool.unknown", toolOutcome{Invocation: op, Result: result, Error: failure}); err != nil {
 				return err
 			}
 			return failure
+		}
+		result, delivery, err := c.attachWaitResults(persist, w.Agent.ID, call, result)
+		if err != nil {
+			return protocol.E("persistence_failed", "wait result observations could not be read; inspect original operation")
 		}
 		message, err := toolMessage(call, result, failure)
 		if err != nil {
@@ -119,7 +123,7 @@ func (c *Core) settleCalls(ctx, persist context.Context, w store.Work, request s
 			}
 			return err
 		}
-		if err := c.Store.RecordToolResult(persist, w.Agent.ID, w.Task.ID, request, toolOutcome{op, result, failure}, message); err != nil {
+		if err := c.Store.RecordToolResult(persist, w.Agent.ID, w.Task.ID, request, toolOutcome{Invocation: op, Result: result, Error: failure, ResultMessages: delivery.Messages}, message, delivery); err != nil {
 			return protocol.E("persistence_failed", "tool result could not be saved; inspect original operation before continuing")
 		}
 	}

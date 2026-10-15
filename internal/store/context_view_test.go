@@ -197,7 +197,7 @@ func TestContextViewJournalMigrationPreservesVersionSevenHistory(t *testing.T) {
 	_, parent := create(t, s)
 	_, _ = s.ClaimNext(ctx, parent.AgentID)
 	before, _ := s.ContextSnapshot(ctx, parent.AgentID)
-	if _, err := s.db.Exec("DROP TABLE mailbox; DROP TABLE workspace_operations; PRAGMA user_version=7"); err != nil {
+	if _, err := s.db.Exec("DROP TABLE wait_receipts; DROP TABLE mailbox; DROP TABLE workspace_operations; PRAGMA user_version=7"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Close(); err != nil {
