@@ -772,6 +772,23 @@ go test ./internal/resource/mcp \
 
 核心提示词升至 13，沿用 Pi 的能力条件短说明；旧任务的已存提示词不改。开发说明和验证记录按 trim-cn-tech-doc 精简，保留配置、恢复、限额和未完成范围；CLI 帮助与错误出口按 tui-design 核对，主界面未增加文字。
 
+## 2026-10-16：MCP 调用底层与连接租约
+
+7.4 部分交付，累计仍为 40/68。新增一次性版本调用和参数/结果校验，热替换改为旧租约结束后回收连接；尚未向 CLI 或模型暴露执行入口。
+
+| 检查 | 测试 | 结果 |
+| --- | --- | --- |
+| 参数与身份 | `TestCallValidatesBeforeDispatchAndPreservesArguments` | 错误 schema、重复键、非法 UTF-8、超限输入拒绝派发；原始大整数参数和不可变副本保留，同一调用不能再次执行 |
+| 内容与结果 | `TestCallResultContentAndOutputSchema` | 两种已测 MCP 版本保留文本、图片、音频、资源、结构化内容和元数据；工具失败保留 isError，错误输出 schema 返回未知并保留响应证据 |
+| 结果预算与续接 | `TestCallResultBoundsAndUnsupportedContent` | 超字节/块数、sampling 专用内容、空音频及 input-required 均返回未知，不自动重试；有界响应保留证据 |
+| 目录变化 | `TestCallCatalogChangesAndInFlightSchema` | 替换、删除后旧引用失效；无关新增不影响引用；在途调用仍使用原输出 schema |
+| HTTP 参数头 | `TestMCPCallUsesPinnedHTTPHeadersAfterPartialRefresh`、`TestHeaderValuesAreBoundedAndUnambiguous` | SDK 页缓存被失败刷新部分更新后，调用仍使用选定定义的参数头；嵌套值、数值、编码及预算通过 |
+| 租约与取消 | `TestMCPLeaseRetirementAndForceClose`、`TestMCPPublishedReplacementDrainsLeasedCall`、`TestCallCancellationAndSingleUseDoNotRetry` | 发布新连接时旧调用继续，新调用绑定新版；租约结束回收，强制关闭后的未知结果不重试 |
+
+最终代码通过 `go test ./...`、`go test -race ./...`、定向 MCP race 三轮和 OpenSpec strict 校验。首轮强制关闭测试把远端未完成 session 删除误判为本地关闭失败，且测试清理未释放远端 handler；补齐清理并按“本地关闭、远端效果未知”核对后重跑通过。旧失败不计通过。
+
+测试使用 SDK 内存通道、本地 HTTP 和受管测试子进程。未使用外部服务、模型或用户凭据；没有修改提示词、数据库 schema 或主界面。开发说明按 trim-cn-tech-doc 保留限额和恢复边界，OpenSpec 7.4 继续保留未完成状态。
+
 ## 进行中
 
-继续 MCP 版本绑定调用、外部目录监视、配置/provider 热发布和独立进程插件。7.2 已覆盖 skill/prompt 状态和 MCP 连接准备；目录安装完成的判定方式已提问，待用户选择。7.1、7.7 整体未完成。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。
+继续 MCP 调用日志、附件和模型入口，再接同任务安装调用；另有外部目录监视、配置/provider 热发布和独立进程插件。7.2 已覆盖 skill/prompt 状态和 MCP 连接准备；目录安装完成的判定方式已提问，待用户选择。7.1、7.7 整体未完成。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。

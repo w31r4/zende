@@ -21,6 +21,7 @@ type mcpSlot struct {
 	generation int64
 	cancel     context.CancelFunc
 	workers    sync.WaitGroup
+	retired    map[*resource.MCPConnection]struct{}
 }
 
 func (s *mcpSlot) lock(ctx context.Context) error {
@@ -72,6 +73,9 @@ func (c *Core) CloseResources() {
 		if s.conn != nil {
 			_ = s.conn.Close()
 			s.conn = nil
+		}
+		for conn := range s.retired {
+			_ = conn.Close()
 		}
 		s.unlock()
 		s.workers.Wait()
@@ -166,7 +170,20 @@ func (c *Core) attachMCP(target protocol.ResourceTarget, s *mcpSlot, p resource.
 		s.cancel()
 	}
 	if s.conn != nil {
-		_ = s.conn.Close()
+		old := s.conn
+		if s.retired == nil {
+			s.retired = map[*resource.MCPConnection]struct{}{}
+		}
+		s.retired[old] = struct{}{}
+		old.Retire()
+		s.workers.Add(1)
+		go func() {
+			defer s.workers.Done()
+			<-old.Closed()
+			_ = s.lock(context.Background())
+			delete(s.retired, old)
+			s.unlock()
+		}()
 	}
 	s.pkg, s.conn, s.snapshot, s.generation = p, conn, snapshot, generation
 	life, cancel := context.WithCancel(context.Background())

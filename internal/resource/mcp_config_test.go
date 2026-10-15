@@ -45,6 +45,9 @@ func TestMCPConfigStrictAndNonsecret(t *testing.T) {
 		"url: https://example.invalid\nheaders: {Authorization: secret}\n",
 		"url: https://example.invalid\nheaders: {authorization: 'env:KEY', Authorization: 'env:OTHER'}\n",
 		"url: https://example.invalid\nheaders: {Mcp-Session-Id: 'env:KEY'}\n",
+		"url: https://example.invalid\nheaders: {Mcp-Method: 'env:KEY'}\n",
+		"url: https://example.invalid\nheaders: {Mcp-Name: 'env:KEY'}\n",
+		"url: https://example.invalid\nheaders: {mcp-param-tenant: 'env:KEY'}\n",
 		"url: https://example.invalid\ncredential: env:KEY\nheaders: {Authorization: 'env:OTHER'}\n",
 	} {
 		if _, err := ParseMCPConfig([]byte(httpBase + tail)); err == nil {

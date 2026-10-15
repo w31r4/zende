@@ -20,14 +20,72 @@ import (
 // MCPConnection owns transport resources as well as the negotiated session.
 type MCPConnection struct {
 	*mcp.Connection
-	cleanup func()
-	once    sync.Once
+	cleanup   func()
+	once      sync.Once
+	mu        sync.Mutex
+	leases    int
+	retired   bool
+	closed    bool
+	closeDone chan struct{}
 }
 
 func (c *MCPConnection) Close() error {
 	var err error
-	c.once.Do(func() { err = c.Connection.Close(); c.cleanup() })
+	c.once.Do(func() {
+		defer close(c.closeDone)
+		c.mu.Lock()
+		c.closed = true
+		c.mu.Unlock()
+		err = c.Connection.Close()
+		c.cleanup()
+	})
 	return err
+}
+
+// Closed waits for transport cleanup, unlike Done which signals disconnection
+// before HTTP session deletion or stdio process reaping has necessarily ended.
+func (c *MCPConnection) Closed() <-chan struct{} { return c.closeDone }
+
+// LeaseCall pins a validated call to this connection. Release must run even if
+// journaling fails before dispatch. A retired connection accepts no new calls;
+// existing leases drain normally. Close, used for Core shutdown, cancels all.
+func (c *MCPConnection) LeaseCall(ctx context.Context, ref string, arguments []byte) (*mcp.Call, func(), error) {
+	c.mu.Lock()
+	if c.retired || c.closed {
+		c.mu.Unlock()
+		return nil, nil, protocol.E("stale_reference", "MCP connection was replaced; search again")
+	}
+	c.leases++
+	c.mu.Unlock()
+	var once sync.Once
+	release := func() {
+		once.Do(func() {
+			c.mu.Lock()
+			c.leases--
+			closeNow := c.retired && c.leases == 0
+			c.mu.Unlock()
+			if closeNow {
+				_ = c.Close()
+			}
+		})
+	}
+	call, err := c.Connection.PrepareCall(ctx, ref, arguments)
+	if err != nil {
+		release()
+		return nil, nil, err
+	}
+	return call, release, nil
+}
+
+// Retire is graceful hot replacement. It never cancels a leased invocation.
+func (c *MCPConnection) Retire() {
+	c.mu.Lock()
+	c.retired = true
+	closeNow := c.leases == 0
+	c.mu.Unlock()
+	if closeNow {
+		_ = c.Close()
+	}
 }
 
 // ConnectMCP resolves references only at the connection boundary. Config must
@@ -103,7 +161,7 @@ func ConnectMCP(ctx context.Context, identity protocol.ResourceInfo, config MCPC
 		cleanup()
 		return nil, err
 	}
-	return &MCPConnection{Connection: conn, cleanup: cleanup}, nil
+	return &MCPConnection{Connection: conn, cleanup: cleanup, closeDone: make(chan struct{})}, nil
 }
 
 type mcpHeaders struct {
@@ -116,6 +174,7 @@ func (t *mcpHeaders) RoundTrip(req *http.Request) (*http.Response, error) {
 	for key, values := range t.headers {
 		copy.Header[key] = append([]string(nil), values...)
 	}
+	mcp.ApplyCallHeaders(copy)
 	return t.base.RoundTrip(copy)
 }
 

@@ -211,19 +211,24 @@ func prepareEntry(serverID, bindingVersion string, tool *mcpsdk.Tool) (entry, er
 }
 
 func validateSchema(value any) error {
+	_, err := compileSchema(value)
+	return err
+}
+
+func compileSchema(value any) (*jsonschema.Schema, error) {
 	b, err := json.Marshal(value)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var obj map[string]any
 	if json.Unmarshal(b, &obj) != nil || obj == nil || obj["type"] != "object" {
-		return invalidCatalog()
+		return nil, invalidCatalog()
 	}
 	if draft, present := obj["$schema"]; present {
 		switch draft {
 		case "http://json-schema.org/draft-07/schema#", "https://json-schema.org/draft-07/schema#", "https://json-schema.org/draft/2020-12/schema":
 		default:
-			return invalidCatalog()
+			return nil, invalidCatalog()
 		}
 	}
 	compiler := jsonschema.NewCompiler()
@@ -233,10 +238,9 @@ func validateSchema(value any) error {
 	compiler.UseLoader(nil)
 	const base = "https://zende.invalid/mcp/tool-schema"
 	if err := compiler.AddResource(base, obj); err != nil {
-		return err
+		return nil, err
 	}
-	_, err = compiler.Compile(base)
-	return err
+	return compiler.Compile(base)
 }
 
 func boundedJSON(v any, depth int) bool {

@@ -118,12 +118,12 @@ func ParseMCPConfig(data []byte) (MCPConfig, error) {
 		seen := map[string]bool{}
 		for key, ref := range c.Headers {
 			n := http.CanonicalHeaderKey(key)
-			if !mcpHeaderName.MatchString(key) || len(key) > 128 || seen[n] || !validRef(ref) {
+			if !mcpHeaderName.MatchString(key) || len(key) > 128 || seen[n] || !validRef(ref) || strings.HasPrefix(strings.ToLower(key), "mcp-param-") {
 				return fail()
 			}
 			seen[n] = true
 			switch n {
-			case "Host", "Connection", "Content-Length", "Content-Type", "Accept", "Transfer-Encoding", "Upgrade", "Proxy-Authorization", "Proxy-Connection", "Trailer", "Te", "Mcp-Session-Id", "Mcp-Protocol-Version", "Last-Event-Id":
+			case "Host", "Connection", "Content-Length", "Content-Type", "Accept", "Transfer-Encoding", "Upgrade", "Proxy-Authorization", "Proxy-Connection", "Trailer", "Te", "Mcp-Session-Id", "Mcp-Protocol-Version", "Mcp-Method", "Mcp-Name", "Last-Event-Id":
 				return fail()
 			}
 			if n == "Authorization" && c.Credential != "" {

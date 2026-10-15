@@ -43,6 +43,7 @@ type Status struct {
 // Connect bounds negotiation and initial listing. ctx governs preparation,
 // not the returned connection's lifetime. Transport ownership transfers here;
 // it must bound frames/events and Close must release its I/O/process resources.
+// HTTP transports must apply ApplyCallHeaders to outgoing cloned requests.
 // bindingVersion identifies nonsecret connection settings, never a credential.
 func Connect(ctx context.Context, serverID, bindingVersion string, transport mcpsdk.Transport) (*Connection, error) {
 	// Validate identity before starting a subprocess or network connection.
@@ -69,6 +70,7 @@ func Connect(ctx context.Context, serverID, bindingVersion string, transport mcp
 		ToolListChangedHandler: func(context.Context, *mcpsdk.ToolListChangedRequest) { signal(c.wake) },
 	})
 	client.AddSendingMiddleware(auditToolPages)
+	client.AddSendingMiddleware(pinnedCallContext)
 	client.AddSendingMiddleware(func(next mcpsdk.MethodHandler) mcpsdk.MethodHandler {
 		return func(ctx context.Context, method string, req mcpsdk.Request) (mcpsdk.Result, error) {
 			if method == "subscriptions/listen" {
