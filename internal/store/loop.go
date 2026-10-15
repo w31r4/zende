@@ -19,6 +19,13 @@ type ContextMessage struct {
 	QuestionID string                 `json:"question_id,omitempty"`
 	Message    model.Message          `json:"message"`
 	Resources  []protocol.ResourceRef `json:"resources,omitempty"`
+	Summary    *ContextSummaryRef     `json:"summary,omitempty"`
+}
+
+type ContextSummaryRef struct {
+	AgentID string `json:"agent_id"`
+	ViewID  string `json:"view_id"`
+	Through int64  `json:"through"`
 }
 
 func (s *Store) ReadyAgents(ctx context.Context) ([]string, error) {
@@ -174,40 +181,43 @@ func (s *Store) RecordToolResult(ctx context.Context, agent, task, request strin
 }
 
 func (s *Store) ModelContext(ctx context.Context, agent string) ([]model.Message, int64, error) {
-	messages := []model.Message{}
-	var cursor int64
-	err := s.Transaction(ctx, func(tx *sql.Tx) error {
-		if err := tx.QueryRowContext(ctx, "SELECT seq FROM agents WHERE id=?", agent).Scan(&cursor); err != nil {
-			return err
-		}
-		entries, err := contextEntries(ctx, tx, agent, cursor)
-		if err != nil {
-			return err
-		}
-		for _, entry := range entries {
-			messages = append(messages, entry.Record.Message)
-		}
-		return nil
-	})
-	return messages, cursor, err
+	snapshot, err := s.ContextSnapshot(ctx, agent)
+	return snapshot.Messages, snapshot.Cursor, err
 }
 
 type contextEntry struct {
-	Seq    int64
-	Record ContextMessage
+	Seq     int64
+	Record  ContextMessage
+	AgentID string
+	ViewID  string
 }
 
 // Shared by requests and inheritance. Active compaction views belong here;
 // callers must not reconstruct a second context by reading the raw journal.
 func contextEntries(ctx context.Context, tx *sql.Tx, agent string, cursor int64) ([]contextEntry, error) {
-	rows, err := tx.QueryContext(ctx, "SELECT seq,payload FROM events WHERE agent_id=? AND kind='context.message' AND seq<=? ORDER BY seq", agent, cursor)
+	view, err := contextView(ctx, tx, agent, cursor)
+	if err != nil {
+		return nil, err
+	}
+	entries, err := rawContextEntries(ctx, tx, agent, view.Through, cursor)
+	if err != nil {
+		return nil, err
+	}
+	if view.ID != "" {
+		entries = append([]contextEntry{{Seq: view.Through, AgentID: agent, ViewID: view.ID, Record: ContextMessage{Message: view.message(), Summary: &ContextSummaryRef{AgentID: agent, ViewID: view.ID, Through: view.Through}}}}, entries...)
+	}
+	return entries, nil
+}
+
+func rawContextEntries(ctx context.Context, tx *sql.Tx, agent string, after, cursor int64) ([]contextEntry, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT seq,payload FROM events WHERE agent_id=? AND kind='context.message' AND seq>? AND seq<=? ORDER BY seq", agent, after, cursor)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	var entries []contextEntry
 	for rows.Next() {
-		var entry contextEntry
+		entry := contextEntry{AgentID: agent}
 		var data []byte
 		if err := rows.Scan(&entry.Seq, &data); err != nil {
 			return nil, err

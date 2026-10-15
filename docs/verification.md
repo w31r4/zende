@@ -488,6 +488,27 @@ go test -race ./internal/protocol ./internal/store ./internal/process ./internal
 
 按 Pi 的能力条件组合短提示，按 trim-cn-tech-doc 合并默认值、归因与恢复说明。测试使用临时 XDG、SQLite、runner 和本地 HTTP 模型，子二进制为常规构建，宿主及包内并发由 race 检查。V02 的创建/复用部分完成，长期 mailbox 通信仍待 6.4；6.2–6.7 和用户级部署保持未完成。
 
+## 2026-10-16：上下文选择与只追加视图
+
+6.2 已完成，累计 33/68 项。继承支持 all/none/last:N、预算及文本/文件/原文背景；回执保存实际范围和估算。全量 `go test ./...`、`go test -race ./...`、CLI 帮助和 OpenSpec strict 校验通过，相关用例在 race 下连续 3 次通过。
+
+| 验证 | 入口 | 结果 |
+| --- | --- | --- |
+| 轮次、预算与工具组 | `TestSpawnLastTurnsBudgetAndPendingPairs` | 跨轮并行调用成组保留；未完成尾部排除；显式范围超预算拒绝，仅预算选择最近完整轮次，失败不留身份或回执 |
+| 压缩视图与原文背景 | `TestSpawnRawBackgroundAfterCompactionAndImages` | 默认继承摘要及尾部，last:N 只取所选轮次；原文引用可恢复摘要覆盖范围，跨 Agent 图片字节及私有字段保留；缺失端点、孤立结果、未完成组与重复调用拒绝 |
+| 只追加与重开 | `TestContextViewAppendOnlyTailInheritanceAndRestart` | 原文不改，历史游标仍解析旧视图；准备期间新增尾部保留，子孙继承不把摘要计为用户轮次；重开保持视图和来源 |
+| 发布事务 | `TestContextViewRejectsSplitInvalidRangeAndRollsBack`、`TestContextViewConcurrentPublicationFencesRequests` | 拆分工具组、非法范围及注入写入失败保留旧视图；八个竞争发布仅一个成功，旧请求准备被游标拒绝；仅摘要时报告 0 轮 |
+| 实际请求 | `TestModelRequestsPinContextViewAcrossPublication` | 同一 Task 两轮模型夹具请求：流中发布不改原请求，下一轮使用新视图、保留原响应尾部并重申运行设置；两次请求各存对应视图 ID |
+| CLI 与迁移 | `TestSpawnCLIAttributionIdempotencyAndReuse`、`TestContextViewJournalMigrationPreservesVersionSevenHistory` | 真实 UDS 验证新参数、stdin 背景和历史引用；schema 7→8 保留原任务与消息，无表重写；默认 CLI 参数维持原重试指纹 |
+
+```sh
+go test -race ./internal/store ./internal/runtime ./internal/cli -run 'Test(ContextView|Spawn|ModelRequestsPin|InheritedContext|CollaborationHints)' -count=3 -timeout=90s
+```
+
+补测发现 `last:N` 等于保留轮数时误带旧摘要，已修正选择起点；首轮背景夹具复用固定创建 ID 触发去重冲突，改为独立身份后通过。原失败不计为通过。
+
+提示词版本 7 继续参考 Pi 的能力组合短说明，文档按 trim-cn-tech-doc 合并选择规则并保留预算边界。视图发布是存储基础接口，未接自动摘要生成、容量触发或公开 compact 命令，9.1–9.4 仍未完成。模型为本地夹具，未访问真实模型或执行用户级部署。
+
 ## 进行中
 
-继续第 6 组的上下文预算、worktree 与 mailbox。会话复制依赖第 6、9 组；协作提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。
+继续第 6 组的 worktree 与 mailbox。会话复制依赖第 6、9 组；协作提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。

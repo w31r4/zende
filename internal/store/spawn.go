@@ -21,13 +21,6 @@ func (s *Store) Spawn(ctx context.Context, req protocol.Request, p protocol.Spaw
 		if p.ParentID == "" || strings.TrimSpace(p.Input) == "" || len(p.Input) > 2<<20 || !utf8.ValidString(p.Input) || !filepath.IsAbs(cwd) {
 			return protocol.Accepted{}, protocol.E("invalid_params", "parent, task input (up to 2 MiB) and an absolute cwd are required")
 		}
-		mode := p.Context
-		if mode == "" {
-			mode = "all"
-		}
-		if mode != "all" && mode != "none" {
-			return protocol.Accepted{}, protocol.E("invalid_params", "context must be all or none")
-		}
 		settings, err := selection(ctx, tx, p.ParentID)
 		if err != nil {
 			return protocol.Accepted{}, err
@@ -43,7 +36,7 @@ func (s *Store) Spawn(ctx context.Context, req protocol.Request, p protocol.Spaw
 		if state == "copying" || state == "archived" {
 			return protocol.Accepted{}, protocol.E("conflict", "parent is read-only")
 		}
-		source := protocol.SpawnSource{ParentID: p.ParentID, ParentCursor: cursor, Context: mode, Caller: p.Caller}
+		source := protocol.SpawnSource{ParentID: p.ParentID, ParentCursor: cursor, Caller: p.Caller}
 		if err := spawnCaller(ctx, tx, &source); err != nil {
 			return protocol.Accepted{}, err
 		}
@@ -61,22 +54,9 @@ func (s *Store) Spawn(ctx context.Context, req protocol.Request, p protocol.Spaw
 		if err := checkCapacity(ctx, tx, "", maxAgents); err != nil {
 			return protocol.Accepted{}, err
 		}
-		var entries []contextEntry
-		if mode == "all" {
-			entries, err = contextEntries(ctx, tx, p.ParentID, cursor)
-			if err != nil {
-				return protocol.Accepted{}, err
-			}
-			complete, err := completePrefix(entries)
-			if err != nil {
-				return protocol.Accepted{}, err
-			}
-			source.ExcludedPending = len(entries) - complete
-			entries = entries[:complete]
-		}
-		source.Messages = len(entries)
-		if len(entries) > 0 {
-			source.First, source.Last = entries[0].Seq, entries[len(entries)-1].Seq
+		entries, err := spawnContext(ctx, tx, p, &source)
+		if err != nil {
+			return protocol.Accepted{}, err
 		}
 		child := protocol.Agent{ID: protocol.NewID("agent"), ParentID: p.ParentID, Cwd: cwd, State: "idle", Model: settings.Choice.Model}
 		if _, err := tx.ExecContext(ctx, "INSERT INTO agents(id,parent_id,cwd,state,model) VALUES(?,?,?,?,?)", child.ID, child.ParentID, child.Cwd, child.State, child.Model); err != nil {
@@ -113,7 +93,7 @@ func (s *Store) Spawn(ctx context.Context, req protocol.Request, p protocol.Spaw
 				if copied == "" {
 					copied = protocol.NewID("image")
 					result, err := tx.ExecContext(ctx, `INSERT INTO attachments(id,agent_id,name,media_type,sha256,bytes,width,height,data)
- SELECT ?,?,name,media_type,sha256,bytes,width,height,data FROM attachments WHERE agent_id=? AND id=?`, copied, child.ID, p.ParentID, original)
+ SELECT ?,?,name,media_type,sha256,bytes,width,height,data FROM attachments WHERE agent_id=? AND id=?`, copied, child.ID, entry.AgentID, original)
 					if err != nil {
 						return protocol.Accepted{}, err
 					}
@@ -208,33 +188,6 @@ func callSource(ctx context.Context, tx *sql.Tx, caller *protocol.Caller) (*prot
 // inside exec_command must not copy its own unfinished call into the child.
 // Preserve complete messages, including provider-private fields, verbatim.
 func completePrefix(entries []contextEntry) (int, error) {
-	pending := map[string]bool{}
-	seen := map[string]bool{}
-	complete := 0
-	for i, entry := range entries {
-		message := entry.Record.Message
-		results := map[string]bool{}
-		for _, b := range message.Content {
-			if b.Type == "tool_call" {
-				if message.Role != "assistant" || b.CallID == "" || seen[b.CallID] {
-					return 0, protocol.E("context_invalid", "invalid inherited tool call")
-				}
-				pending[b.CallID] = true
-				seen[b.CallID] = true
-			}
-			if message.Role == "tool" {
-				if b.CallID == "" || !pending[b.CallID] {
-					return 0, protocol.E("context_invalid", "orphan inherited tool result")
-				}
-				results[b.CallID] = true
-			}
-		}
-		for id := range results {
-			delete(pending, id)
-		}
-		if len(pending) == 0 {
-			complete = i + 1
-		}
-	}
-	return complete, nil
+	complete, _, _, err := scanContext(entries)
+	return complete, err
 }

@@ -15,7 +15,7 @@ import (
 	"zende.local/harness/internal/protocol"
 )
 
-const SchemaVersion = 7
+const SchemaVersion = 8
 
 type Store struct{ db *sql.DB }
 
@@ -100,7 +100,14 @@ PRAGMA user_version=2;`); err != nil {
 				return err
 			}
 		}
-		_, err := tx.Exec(selectionSchema)
+		if version < 7 {
+			if _, err := tx.Exec(selectionSchema); err != nil {
+				return err
+			}
+		}
+		// v8 adds context.view events and summary provenance to the journal.
+		// No table rewrite; older binaries must not silently ignore these views.
+		_, err := tx.Exec("PRAGMA user_version=8")
 		return err
 	})
 }

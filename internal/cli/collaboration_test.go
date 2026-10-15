@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -156,10 +157,16 @@ func TestSpawnCLIAttributionIdempotencyAndReuse(t *testing.T) {
 	}
 	for _, args := range [][]string{
 		{"agent", "spawn", "--parent", "another", "bad"},
-		{"agent", "spawn", "--context", "last:3", "not implemented"},
+		{"agent", "spawn", "--context", "last:0", "invalid count"},
 		{"agent", "spawn", "--cwd", "does-not-exist", "bad"},
 		{"--request-id", child.OperationID, "agent", "spawn", "conflicting"},
 		{"agent", "spawn", "--file", "-", "--task-file", "-"},
+		{"agent", "spawn", "--file", "-", "--background-file", "-"},
+		{"agent", "spawn", "--background", "x", "--background-file", "-", "task"},
+		{"agent", "spawn", "--context-budget", "0", "task"},
+		{"agent", "spawn", "--context-budget", "-1", "task"},
+		{"agent", "spawn", "--background-history", "bad", "task"},
+		{"agent", "spawn", "--background-history", "agent:2:1", "task"},
 	} {
 		var out, diagnostic bytes.Buffer
 		if code := Run(ctx, append([]string{"--profile", "spawn"}, args...), strings.NewReader("x"), &out, &diagnostic, BuildInfo{}); code == 0 || out.Len() != 0 {
@@ -170,6 +177,27 @@ func TestSpawnCLIAttributionIdempotencyAndReuse(t *testing.T) {
 	var human protocol.Accepted
 	if json.Unmarshal(run("", "--request-id", "human", "agent", "spawn", "--parent", parent.AgentID, "--context", "none", "human-task"), &human) != nil || human.Spawn.Caller != nil || human.Spawn.Messages != 0 {
 		t.Fatal(human)
+	}
+	var limited protocol.Accepted
+	if err := json.Unmarshal(run("", "agent", "spawn", "--parent", parent.AgentID, "--context", "last:1", "--context-budget", "1000", "limited"), &limited); err != nil || limited.Spawn.Context != "last:1" || limited.Spawn.Budget != 1000 || limited.Spawn.Messages != 1 {
+		t.Fatal(limited, err)
+	}
+	var withFile protocol.Accepted
+	if err := json.Unmarshal(run("补充背景\nfrom stdin", "agent", "spawn", "--parent", parent.AgentID, "--context", "none", "--background-file", "-", "file-background"), &withFile); err != nil || withFile.Spawn.BackgroundMessages != 1 {
+		t.Fatal(withFile, err)
+	}
+	fileMessages, _, err := s.ModelContext(ctx, withFile.AgentID)
+	if err != nil || !strings.Contains(fileMessages[0].Content[0].Text, "补充背景\nfrom stdin") {
+		t.Fatal(fileMessages, err)
+	}
+	var referenced protocol.Accepted
+	rangeArg := parent.AgentID + ":" + strconv.FormatInt(child.Spawn.First, 10) + ":" + strconv.FormatInt(child.Spawn.Last, 10)
+	if err := json.Unmarshal(run("", "agent", "spawn", "--parent", parent.AgentID, "--context", "none", "--background-history", rangeArg, "--background", "specific evidence", "raw-background"), &referenced); err != nil || referenced.Spawn.BackgroundMessages != 2 || len(referenced.Spawn.BackgroundHistory) != 1 {
+		t.Fatal(referenced, err)
+	}
+	var budgetOnly protocol.Accepted
+	if err := json.Unmarshal(run("", "agent", "spawn", "--parent", parent.AgentID, "--context-budget", "1000", "budget-only"), &budgetOnly); err != nil || budgetOnly.Spawn.Context != "budget" || budgetOnly.Spawn.Messages != 1 {
+		t.Fatal(budgetOnly, err)
 	}
 	for _, env := range []string{"", "bad-json", "null", `{"agent_id":"wrong"}`, `{"agent_id":"x","task_id":"y","operation_id":"z"}`} {
 		t.Setenv(protocol.CallerEnvironment, env)
