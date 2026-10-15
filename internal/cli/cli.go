@@ -21,6 +21,7 @@ import (
 	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/provider"
 	"zende.local/harness/internal/resource"
+	"zende.local/harness/internal/resource/mcp"
 	"zende.local/harness/internal/runtime"
 	"zende.local/harness/internal/store"
 	"zende.local/harness/internal/tool"
@@ -273,11 +274,7 @@ func (a *app) call(cmd *cobra.Command, method string, mutation bool, params any)
 		}
 		req.OperationID = "call_" + fingerprint
 	}
-	timeout := 10 * time.Second
-	if p, ok := params.(protocol.WaitTask); ok {
-		timeout = time.Duration(p.WaitMS)*time.Millisecond + 5*time.Second
-	}
-	ctx, cancel := context.WithTimeout(cmd.Context(), timeout)
+	ctx, cancel := context.WithTimeout(cmd.Context(), requestTimeout(method, params))
 	defer cancel()
 	var result json.RawMessage
 	socket := p.Socket
@@ -289,6 +286,20 @@ func (a *app) call(cmd *cobra.Command, method string, mutation bool, params any)
 		return err
 	}
 	return encode(cmd, result)
+}
+
+func requestTimeout(method string, params any) time.Duration {
+	if p, ok := params.(protocol.WaitTask); ok {
+		return time.Duration(p.WaitMS)*time.Millisecond + 5*time.Second
+	}
+	switch method {
+	case "resource.register", "resource.refresh", "mcp.search":
+		// MCP initialization/catalog refresh may consume the full server budget.
+		// Leave time for receipt persistence and process cleanup before replying.
+		return mcp.RefreshTimeout + 10*time.Second
+	default:
+		return 10 * time.Second
+	}
 }
 
 func (a *app) serve(cmd *cobra.Command, _ []string) error {

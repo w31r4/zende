@@ -328,7 +328,9 @@ zende resource refresh AGENT RESOURCE
 
 连接、全页校验和配置复读通过后才发布。失败保留旧连接和旧版，状态区分当前可用性与最近更新失败。变更通知先持久发布，再替换搜索快照；请求回执重试不重连。Core 重启后状态为 unavailable，首次搜索从最后发布的配置重连并校验，磁盘上的未发布修改不参与恢复。关闭 TUI 不关闭连接；Core 正常退出回收连接及 stdio 进程组。
 
-连接使用 [官方 Go SDK v1.8.0](https://github.com/modelcontextprotocol/go-sdk/releases/tag/v1.8.0)。协商和首次目录读取成功后才返回，准备限时 30 秒；返回后由所有者显式 Close。初始请求结束不关闭连接；连接断开后查询报 unavailable。收到工具变更通知会合并触发刷新，显式 Refresh 总是重新读取，不使用 SDK 的页缓存。
+模型可在同一 Task 内执行安装命令，完成后 register/refresh，再用 tool_search 返回的引用调用 tool_invoke。长安装或准备命令返回 running 时，保留 process_id，用 write_stdin 继续等待。首次注册失败，从错误的 data.resource_id 查询 status；补齐依赖后 refresh。更新失败时，status 分别显示上一版 ready 和本次 update.failed。
+
+连接使用 [官方 Go SDK v1.8.0](https://github.com/modelcontextprotocol/go-sdk/releases/tag/v1.8.0)。协商和首次目录读取成功后才返回，准备限时 30 秒；CLI 的 register/refresh/search 总等待预算为 40 秒，也受调用方更短的取消期限约束。返回后由所有者显式 Close。初始请求结束不关闭连接；连接断开后查询报 unavailable。收到工具变更通知会合并触发刷新，显式 Refresh 总是重新读取，不使用 SDK 的页缓存。
 
 每次刷新先读完所有页，再替换内存快照。循环游标、重复名、SDK 丢弃的非法定义、schema 错误或超限都会拒绝整次更新；旧目录与最近更新错误分开保留。输入和输出 schema 必须为 object，按 [JSON Schema 编译器](https://github.com/santhosh-tekuri/jsonschema/tree/v6.0.3) 校验元 schema 和引用；接受 draft-07、2020-12，省略版本时使用 2020-12。只使用内置元 schema 和当前定义，关闭外部文件与网络加载。
 
