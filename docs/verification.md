@@ -729,6 +729,32 @@ go run ./cmd/zende resource status --help
 
 核心提示词版本 12 补充 status 的两种状态含义，沿用 Pi 的按能力组合短说明；旧 Task 的已保存提示词保持原样。tui-design 用于 CLI 状态与输出分流，trim-cn-tech-doc 合并说明，保留限额、重试和失败边界。
 
+## 2026-10-16：MCP 连接、版本目录和有界搜索
+
+7.3 部分交付，累计仍为 39/68 项。新增 `internal/resource/mcp`，尚未接入运行时资源发布、模型搜索入口或 tool_invoke；本轮没有修改提示词、数据库 schema 或 TUI。
+
+| 验证 | 测试入口 | 结果 |
+| --- | --- | --- |
+| HTTP 与通知 | `TestMCPHTTPNegotiationPaginationAndHotCatalog` | 本地 HTTP 分别协商 2025-11-25、2026-07-28，读取多页；明确刷新绕过 TTL，通知后目录更新，旧快照不变 |
+| stdio 生命周期 | `TestMCPStdioLifetimeAndCrash` | 真实子进程连接、正常关闭及强制结束；退出后停止报告 ready，子进程被回收 |
+| 刷新失败 | `TestMCPFailedRefreshRetainsCompleteCatalogAndSanitizesErrors` | nil 工具、非法 header annotation、后页错误均拒绝整次发布，旧目录仍可查，原始错误不进入诊断 |
+| 引用与内容版本 | `TestCatalogReferenceBindingAndImmutableCopies` | 无关新增保留引用；定义、连接版本、服务身份改变或删除使旧引用失效；页序和对象键序不改变版本 |
+| schema 与限额 | `TestCatalogRejectsMalformedDefinitionsAndSchemas`、`TestCatalogPreparationBounds` | 拒绝非法 schema、未知草案、外部引用、循环游标、超页数/数量/字节/深度；取消不返回半个目录 |
+| 搜索 | `TestSearchBudgetCursorAndRanking` | 有界分页、确定性排序、旧游标拒绝；JSON 总字节不超预算，过大单项不截断、不静默跳过 |
+| 取消与关闭 | `TestMCPRefreshCancellationAndConcurrentReaders`、`TestMCPPreparationDeadlineIncludesSubscriptionWrite`、`TestMCPConnectAdmissionAndFailureCleanup` | 刷新排队可取消，读旧快照不阻塞；订阅初始化写入受准备时限约束，失败释放连接 |
+
+```sh
+go test ./...
+go test -race ./...
+go test -race ./internal/resource/mcp -count=3 -timeout=90s
+go test ./internal/resource/mcp \
+  -run 'TestMCPPreparationDeadline|TestMCPConnectAdmission|TestMCPFailedConnect' -count=50
+```
+
+以上命令及 OpenSpec strict 校验通过。测试使用 SDK 内存通道、本地 HTTP 服务和实际 stdio 子进程，不使用外部 MCP、模型端点或凭据。首轮发现未知 schema 草案被延后拒绝、准备超时错误被关闭状态覆盖；修正后重跑通过，旧失败不计通过。通知合并仅是内存唤醒，持久发布通知及断线重连由后续 host 实现。
+
+文档按 trim-cn-tech-doc 合并机制与边界说明，保留限额和未完成范围。本轮不改 OpenSpec 勾选；7.3 还需多服务目录及模型入口，7.4、7.5 尚未完成。
+
 ## 进行中
 
-继续外部目录监视、MCP 搜索调用、配置/provider 热发布和独立进程插件。7.2 的 skill/prompt 状态部分已接通，目录监视与 MCP 依赖、凭据、连接就绪检查仍待完成；7.1、7.7 整体也未勾选。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。
+继续外部目录监视、MCP 运行时注册与搜索调用、配置/provider 热发布和独立进程插件。7.2 的 skill/prompt 状态部分已接通，目录监视与 MCP 依赖、凭据检查仍待完成；目录安装完成的判定方式已提问，待用户选择。7.1、7.7 整体也未勾选。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。

@@ -295,7 +295,25 @@ TUI 输入 `$` 或 `/skill` 打开当前 Agent 的已发布目录，候选在输
 
 CLI 用 `agent submit AGENT --skill RESOURCE@VERSION` 或 `question answer AGENT QUESTION --skill RESOURCE@VERSION`，`--skill` 可重复，也支持纯 skill 输入。提交时 core 核实该 Agent 发布过确切版本，将引用与输入原子保存；任务开始或回答投递时追加该版本正文、来源和版本到 user 消息。`disable-model-invocation` 允许用户显式选择；这不赋予正文 developer/system 权限。刷新和源文件删除不改已接受输入；辅助文件用 `resource read --version` 读取，脚本走进程接口。
 
-资源发布后，下一模型请求追加有界发现通知，按实际目录保存版本；旧 Task 的基础提示词和旧正文保持原样。限额、恢复与读取入口见 [请求级更新](./prompts.md#skillprompt-的请求级更新)。`resource_dirs` 自动发现、目录监视及 MCP 接入仍在第 7 组实施。
+资源发布后，下一模型请求追加有界发现通知，按实际目录保存版本；旧 Task 的基础提示词和旧正文保持原样。限额、恢复与读取入口见 [请求级更新](./prompts.md#skillprompt-的请求级更新)。`resource_dirs` 自动发现、目录监视及 MCP 的运行时接入仍在第 7 组实施。
+
+## MCP 目录准备层
+
+`internal/resource/mcp` 已提供连接、目录校验和有界搜索，尚未注册到 CLI、模型工具或持久资源目录。它接收一个 SDK transport；连接配置、凭据解析和多服务目录由后续 host 接入，不能据此宣称 MCP 安装调用链已完成。
+
+连接使用 [官方 Go SDK v1.8.0](https://github.com/modelcontextprotocol/go-sdk/releases/tag/v1.8.0)。协商和首次目录读取成功后才返回，准备限时 30 秒；返回后由所有者显式 Close。初始请求结束不关闭连接；连接断开后查询报 unavailable。收到工具变更通知会合并触发刷新，显式 Refresh 总是重新读取，不使用 SDK 的页缓存。
+
+每次刷新先读完所有页，再替换内存快照。循环游标、重复名、SDK 丢弃的非法定义、schema 错误或超限都会拒绝整次更新；旧目录与最近更新错误分开保留。输入和输出 schema 必须为 object，按 [JSON Schema 编译器](https://github.com/santhosh-tekuri/jsonschema/tree/v6.0.3) 校验元 schema 和引用；接受 draft-07、2020-12，省略版本时使用 2020-12。只使用内置元 schema 和当前定义，关闭外部文件与网络加载。
+
+工具引用绑定 server ID、非敏感连接版本和 SDK 可表达的完整定义。新增无关工具不改变原引用，目标变化或删除后在新目录查询旧引用返回 stale_reference。目录内容哈希独立于工具引用，也不等于持久发布 generation。搜索按名称、标题和描述确定性排序，返回完整定义及引用；游标绑定查询和目录版本，改版后须重新搜索。
+
+| 限额 | 当前值 |
+| --- | --- |
+| 目录准备 | 4096 个工具、128 页，定义合计 16 MiB |
+| 单个定义 | 256 KiB，JSON 深度 64；服务端游标 4096 字节 |
+| 搜索 | 默认 8 项/64 KiB，最多 50 项/1 MiB；查询 1024 字节 |
+
+搜索字节预算包含整个 JSON 结果；首项放不下时明确要求扩大预算，不截断 schema 或跳过该项。连接诊断使用固定错误，不记录服务端原始错误。工具调用、附件保存、调用版本与恢复身份将在 7.4 接入；本层不执行任何 MCP 工具。
 
 ## Responses 接入
 
