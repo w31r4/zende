@@ -33,9 +33,11 @@ runner 独立于 core。core 或 CLI 退出不终止命令；新 core 可通过 
 
 完整响应校验后，core 保存 `tool.started` 和稳定操作 ID，再在执行前保存 `tool.dispatching`。调用记录 schema 2 据此区分准备和派发；旧版缺少派发标记时按未知处理。启动和续写以原 ID 去重。读回失败保留 process ID；已确认的部分写入报告 `written`，未确认时不填零。
 
-停止 Agent 后，已确认启动/输入的进程继续；当前读取取消，结果标 `observation_interrupted:true`，保留 process ID、已读输出及最后观察状态。后续先 inspect 再继续。启动/输入尚未确认或输出记录损坏时，仍保留错误或待核实状态。模型工具 descriptor 版本为 2。
+普通 stop 后，已确认启动/输入的进程继续；当前读取取消，结果标 `observation_interrupted:true`，保留 process ID、已读输出及最后观察状态。后续先 inspect 再继续。启动/输入尚未确认或输出记录损坏时，仍保留错误或待核实状态。模型工具 descriptor 版本为 2。
 
 进程工具的只读 `Recover` 接口查询原 process ID/启动参数，或原输入控制记录/参数指纹。pending、缺失、损坏或不符保持待核实；completed 输入返回原 written 和错误，后续读取失败标观察中断。调度器将核实结果与工具消息原子提交，再继续原 Task；核实过程不调用 Start/Input。
+
+显式树停止允许用 runner 的终止证据核实未知 exec：结果附 `stop.operation_id` 与 `stop.state`（`stopped/not_started`），错误为 `task_cancelled`。未启动的调用不再执行；已终止的原进程保留输出与最后观察状态，退出码可继续未知。此证据只解决命令取消，不替代 stdin 或 patch 的原执行记录。
 
 ## 输入与控制
 
@@ -57,7 +59,7 @@ printf 'hello\n' | ./bin/zende --profile dev --request-id input-once process std
 
 ## 树级停止底层接口
 
-6.7 已实现 runner 内部 `process.stop.freeze/advance/inspect/release`；core 编排与 `agent stop --tree` 尚未接通，普通 stop 和 detach 保持原行为。
+core 通过内部 `process.stop.freeze/advance/inspect/release` 执行 `agent stop --tree`。普通 stop 和 detach 保持原行为。
 
 freeze 按稳定操作 ID 保存 Agent 范围、已有进程和已派发调用 ID。捕获范围与启动串行，已进入 runner 的 stdin/resize RPC 先落定；冻结后拒绝范围内的新启动、stdin 和 resize，已完成重试仍返回原回执。未到达 runner 的调用保存为 `not_started`，释放冻结后也不能用该 ID 执行；其他 Agent 不受影响。
 
@@ -65,7 +67,7 @@ advance 核实 boot ID、启动时间及原进程组/PTY session，保存仍存�
 
 Linux 6.9 起可通过 pidfd 向原进程组发信号，覆盖扫描后派生的同组子进程。旧内核退回已核实成员的逐个 pidfd 终止；遗留成员无法确认时继续等待，不按裸 PID 猜测目标。范围与普通 terminate 相同：pipe 的原进程组、PTY 的原 POSIX session；主动脱离该范围的守护进程不在其中。实现依据 [Linux pidfd 接口](https://man7.org/linux/man-pages/man2/pidfd_send_signal.2.html)。这里不使用 SIGSTOP：tmux 会主动恢复被暂停的 pane，见 [tmux 3.3a 的 server_child_stopped](https://github.com/tmux/tmux/blob/3.3a/server.c)。
 
-`stopped` 仍保持启动冻结，由 core 确认整个树操作完成后单独 release。旧操作重试不捕获后来的工作。记录保存于 `processes/.stops/`，runner 重启后恢复；记录损坏或保存结果不明时阻止新进程效果，保留原文件及进程查询。每项停止最多 10000 个 Agent、10000 个待到达调用和 10000 个进程；单个进程的内核成员同限，记录受 IPC 帧预算约束。
+`stopped` 仍保持启动冻结。core 核实 Task 与 worktree 落定后 release，随后在事务中复查并解除 Agent 冻结；中途崩溃则继续原停止操作。旧操作重试不捕获后来的工作。记录保存于 `processes/.stops/`，runner 重启后恢复；记录损坏或保存结果不明时阻止新进程效果，保留原文件及进程查询。每项停止最多 10000 个 Agent、10000 个待到达调用和 10000 个进程；单个进程的内核成员同限，记录受 IPC 帧预算约束。
 
 ## 终端选择与接管
 

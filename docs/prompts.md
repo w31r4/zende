@@ -45,6 +45,8 @@ Zende 保持 exec、进程继续操作和 patch 的工具边界。Pi 的 read/ed
 
 版本 10 加入 `agent wait/result`。说明只在依赖子结果时等待、指定 Task、超时不取消、自动 queue、完整结果送达后去重，以及分页读取。纯结果通知无需自动回执。继续按 Pi 的已注册能力组合，详细预算与游标留给帮助；恢复旧 Task 保留原提示词。
 
+版本 11 加入 `agent stop/resume`，区分默认单 Agent 暂停和显式 `--tree`，说明完成查询、未知效果、队列保留和原 ID 重试。沿用 Pi 的能力条件短说明，完整范围和限额见帮助及 [停止与恢复](./collaboration.md#停止与恢复)。一致性测试核对命令注册、默认 `tree=false` 和不可用状态；旧 Task 仍用保存的提示词。
+
 ## 输出分类
 
 只有 adapter 声明支持可靠原生类别时，才直接接受 commentary/final。其余接入要求以下独立行标记；控制行不带缩进或多余空格，正文保留 LF/CRLF：

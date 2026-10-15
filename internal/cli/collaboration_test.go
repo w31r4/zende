@@ -281,5 +281,19 @@ func TestCollaborationHintsOnlyRegisteredCommands(t *testing.T) {
 				}
 			}
 		}
+		if hint.Name == "agent.stop" {
+			flag := command.Flags().Lookup("tree")
+			if flag == nil || flag.DefValue != "false" || !strings.Contains(hint.Usage, "[--tree]") {
+				t.Fatal("tree stop default drift", hint)
+			}
+			for _, text := range []string{"only that Agent", "background processes continue", "Explicit --tree", "operation inspect ID", "unknown effects", "queued input", "original request ID"} {
+				if !strings.Contains(hint.Guidance, text) {
+					t.Fatal("stop hint missing", text)
+				}
+			}
+		}
+		if hint.Name == "agent.resume" && (!strings.Contains(hint.Guidance, "only this Agent") || !strings.Contains(hint.Guidance, "Runner support is required")) {
+			t.Fatal("resume/unavailable semantics missing", hint)
+		}
 	}
 }

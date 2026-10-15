@@ -651,6 +651,35 @@ go test -race ./internal/process ./internal/workspace ./internal/store ./interna
 
 崩溃用例使用独立的本包测试进程，继承 race 构建；Git、过滤器、文件锁和 SQLite 为真实本地组件。启动至身份保存的窗口使用确定性暂停夹具。没有访问模型、修改参考仓库或写入生产配置。说明按 trim-cn-tech-doc 合并状态解释，保留目录、未知身份及原进程组的边界。
 
+## 2026-10-16：整树停止、Task 核实与 CLI
+
+6.7 已完成，累计 38/68 项。core 从持久停止计划推进 runner、Git 与 Task 核实，CLI 提供显式 `agent stop --tree` 和实时操作查询。全量 `go test ./...`、`go test -race ./...`、stop 帮助及 OpenSpec strict 校验通过。
+
+| 验证 | 入口 | 结果 |
+| --- | --- | --- |
+| 树范围与后续工作 | `TestTreeStopOwnsWholeTreeButPreservesUnrelatedWorkAndQueuedInput` | 父、子、孙及所属 pipe/PTY 结束，范围外 Task/进程继续；队列与消息保留，resume 只恢复目标，旧 stop 不影响新工作 |
+| 不可取消与未知效果 | `TestTreeStopWaitsForUncancellableToolSettlement`、`TestTreeStopDoesNotClearUnknownPatch` | 原工具未返回时保持 cancelling；未知 patch 保持冻结，runner 结束不冒充工具效果核实 |
+| 迟到命令与无模型恢复 | `TestTreeStopSettlesNeverStartedExecWithoutReplaying`、`TestRecoverStoppedUndeliveredExecNeverDispatchesOrInspects` | 接受后重开 core，无模型也可取消原 Task；原命令未执行，释放后迟到 RPC 仍拒绝，只保存一次核实结果 |
+| 真实 core/runner 崩溃 | `TestTreeStopSurvivesCoreAndRunnerSIGKILL` | runner 丢失 pipe 描述符后重新接入，core 冻结范围后被强杀，runner 再次强杀；恢复完成原范围，命令效果一次、原输出可读、pipe 退出码未知 |
+| 完成事务与释放窗口 | `TestTreeStopRecoversReleasedRunnerBeforeCompletionCommit`、`TestTreeStopCompletionRequiresReleasedMatchingReceiptAndSettledTasks` | runner 已释放而数据库提交失败时，Agent 仍冻结；重开用原回执补完成，错误范围、未落定任务、未释放 runner 均不能宣告完成 |
+| Git 与服务不可用 | `TestTreeStopDriverCancelsWorktreeWithoutModel`、`TestTreeStopRetriesUnavailableRunnerWithoutUnpausing`、`TestTreeStopRejectsUnavailableRunnerBeforePausing` | 无模型时终止原 Git/过滤器并保留检出；缺停止能力先拒绝，暂时离线保存失败阶段并重试，已接受重试不依赖当前服务可用性 |
+| 范围快照与限额 | `TestTreeRunnerScopeIsImmutableAndCapturesDispatchedIdentities`、`TestTreeRunnerScopeDoesNotSilentlyTruncateDuplicateEvents`、`TestPendingTreeStopsPaginationAndProgressDedup` | 历史/旧版派发纳入，准备态排除；重开和重试范围不变，重复事件不挤掉后续 ID，超 10000 项不保存部分范围；分页和相同进度去重通过 |
+| 工具核实与身份 | `TestRecoverStoppedRetainsUnknownExitAndAvailableOutput`、`TestRecoverStoppedRejectsIncompleteProofAndInput` | 已保存输出与未知退出码同时保留；错参数、PID、任务、未完成证明及输入调用不能借停止证据清除未知状态 |
+| CLI 与提示词 | `TestCLIExplicitTreeStopAndLiveInspection`、`TestCollaborationHintsOnlyRegisteredCommands` | 真实 UDS 验证默认单 Agent、显式树范围、重试、完成查询与 JSON/错误通道；resume 拒绝 tree 参数，说明核对注册命令与默认值 |
+
+```sh
+go test ./internal/runtime -run TestTreeStopSurvivesCoreAndRunnerSIGKILL -count=1 -v
+go test ./internal/cli -run 'TestCLIExplicitTree|TestCollaborationHints' -count=1
+go test -race ./internal/runtime ./internal/tool ./internal/store \
+  -run 'TestTreeStop|TestTreeRunner|TestPendingTree|TestRecoverStopped' -count=3
+```
+
+第一批树停止与核实用例在 race 下连续三轮通过，补充离线重试、不可取消工具及 CLI 后再通过全量 race。首轮测试修正父 selection revision 和未知观察夹具；范围扫描修正为先去重再检查上限，避免重复历史事件导致漏项。旧失败不计通过。
+
+提示词版本 11 继续参考 Pi `7bc154ad082e2f0029c19117a16d22a504439476`，仅给已注册 exec 能力加入协作命令；旧 Task 的已存 prompt 保留。tui-design 用于显式 CLI 参数与输出分流，未增加界面按钮。trim-cn-tech-doc 合并过时待办说明，保留范围、限额、失败条件和历史验证记录。
+
+崩溃测试的独立 core/runner 使用本包测试二进制，继承 race 构建；Git、SQLite、UDS、pipe/tmux 为真实组件，模型使用确定性夹具。未使用外部凭据、修改参考仓库或部署用户服务；主动脱离原进程组/session 的守护程序仍不在停止范围内。
+
 ## 进行中
 
-继续 6.7：由 core 串联树计划、runner 和 worktree 停止，补 Task 核实、完成条件与调度恢复，再开放 CLI 并验证协作提示词。会话复制仍依赖第 6、9 组。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。
+继续第 7 组的资源热加载、MCP 搜索调用及 skill 请求级更新。会话复制仍依赖第 9 组的视图和恢复能力。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。

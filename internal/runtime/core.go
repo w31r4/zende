@@ -252,15 +252,21 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 			return nil, err
 		}
 		return c.Store.RequestRecovery(ctx, req, p)
-	case "agent.stop", "agent.resume":
+	case "agent.resume":
 		var p protocol.Target
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
 			return nil, err
 		}
-		if req.Method == "agent.resume" {
-			return c.Store.Resume(ctx, req, p, c.Config.Config.Limits.Agents)
+		return c.Store.Resume(ctx, req, p, c.Config.Config.Limits.Agents)
+	case "agent.stop":
+		var p protocol.StopAgent
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
 		}
-		accepted, err := c.Store.Stop(ctx, req, p)
+		if p.Tree {
+			return c.beginTreeStop(ctx, req, p.AgentID)
+		}
+		accepted, err := c.Store.Stop(ctx, req, protocol.Target{AgentID: p.AgentID})
 		if err == nil {
 			c.cancelTask(accepted.TaskID)
 		}
@@ -303,6 +309,15 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 			return nil, err
 		}
 		accepted, err := c.Store.Operation(ctx, p.ID)
+		if err == nil {
+			stop, stopErr := c.Store.TreeStop(ctx, p.ID)
+			if stopErr == nil {
+				return stop, nil
+			}
+			if !isFailure(stopErr, "not_found") {
+				return nil, stopErr
+			}
+		}
 		if isFailure(err, "not_found") {
 			pending, queryErr := c.Store.WorktreeOperation(ctx, p.ID)
 			if queryErr != nil {

@@ -37,7 +37,9 @@ type TreeStopPlan struct {
 
 type TreeStopRecord struct {
 	TreeStopPlan
-	State string `json:"state"`
+	State   string          `json:"state"`
+	Stage   string          `json:"stage,omitempty"`
+	Failure *protocol.Error `json:"failure,omitempty"`
 }
 
 const agentTree = `WITH RECURSIVE tree(id) AS (
@@ -201,8 +203,14 @@ func treeStop(ctx context.Context, q rowQuerier, id string) (TreeStopRecord, err
 		return result, err
 	}
 	result.State = "stopping"
+	progress, err := treeStopProgress(ctx, q, result.AgentID, id)
+	if err != nil {
+		return result, err
+	}
+	result.Stage, result.Failure = progress.Stage, progress.Failure
 	if completed {
 		result.State = "stopped"
+		result.Stage, result.Failure = "completed", nil
 	}
 	return result, nil
 }

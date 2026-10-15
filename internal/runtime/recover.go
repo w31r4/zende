@@ -102,7 +102,13 @@ func (c *Core) verifyCalls(ctx context.Context, j *recoveryJournal) ([]store.Ver
 		if j.Settings != nil {
 			cwd = j.Settings.Cwd
 		}
-		r, err := recoverer.Recover(ctx, tool.Call{ID: op.ID, AgentID: j.Work.Agent.ID, TaskID: j.Work.Task.ID, Cwd: cwd, Arguments: append(json.RawMessage(nil), op.Call.Arguments...)})
+		call := tool.Call{ID: op.ID, AgentID: j.Work.Agent.ID, TaskID: j.Work.Task.ID, Cwd: cwd, Arguments: append(json.RawMessage(nil), op.Call.Arguments...)}
+		r, err := recoverer.Recover(ctx, call)
+		if err != nil && pending.Call.Name == "exec_command" && j.Work.Agent.Paused && j.Work.Task.State == "cancelling" {
+			if stopped, stopErr := c.stoppedCall(ctx, j, executor, call); stopErr == nil {
+				r, err = stopped, nil
+			}
+		}
 		if err != nil {
 			failure = err
 			continue

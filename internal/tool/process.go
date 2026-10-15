@@ -55,6 +55,12 @@ type ProcessResult struct {
 	Written                *int          `json:"written,omitempty"`
 	Output                 []ProcessPage `json:"output"`
 	ObservationInterrupted bool          `json:"observation_interrupted,omitempty"`
+	Stop                   *ProcessStop  `json:"stop,omitempty"`
+}
+
+type ProcessStop struct {
+	OperationID string `json:"operation_id"`
+	State       string `json:"state"` // stopped or not_started, never an exit code
 }
 
 type processTool struct {

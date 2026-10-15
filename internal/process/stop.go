@@ -223,44 +223,64 @@ func readStop(path string) (StopRecord, error) {
 	if err != nil || len(data) > protocol.MaxFrameBytes || protocol.StrictDecode(data, &r) != nil {
 		return r, bad
 	}
+	return r, r.Validate()
+}
+
+// Validate is shared by persisted records and the core's RPC receipt checks.
+func (r StopRecord) Validate() error {
+	bad := protocol.E("invalid_state", "runner stop record is unreadable or inconsistent; original file preserved")
 	_, fp, err := canonicalStop(r.Scope)
 	if err != nil || r.Version != 1 || !processID.MatchString(r.OperationID) || fp != r.Fingerprint || (r.State != "frozen" && r.State != "stopped" && r.State != "released") || len(r.Processes) > maxStopItems {
-		return r, bad
+		return bad
 	}
 	seen := map[string]StopProcess{}
 	for _, p := range r.Processes {
 		if !processID.MatchString(p.ID) || !slices.Contains(r.Scope.Agents, p.AgentID) || p.PID < 0 || len(p.Witnesses) > maxStopItems {
-			return r, bad
+			return bad
 		}
 		if _, ok := seen[p.ID]; ok {
-			return r, bad
+			return bad
 		}
 		seen[p.ID] = p
 		switch p.State {
 		case "not_started":
 			if p.PID != 0 || p.Identity != "" || len(p.Witnesses) != 0 {
-				return r, bad
+				return bad
 			}
 		case "stopped":
 		case "pending", "unknown":
 			if r.State != "frozen" {
-				return r, bad
+				return bad
 			}
 		default:
-			return r, bad
+			return bad
 		}
 		for _, w := range p.Witnesses {
 			if w.PID <= 1 || w.Identity == "" {
-				return r, bad
+				return bad
 			}
 		}
 	}
 	for _, dispatch := range r.Scope.Pending {
 		if p, ok := seen[dispatch.ID]; !ok || p.StopDispatch != dispatch {
-			return r, bad
+			return bad
 		}
 	}
-	return r, nil
+	return nil
+}
+
+func (r StopRecord) Matches(op string, scope StopScope) error {
+	if err := r.Validate(); err != nil {
+		return err
+	}
+	_, fp, err := canonicalStop(scope)
+	if err != nil {
+		return err
+	}
+	if r.OperationID != op || r.Fingerprint != fp {
+		return protocol.E("operation_conflict", "runner stop receipt differs from the captured scope")
+	}
+	return nil
 }
 
 // Caller holds stopMu. Save before updating the projection. A failed fsync may

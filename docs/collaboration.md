@@ -110,7 +110,7 @@ zende --profile dev operation inspect isolated-1
 - Git 继承操作文件锁；core 退出后原 Git 仍运行时，重试返回 `worktree_busy`。
 - 原操作没有成功记录时，只核实原目录的仓库、所有者标记、保存提交、detached 状态和干净检出；无法确认则保留 `unknown`，不重建。
 - `ready` 已确认创建成功，允许后续修改；接受前仍检查目录归属。已接受的重试直接返回原回执。
-- `cancelled` 保留原目录、目标预留和停止操作 ID；重试不再执行 Git 或创建子 Agent。目前由内部树停止步骤写入，公开停止入口尚未接通。
+- `cancelled` 保留原目录、目标预留和停止操作 ID；重试不再执行 Git 或创建子 Agent，由显式 `agent stop --tree` 核实退出后写入。
 
 core 存活时，创建等待上限为两分钟；CLI 等待上限仍为十秒，客户端超时不取消后台准备。core 崩溃后原 Git 的超时计时不再生效，以实际锁释放为准。每个 profile 保留目标预留与创建历史，不能换 ID 重用该目标。
 
@@ -126,13 +126,25 @@ runner 在 pipe 和 PTY 的 shell 环境中写入 `ZENDE_CALLER`：启动它的 
 
 子身份、选择、继承内容、首个任务、父来源事件和接受回执同事务保存。断线可用 `operation inspect ID` 查询；已接受重试不重新检查父当前设置、路径或容量。
 
-## 后续范围
+## 停止与恢复
 
-6.7 已有存储层停止准备：同事务保存树范围、人工暂停和取消请求，阻止新任务、派生和 worktree 派发，重开后仍有效。已接受输入、未读消息和已有结果保留，停止范围外的 Agent 不变。
+```sh
+zende --profile dev --request-id pause-1 agent stop PARENT
+zende --profile dev --request-id stop-tree-1 agent stop PARENT --tree
+zende --profile dev operation inspect stop-tree-1
+zende --profile dev agent recovery PARENT
+zende --profile dev --request-id resume-1 agent resume PARENT
+```
 
-runner 已有持久冻结、进程终止核实、查询和单独释放接口，能保留迟到命令 ID，并在重启后继续原停止范围。细节见 [树级停止底层接口](./processes.md#树级停止底层接口)。
+默认 stop 取消当前 Task、暂停该 Agent，子 Agent 和后台进程继续。`--tree` 显式扩大到接受时的根、全部后代、所属进程及尚未接受的 worktree 创建。接受事务固定范围并暂停成员；新任务、投递、派生、选配和 worktree 派发暂缓。已接受输入、消息、历史和文件保留，范围外工作照常运行。
 
-worktree 已有内部停止步骤和崩溃续接测试，复用同一内核身份校验，不新增后台管理服务。树计划、runner 和该步骤尚未接入 core 总调度；Task 恢复、整树完成条件、CLI 和协作提示词验收仍待完成。保存停止范围只表示 `stopping`，Task 全部取消也不能证明进程已结束。当前帮助与提示词只列已注册能力。
+CLI 返回接受回执后，core 独立推进停止；关闭客户端或模型不可用不影响它。`operation inspect ID` 返回原范围、`stopping/stopped`、当前阶段及失败原因。core 先冻结 runner，核实原进程和 Git 已结束，再等待当前 Task 落定；释放 runner 后再次检查数据库状态，才原子写入整树完成记录。崩溃后从原 ID、范围和证据继续，迟到命令 ID 始终不能执行。
+
+未知 exec 只有在原 runner 证明未启动，或原进程身份和终止证据均匹配时，才能保存取消结果；已有输出可读，缺失退出码保持未知。未核实的 stdin、patch 及未返回的工具继续阻止整树完成。runner 离线、损坏记录、身份缺失或超限时保持待处理，查询失败原因；修复后 core 重试，原 Task 可用 `agent recover` 请求重新核实。底层范围和身份规则见 [树级停止底层接口](./processes.md#树级停止底层接口)。
+
+每次树计划最多 10000 个 Agent、10000 个未接受 worktree；runner 范围最多 10000 个历史 exec 调用 ID 和 10000 个进程。超限时保留明确错误，不以截断范围宣告完成。只有原根停止记录能解除整树冻结，成员仍人工暂停。resume 只恢复指定 Agent，使用新 Task 或已有队列，子 Agent 需分别恢复；旧停止请求重试不影响后来工作。
+
+## 本地验证
 
 本地链路复现：
 
@@ -149,3 +161,5 @@ worktree 用例在真实 Git 检出中途终止测试 core，重启后先验证�
 mailbox 用例在暂停中接受消息后，以及消息进入上下文后，分别 SIGKILL 测试 core；重启保持暂停或继续原 Task。同一 ID 重试仍返回原消息，投递只有一次，模型为本地 HTTP 夹具。
 
 wait 崩溃链路：`go test ./internal/cli -run TestBinaryTaskWaitRecoversCLIOutputBeforeContext -count=1 -v`。CLI 已输出引用、工具上下文尚未保存时 SIGKILL core；重启沿用原 Task 和进程，结果只投递一次。
+
+树停止链路：`go test ./internal/runtime -run TestTreeStopSurvivesCoreAndRunnerSIGKILL -count=1 -v`。独立测试进程先后强杀 runner、core，再从原数据库和 runner 记录完成 pipe/PTY 停止；原命令只执行一次，pipe 退出码保持未知。`TestCLIExplicitTreeStopAndLiveInspection` 验证 CLI、UDS、默认范围、显式参数、重试和完成查询；worktree 由 `TestTreeStopDriverCancelsWorktreeWithoutModel` 验证。

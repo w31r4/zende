@@ -85,6 +85,12 @@ type WorktreeOperation struct {
 	Failure     *Error   `json:"failure,omitempty"`
 }
 
+// Tree is opt-in; an ordinary stop preserves children and background processes.
+type StopAgent struct {
+	AgentID string `json:"agent_id"`
+	Tree    bool   `json:"tree,omitempty"`
+}
+
 // ContextRange references immutable context.message events, including endpoints.
 type ContextRange struct {
 	AgentID string `json:"agent_id"`

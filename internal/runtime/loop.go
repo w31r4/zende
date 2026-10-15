@@ -44,6 +44,9 @@ func (c *Core) Run(ctx context.Context) error {
 	var workers sync.WaitGroup
 	defer workers.Wait()
 	defer cancel()
+	stopsDone := make(chan error, 1)
+	workers.Add(1)
+	go func() { defer workers.Done(); stopsDone <- c.runTreeStops(ctx) }()
 	type outcome struct {
 		agent string
 		err   error
@@ -162,6 +165,11 @@ func (c *Core) Run(ctx context.Context) error {
 		select {
 		case <-ctx.Done():
 			return nil
+		case err := <-stopsDone:
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
 		case result := <-done:
 			delete(active, result.agent)
 			if result.err != nil {
@@ -334,7 +342,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if err := appendEvent("task.config", settings); err != nil {
 			return "", err
 		}
-		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "10", Body: system}); err != nil {
+		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "11", Body: system}); err != nil {
 			return "", err
 		}
 	} else {
@@ -345,7 +353,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if resume.Journal.Prompt.Body != "" {
 			system = resume.Journal.Prompt.Body
 		} else {
-			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "10", Body: system}); err != nil {
+			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "11", Body: system}); err != nil {
 				return "", err
 			}
 		}

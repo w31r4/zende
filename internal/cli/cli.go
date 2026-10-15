@@ -143,9 +143,19 @@ func (a *app) command() *cobra.Command {
 		if action == "resume" {
 			short = "Resume queued work or create a continuation task; cancelled tasks stay cancelled"
 		}
-		agent.AddCommand(&cobra.Command{Use: action + " AGENT", Short: short, Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-			return a.call(cmd, "agent."+action, true, protocol.Target{AgentID: args[0]})
-		}})
+		var tree bool
+		control := &cobra.Command{Use: action + " AGENT", Short: short, Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+			var params any = protocol.Target{AgentID: args[0]}
+			if action == "stop" {
+				params = protocol.StopAgent{AgentID: args[0], Tree: tree}
+			}
+			return a.call(cmd, "agent."+action, true, params)
+		}}
+		if action == "stop" {
+			control.Flags().BoolVar(&tree, "tree", false, "Also pause descendants and terminate their owned processes and pending worktree creation; retain history and files")
+			control.Long = short + ".\nWith --tree, core freezes the captured tree and verifies termination asynchronously.\nAcceptance is not completion: use operation inspect ID; unresolved effects keep the tree paused."
+		}
+		agent.AddCommand(control)
 	}
 	agent.AddCommand(&cobra.Command{Use: "list", Short: "List saved sessions", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return a.call(cmd, "agent.list", false, struct{}{}) }})
 	agent.AddCommand(&cobra.Command{Use: "activity AGENT", Short: "List active Agent-tree work; mark unavailable sources and truncation", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
