@@ -212,6 +212,7 @@ type Accepted struct {
 	Attachment  *Attachment     `json:"attachment,omitempty"`
 	Resource    *ResourceInfo   `json:"resource,omitempty"`
 	Selection   *AgentSelection `json:"selection,omitempty"`
+	Spawn       *SpawnSource    `json:"spawn,omitempty"`
 }
 
 type CreateAgent struct {
@@ -222,6 +223,7 @@ type CreateAgent struct {
 
 type Submit struct {
 	AgentID     string        `json:"agent_id"`
+	Caller      *Caller       `json:"caller,omitempty"`
 	Input       string        `json:"input"`
 	Attachments []string      `json:"attachments,omitempty"`
 	Skills      []ResourceRef `json:"skills,omitempty"`

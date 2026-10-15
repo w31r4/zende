@@ -230,6 +230,7 @@ func (m *Manager) Start(ctx context.Context, spec Spec) (State, error) {
 	}
 	command := exec.Command(m.shell, "-c", spec.Command)
 	command.Dir = spec.Cwd
+	command.Env = processEnvironment(spec, os.Environ())
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Stdin = read
 	command.Stdout = &outputWriter{entry: e, file: stdout, stream: "stdout", limit: m.maxOutput}

@@ -180,7 +180,7 @@ func (s *Store) accept(ctx context.Context, req protocol.Request, fn func(*sql.T
 	if req.OperationID == "" {
 		return protocol.Accepted{}, protocol.E("invalid_params", "operation_id is required for a mutation")
 	}
-	fingerprint, err := req.Fingerprint()
+	fingerprint, err := req.EffectFingerprint()
 	if err != nil {
 		return protocol.Accepted{}, err
 	}
@@ -286,10 +286,20 @@ func (s *Store) Submit(ctx context.Context, req protocol.Request, p protocol.Sub
 		if state == "archived" || state == "copying" {
 			return protocol.Accepted{}, protocol.E("conflict", "agent is read-only")
 		}
+		origin, err := callSource(ctx, tx, p.Caller)
+		if err != nil {
+			return protocol.Accepted{}, err
+		}
 		if err := checkCapacity(ctx, tx, p.AgentID, maxAgents); err != nil {
 			return protocol.Accepted{}, err
 		}
 		task, err := createTaskWithSkills(ctx, tx, p.AgentID, p.Input, p.Skills, p.Attachments)
+		if err == nil && origin != nil {
+			_, err = appendEvent(ctx, tx, p.AgentID, task.ID, "task.submitted", struct {
+				OperationID string               `json:"operation_id"`
+				Source      *protocol.CallSource `json:"source"`
+			}{req.OperationID, origin})
+		}
 		if err == nil && paused && state != "unknown" {
 			// Explicit new input takes precedence over the existing queue when
 			// waking a manually paused Agent. It never revives the old Task.

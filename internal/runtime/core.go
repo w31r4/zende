@@ -151,6 +151,12 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 			return nil, protocol.E("invalid_params", "cwd is not an accessible directory")
 		}
 		return c.Store.Create(ctx, req, p, c.Config.Config.Limits.Agents)
+	case "agent.spawn":
+		var p protocol.SpawnAgent
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.spawnAgent(ctx, req, p)
 	case "agent.submit":
 		var p protocol.Submit
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

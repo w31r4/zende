@@ -180,25 +180,44 @@ func (s *Store) ModelContext(ctx context.Context, agent string) ([]model.Message
 		if err := tx.QueryRowContext(ctx, "SELECT seq FROM agents WHERE id=?", agent).Scan(&cursor); err != nil {
 			return err
 		}
-		rows, err := tx.QueryContext(ctx, "SELECT payload FROM events WHERE agent_id=? AND kind='context.message' AND seq<=? ORDER BY seq", agent, cursor)
+		entries, err := contextEntries(ctx, tx, agent, cursor)
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		for rows.Next() {
-			var data []byte
-			if err := rows.Scan(&data); err != nil {
-				return err
-			}
-			var record ContextMessage
-			if err := json.Unmarshal(data, &record); err != nil {
-				return err
-			}
-			messages = append(messages, record.Message)
+		for _, entry := range entries {
+			messages = append(messages, entry.Record.Message)
 		}
-		return rows.Err()
+		return nil
 	})
 	return messages, cursor, err
+}
+
+type contextEntry struct {
+	Seq    int64
+	Record ContextMessage
+}
+
+// Shared by requests and inheritance. Active compaction views belong here;
+// callers must not reconstruct a second context by reading the raw journal.
+func contextEntries(ctx context.Context, tx *sql.Tx, agent string, cursor int64) ([]contextEntry, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT seq,payload FROM events WHERE agent_id=? AND kind='context.message' AND seq<=? ORDER BY seq", agent, cursor)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var entries []contextEntry
+	for rows.Next() {
+		var entry contextEntry
+		var data []byte
+		if err := rows.Scan(&entry.Seq, &data); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(data, &entry.Record); err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+	return entries, rows.Err()
 }
 
 func (s *Store) FinishTask(ctx context.Context, agent, task, state, result string, failure *protocol.Error) error {

@@ -127,7 +127,11 @@ func (a *app) command() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		return a.call(cmd, "agent.submit", true, protocol.Submit{AgentID: args[0], Input: input, Attachments: submitImages, Skills: skills})
+		caller, err := callerFromEnvironment()
+		if err != nil {
+			return err
+		}
+		return a.call(cmd, "agent.submit", true, protocol.Submit{AgentID: args[0], Input: input, Attachments: submitImages, Skills: skills, Caller: caller})
 	}}
 	submit.Flags().StringVar(&submitFile, "file", "", "Read text from file, or - for stdin")
 	submit.Flags().StringArrayVar(&submitImages, "image", nil, "Imported image ID (repeatable); bytes remain in profile storage")
@@ -170,6 +174,7 @@ func (a *app) command() *cobra.Command {
 	recoverCommand.Flags().StringVar(&recoverTask, "task", "", "Held task identity")
 	agent.AddCommand(recoverCommand)
 	a.selectionCommands(agent)
+	a.collaborationCommands(agent)
 	root.AddCommand(agent)
 	operation := &cobra.Command{Use: "operation", Short: "Look up acceptance after a connection failure"}
 	operation.AddCommand(&cobra.Command{Use: "inspect ID", Short: "Inspect a stable mutation request", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -237,6 +242,22 @@ func (a *app) call(cmd *cobra.Command, method string, mutation bool, params any)
 	if err != nil {
 		return err
 	}
+	var caller *protocol.Caller
+	switch p := params.(type) {
+	case protocol.SpawnAgent:
+		caller = p.Caller
+	case protocol.Submit:
+		caller = p.Caller
+	}
+	if caller != nil && a.operationID == "" {
+		// One execution may retry the same CLI after losing stdout or reconnecting.
+		// Include caller identity and all arguments, not the short-lived RPC ID.
+		fingerprint, err := req.Fingerprint()
+		if err != nil {
+			return err
+		}
+		req.OperationID = "call_" + fingerprint
+	}
 	ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
 	defer cancel()
 	var result json.RawMessage
@@ -278,6 +299,7 @@ func (a *app) serve(cmd *cobra.Command, _ []string) error {
 		core.Commands = append(questionHints(exe, a.profile), resourceHints(exe, a.profile)...)
 		core.Commands = append(core.Commands, workspaceHints(exe, a.profile)...)
 		core.Commands = append(core.Commands, selectionHints(exe, a.profile)...)
+		core.Commands = append(core.Commands, collaborationHints(exe, a.profile)...)
 	}
 	configuredModels, err := provider.New(e.Config, os.Getenv)
 	if err != nil {

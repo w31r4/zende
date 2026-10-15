@@ -467,6 +467,27 @@ go test -race ./internal/render -run 'TestModelPicker|TestSelection|TestDirector
 
 验证使用临时 Git 仓库、SQLite 和配置元数据，未发送模型请求、读取外部凭据或安装用户服务。V21 的本地交互链路完成，四协议兼容性与整体部署仍按后续任务验收。
 
+## 2026-10-16：持续子 Agent 与调用归因
+
+6.1 已完成，累计 32/68 项。spawn 原子创建子身份、继承上下文和首个 Task，立即返回；submit 沿用原 Agent。全量普通测试、race 和 OpenSpec strict 校验通过。
+
+| 验证 | 入口 | 结果 |
+| --- | --- | --- |
+| 继承与复用 | `TestSpawnAtomicInheritanceCallerAndPersistentReuse`、`TestInheritedContextDoesNotSplitParallelToolGroup` | 完整调用组、图片字节与私有字段保留；未完成尾部排除并记录范围，父上下文不改；重开后同一子 Agent 接收新任务 |
+| 原子性与限制 | `TestSpawnRejectsWithoutPartialIdentity`、`TestConcurrentSpawnAcceptanceCreatesOneChild`、`TestSpawnNoneAndDepth` | 来源、容量、深度、选择冲突、损坏上下文及三处提交故障不留部分身份；12 个并发同请求只创建一个子 Agent |
+| 归因与跨调用重试 | `TestSpawnCLIAttributionIdempotencyAndReuse`、`TestCollaborationEffectIdentityExcludesRetryCallerOnly` | 真实 UDS/SQLite 核对 exec 来源；同调用自动去重，跨调用显式复用 ID 返回首次回执，改变任务参数报冲突；续任务记录调用来源 |
+| shell 环境 | `TestProcessEnvironmentReplacesCaller`、`TestPipeAndPTYReceiveOwnCaller` | pipe 与真实 tmux PTY 使用自身启动来源，覆盖旧环境；无归属进程清除旧绑定 |
+| 完整 CLI 链路 | `TestBinaryModelSpawnsThroughPipeAndPTYCLI` | 真实二进制经 exec 调 CLI，重复 spawn 返回同一身份；子模型请求仍挂起时父任务已完成，临时 cd 不改继承 cwd；再次 submit 保留原历史 |
+| 提示词 | `TestCollaborationHintsOnlyRegisteredCommands` | 版本 6 的 spawn/submit/inspect 对应实际命令；二进制路径及 profile 正确引用，未宣传 send/wait |
+
+```sh
+go test -race ./internal/protocol ./internal/store ./internal/process ./internal/cli -run 'Spawn|Collaboration|InheritedContext|ProcessEnvironment|ReceiveOwnCaller' -count=3 -timeout=120s
+```
+
+首轮二进制夹具漏算了请求前的选配通知，且把 PTY 文本投影中的 CR 转义当成原始 JSON；修正夹具后 pipe/PTY 两条链路通过，产品的控制字符转义保持。重试检查另补上“调用来源变化、业务参数不变”的稳定身份测试。
+
+按 Pi 的能力条件组合短提示，按 trim-cn-tech-doc 合并默认值、归因与恢复说明。测试使用临时 XDG、SQLite、runner 和本地 HTTP 模型，子二进制为常规构建，宿主及包内并发由 race 检查。V02 的创建/复用部分完成，长期 mailbox 通信仍待 6.4；6.2–6.7 和用户级部署保持未完成。
+
 ## 进行中
 
-接下来实现第 6 组的多 Agent 与 mailbox。会话复制依赖第 6、9 组；协作提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。
+继续第 6 组的上下文预算、worktree 与 mailbox。会话复制依赖第 6、9 组；协作提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成；推送仍需配置用户指定的 remote。

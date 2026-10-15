@@ -309,7 +309,7 @@ func runPane(dir string, l launch) error {
 			if err := os.Chdir(l.Spec.Cwd); err != nil {
 				return err
 			}
-			return syscall.Exec(l.Shell, []string{l.Shell, "-c", l.Spec.Command}, os.Environ())
+			return syscall.Exec(l.Shell, []string{l.Shell, "-c", l.Spec.Command}, processEnvironment(l.Spec, os.Environ()))
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

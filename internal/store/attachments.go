@@ -32,7 +32,7 @@ func (s *Store) AcceptedRequest(ctx context.Context, req protocol.Request) (prot
 	if req.OperationID == "" {
 		return protocol.Accepted{}, false, protocol.E("invalid_params", "operation_id is required for a mutation")
 	}
-	want, err := req.Fingerprint()
+	want, err := req.EffectFingerprint()
 	if err != nil {
 		return protocol.Accepted{}, false, err
 	}

@@ -1,6 +1,6 @@
 # 本地开发
 
-CLI 支持持久会话、历史查询、进程工具和 Responses 接入；独立 runner 管理 pipe、tmux PTY 与输出。当前验证使用本地模型夹具，真实端点、完整 TUI 和部署验收仍在实施。进度见 [OpenSpec 任务](../openspec/changes/build-day1-harness/tasks.md)。
+CLI 支持持久会话、子 Agent 创建与复用、历史查询、进程工具和 Responses 接入；独立 runner 管理 pipe、tmux PTY 与输出。当前验证使用本地模型夹具，完整 Day1 和部署验收仍在实施。进度见 [OpenSpec 任务](../openspec/changes/build-day1-harness/tasks.md)。
 
 ## 构建与测试
 
@@ -88,6 +88,8 @@ model: local/my-model
 
 本地协议使用 JSON-RPC 2.0、`schema_version: 1`，每行一个对象，单帧上限 8 MiB。普通请求返回一次响应；`events.watch` 先返回确认，再发送 `event` 通知。快照与 cursor 在同一事务中读取，补发从 cursor 之后开始。seq 缺口或超前明确返回 `cursor_gap`。
 
+子 Agent 通过 `agent spawn --task-file FILE` 创建，模型自动携带调用来源；人类命令另需 `--parent AGENT`。创建立即返回身份，`agent submit` 复用同一会话。继承范围、目录默认值、重试和待办见 [Agent 创建与复用](./collaboration.md)。
+
 ## 模型目录与工作目录查询
 
 `zende model connections` 列出当前 core 配置的连接，`model list CONNECTION` 返回该连接的型号、思考力度和能力声明。同厂商的连接按 ID 区分，空配置返回空列表；`supported` 只表示 adapter 已实现，当前为 Responses。查询不解析凭据、不访问端点，认证和网络状态在模型请求时检查。
@@ -153,7 +155,7 @@ Task 保存启动设置和提示词；每次 `model.started` 另存实际 cwd、
 
 stop/resume 使用稳定 `--request-id` 去重。重试旧 stop 只返回原接受记录，不停止后来任务。停止与 final 通过数据库事务排序：先提交 final 则保留 completed，先提交 stop 则取消优先，均保留人工暂停。
 
-`agent.paused`、`task.cancelling`、`task.cancelled`、`agent.resumed` 为追加事件，`paused` 单独记录用户选择。取消过程中崩溃或效果不明时出现 `task.cancellation_pending`，原调用记录保留。mailbox、子 Agent 与显式树级停止仍由第 6 组接入。
+`agent.paused`、`task.cancelling`、`task.cancelled`、`agent.resumed` 为追加事件，`paused` 单独记录用户选择。取消过程中崩溃或效果不明时出现 `task.cancellation_pending`，原调用记录保留。mailbox 与显式树级停止仍由第 6 组接入。
 
 ## Agent loop
 
