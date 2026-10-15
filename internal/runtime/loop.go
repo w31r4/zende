@@ -1,0 +1,543 @@
+package runtime
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"sync"
+	"time"
+	"unicode/utf8"
+
+	"zende.local/harness/internal/model"
+	"zende.local/harness/internal/protocol"
+	"zende.local/harness/internal/store"
+	"zende.local/harness/internal/tool"
+)
+
+func (c *Core) loopStatus() string {
+	c.loopMu.Lock()
+	defer c.loopMu.Unlock()
+	if c.Models == nil {
+		return "unavailable"
+	}
+	if !c.loopRunning {
+		return "stopped"
+	}
+	return "running"
+}
+
+// Run belongs to the elected core, never to an IPC request or TUI context.
+// ClaimNext is the persistent per-agent gate; the worker set bounds goroutines.
+func (c *Core) Run(ctx context.Context) error {
+	c.loopMu.Lock()
+	if c.loopRunning {
+		c.loopMu.Unlock()
+		return protocol.E("conflict", "core scheduler already running")
+	}
+	c.loopRunning = true
+	c.loopMu.Unlock()
+	defer func() { c.loopMu.Lock(); c.loopRunning = false; c.loopMu.Unlock() }()
+	if err := c.Store.HoldInterrupted(ctx); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	var workers sync.WaitGroup
+	defer workers.Wait()
+	defer cancel()
+	type outcome struct {
+		agent string
+		err   error
+	}
+	done := make(chan outcome, c.Config.Config.Limits.Agents)
+	active := map[string]bool{}
+	triedRecovery := map[string]int64{}
+	tick := time.NewTicker(25 * time.Millisecond)
+	defer tick.Stop()
+	for {
+		ids, err := c.Store.ReadyAgents(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		type candidate struct {
+			agent string
+			held  *store.HeldTask
+		}
+		var candidates []candidate
+		held, err := c.Store.HeldTasks(ctx)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		for _, h := range held {
+			if seq, tried := triedRecovery[h.TaskID]; !tried || h.RequestSeq > seq {
+				candidates = append(candidates, candidate{agent: h.AgentID, held: &h})
+			}
+		}
+		if c.Models != nil {
+			for _, id := range ids {
+				candidates = append(candidates, candidate{agent: id})
+			}
+		}
+		for _, next := range candidates {
+			id := next.agent
+			if active[id] || len(active) >= c.Config.Config.Limits.Agents {
+				continue
+			}
+			var work *store.Work
+			var err error
+			if next.held == nil {
+				work, err = c.Store.ClaimNext(ctx, id)
+			} else {
+				work = &store.Work{Agent: protocol.Agent{ID: id}, Task: protocol.Task{ID: next.held.TaskID}}
+			}
+			if err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				return err
+			}
+			if work == nil {
+				continue
+			}
+			active[id] = true
+			if next.held != nil {
+				triedRecovery[next.held.TaskID] = next.held.RequestSeq
+			}
+			taskCtx, stopTask := context.WithCancel(ctx)
+			c.loopMu.Lock()
+			if c.workers == nil {
+				c.workers = map[string]context.CancelFunc{}
+			}
+			c.workers[work.Task.ID] = stopTask
+			c.loopMu.Unlock()
+			// A stop can commit between ClaimNext and worker registration.
+			stopping, err := c.Store.CancellationRequested(ctx, work.Agent.ID, work.Task.ID)
+			if err != nil {
+				stopTask()
+				c.forgetTask(work.Task.ID)
+				if ctx.Err() != nil {
+					return nil
+				}
+				return err
+			}
+			if stopping {
+				stopTask()
+			}
+			workers.Add(1)
+			go func(w *store.Work) {
+				defer workers.Done()
+				defer stopTask()
+				defer c.forgetTask(w.Task.ID)
+				var err error
+				if next.held != nil {
+					err = c.recoverWork(taskCtx, ctx, *next.held)
+				} else {
+					err = c.executeWork(taskCtx, ctx, *w, nil)
+				}
+				select {
+				case done <- outcome{w.Agent.ID, err}:
+				case <-ctx.Done():
+				}
+			}(work)
+		}
+		select {
+		case <-ctx.Done():
+			return nil
+		case result := <-done:
+			delete(active, result.agent)
+			if result.err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
+				return result.err
+			}
+		case <-tick.C:
+		}
+	}
+}
+
+func (c *Core) cancelTask(id string) {
+	c.loopMu.Lock()
+	defer c.loopMu.Unlock()
+	if cancel := c.workers[id]; cancel != nil {
+		cancel()
+	}
+}
+func (c *Core) forgetTask(id string) {
+	c.loopMu.Lock()
+	defer c.loopMu.Unlock()
+	delete(c.workers, id)
+}
+
+func safeFailure(err error, kind, message string) *protocol.Error {
+	var known *protocol.Error
+	if errors.As(err, &known) {
+		return known
+	}
+	return protocol.E(kind, message)
+}
+
+func (c *Core) executeWork(ctx, persist context.Context, w store.Work, resume *resumedTask) (err error) {
+	defer func() {
+		if recover() != nil {
+			err = c.Store.FinishTask(persist, w.Agent.ID, w.Task.ID, "unknown", "", protocol.E("runtime_panic", "model or tool execution stopped unexpectedly; inspect persisted calls"))
+		}
+	}()
+	result, failure := c.runTask(ctx, persist, w, resume)
+	if persist.Err() != nil {
+		return nil
+	} // Restart holds the unfinished task for recovery.
+	state := "completed"
+	var reason *protocol.Error
+	if failure != nil {
+		reason = safeFailure(failure, "runtime_error", "model loop failed; inspect request and tool events")
+		state = "failed"
+		switch reason.Data.Kind {
+		case "operation_unknown", "transport_unknown", "persistence_failed":
+			state = "unknown"
+		}
+	}
+	return c.Store.FinishTask(persist, w.Agent.ID, w.Task.ID, state, result, reason)
+}
+
+type requestRecord struct {
+	ID              string            `json:"request_id"`
+	Model           string            `json:"model"`
+	Protocol        string            `json:"protocol"`
+	Cursor          int64             `json:"context_cursor"`
+	Tools           []tool.Descriptor `json:"tools"`
+	MaxOutputTokens int               `json:"max_output_tokens"`
+	FormatRepair    bool              `json:"format_repair"`
+	RepairAttempt   int               `json:"repair_attempt"`
+	RepairLimit     int               `json:"repair_limit"`
+}
+type invocation struct {
+	SchemaVersion int            `json:"schema_version,omitempty"`
+	ID            string         `json:"operation_id"`
+	RequestID     string         `json:"request_id"`
+	Call          model.ToolCall `json:"call"`
+	Version       string         `json:"version,omitempty"`
+}
+type toolOutcome struct {
+	Invocation invocation      `json:"invocation"`
+	Result     tool.Result     `json:"result"`
+	Error      *protocol.Error `json:"error,omitempty"`
+}
+
+type taskSettings struct {
+	Version          int             `json:"version"`
+	Selection        string          `json:"selection"`
+	Cwd              string          `json:"cwd"`
+	Model            string          `json:"model"`
+	Protocol         string          `json:"protocol"`
+	NativeCategories bool            `json:"native_categories"`
+	Images           bool            `json:"images,omitempty"`
+	MaxOutputTokens  int             `json:"max_output_tokens"`
+	FormatRepairs    int             `json:"format_repairs"`
+	Binding          json.RawMessage `json:"binding,omitempty"`
+}
+
+type resumedTask struct {
+	Journal *recoveryJournal
+	Binding model.Binding
+}
+
+func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resumedTask) (string, error) {
+	selection := w.Agent.Model
+	if selection == "" {
+		selection = c.Config.Config.Model
+	}
+	var binding model.Binding
+	var err error
+	if resume == nil {
+		binding, err = c.Models.Resolve(ctx, selection)
+		if err != nil {
+			return "", safeFailure(err, "model_unavailable", "selected model is unavailable")
+		}
+		if binding.Adapter == nil || binding.Model == "" || binding.Protocol == "" {
+			return "", protocol.E("model_unavailable", "selected model has no adapter")
+		}
+	} else {
+		binding = resume.Binding
+	}
+	registry := c.Tools
+	descriptors := registry.Descriptors()
+	var commands []CommandHint
+	for _, descriptor := range descriptors {
+		if descriptor.Name == "exec_command" {
+			commands = c.Commands
+			break
+		}
+	}
+	system := BuildPrompt(PromptInput{AgentID: w.Agent.ID, TaskID: w.Task.ID, Cwd: w.Agent.Cwd, Date: time.Now().Format("2006-01-02"), Tools: descriptors, Commands: commands, NativeCategories: binding.NativeCategories})
+	appendEvent := func(kind string, payload any) error {
+		if err := c.Store.AppendTaskEvent(persist, w.Agent.ID, w.Task.ID, kind, payload); err != nil {
+			var known *protocol.Error
+			if errors.As(err, &known) && known.Data.Kind == "task_cancelled" {
+				return err
+			}
+			return protocol.E("persistence_failed", "loop event could not be saved; inspect original task")
+		}
+		return nil
+	}
+	limit := c.Config.Config.Limits.FormatRepairs
+	if resume == nil {
+		settings := taskSettings{Version: 1, Selection: selection, Cwd: w.Agent.Cwd, Model: binding.Model, Protocol: binding.Protocol, NativeCategories: binding.NativeCategories, Images: binding.Images, MaxOutputTokens: binding.MaxOutputTokens, FormatRepairs: limit, Binding: binding.Snapshot}
+		if err := appendEvent("task.config", settings); err != nil {
+			return "", err
+		}
+		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "3", Body: system}); err != nil {
+			return "", err
+		}
+	} else {
+		if resume.Journal.Settings != nil {
+			limit = resume.Journal.Settings.FormatRepairs
+		}
+		if resume.Journal.Prompt.Body != "" {
+			system = resume.Journal.Prompt.Body
+		} else {
+			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "3", Body: system}); err != nil {
+				return "", err
+			}
+		}
+	}
+	repairs, repairOnly := 0, false
+	if resume != nil {
+		repairs, repairOnly = resume.Journal.RepairCount, resume.Journal.RepairOnly
+	}
+	markInvalid := func(request string, failure error) error {
+		return appendEvent("model.output.invalid", map[string]any{"request_id": request, "error": safeFailure(failure, "output_format", "incomplete or invalid visible output")})
+	}
+	scheduleRepair := func(request string, interrupted bool) error {
+		if repairs >= limit {
+			return protocol.E("output_format", "output format repair limit reached; raw output and completed tool results are preserved")
+		}
+		repairs++
+		instruction := formatRepairInstruction(binding.NativeCategories, interrupted)
+		if err := c.Store.RecordFormatRepair(persist, w.Agent.ID, w.Task.ID, request, repairs, limit, instruction); err != nil {
+			var known *protocol.Error
+			if errors.As(err, &known) && known.Data.Kind == "task_cancelled" {
+				return err
+			}
+			return protocol.E("persistence_failed", "format repair could not be saved")
+		}
+		repairOnly = true
+		return nil
+	}
+	if resume != nil {
+		j := resume.Journal
+		if j.Request != nil {
+			var calls []model.ToolCall
+			for _, call := range j.Calls {
+				calls = append(calls, call.Call)
+			}
+			if err := c.settleCalls(ctx, persist, w, j.Request.ID, calls, j.Request.FormatRepair, j.Calls, appendEvent); err != nil {
+				return "", err
+			}
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			if !j.ResponseComplete && j.Request.FormatRepair && j.Invalid == nil && !j.RepairScheduled {
+				if err := markInvalid(j.Request.ID, protocol.E("output_format", "format repair stream was interrupted by core restart")); err != nil {
+					return "", err
+				}
+				if err := scheduleRepair(j.Request.ID, true); err != nil {
+					return "", err
+				}
+			}
+			if j.ResponseComplete && j.Invalid == nil {
+				final, complete, err := (model.Response{Output: j.Output}).Final()
+				if err != nil {
+					return "", err
+				}
+				if repairOnly {
+					if err := appendEvent("model.output.repaired", map[string]any{"request_id": j.Request.ID, "attempt": repairs}); err != nil {
+						return "", err
+					}
+					repairOnly = false
+				}
+				if complete {
+					return final, nil
+				}
+			} else if j.Invalid != nil && !j.RepairScheduled {
+				if err := scheduleRepair(j.Request.ID, !j.ResponseComplete); err != nil {
+					return "", err
+				}
+			}
+			if !j.ResponseComplete {
+				if err := appendEvent("model.interrupted", map[string]string{"request_id": j.Request.ID, "reason": "core interrupted the stream; retained deltas are not a complete response"}); err != nil {
+					return "", err
+				}
+			}
+		}
+	}
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		if err := c.waitForAnswers(ctx, persist, w.Agent.ID, w.Task.ID); err != nil {
+			return "", err
+		}
+		messages, cursor, err := c.Store.ModelContext(persist, w.Agent.ID)
+		if err != nil {
+			return "", protocol.E("persistence_failed", "model context could not be read")
+		}
+		req := model.Request{ID: protocol.NewID("request"), Model: binding.Model, System: system, Messages: messages, MaxOutputTokens: binding.MaxOutputTokens}
+		req.Images, err = c.resolveImages(ctx, w.Agent.ID, messages, binding.Images)
+		if err != nil {
+			return "", err
+		}
+		requestDescriptors := descriptors
+		if repairOnly {
+			requestDescriptors = nil
+		}
+		for _, d := range requestDescriptors {
+			req.Tools = append(req.Tools, d.Tool)
+		}
+		if err := appendEvent("model.started", requestRecord{ID: req.ID, Model: binding.Model, Protocol: binding.Protocol, Cursor: cursor, Tools: requestDescriptors, MaxOutputTokens: req.MaxOutputTokens, FormatRepair: repairOnly, RepairAttempt: repairs, RepairLimit: limit}); err != nil {
+			return "", err
+		}
+		var collector model.Collector
+		classifier := model.Classifier{Native: binding.NativeCategories}
+		var emitErr error
+		err = binding.Adapter.Stream(ctx, req, func(delta model.Delta) error {
+			if emitErr != nil {
+				return emitErr
+			}
+			size := len(delta.Text) + len(delta.Raw) + len(delta.Name) + len(delta.CallID) + len(delta.MessageID) + len(delta.Protocol)
+			if size > model.MaxBlockBytes {
+				emitErr = appendEvent("model.limit", map[string]any{"request_id": req.ID, "received_bytes": size, "limit": model.MaxBlockBytes})
+				if emitErr == nil {
+					emitErr = protocol.E("output_limit", "model delta exceeds the storage budget; prior deltas are preserved")
+				}
+				return emitErr
+			}
+			// Preserve the received delta even if its sequence is invalid.
+			var textBytes []byte
+			if !utf8.ValidString(delta.Text) {
+				textBytes = []byte(delta.Text)
+			}
+			emitErr = appendEvent("model.delta", struct {
+				RequestID string      `json:"request_id"`
+				Delta     model.Delta `json:"delta"`
+				TextBytes []byte      `json:"text_bytes,omitempty"`
+			}{req.ID, delta, textBytes})
+			if emitErr == nil {
+				emitErr = collector.Add(delta)
+			}
+			if emitErr == nil {
+				// Formatting errors do not truncate the raw response or authorize
+				// partial calls. The classifier keeps its first error for later.
+				changes, _ := classifier.Add(delta)
+				for _, change := range changes {
+					emitErr = appendEvent("model.output.delta", struct {
+						RequestID string            `json:"request_id"`
+						Delta     model.PublicDelta `json:"delta"`
+					}{req.ID, change})
+					if emitErr != nil {
+						break
+					}
+				}
+			}
+			if emitErr == nil {
+				emitErr = ctx.Err()
+			}
+			return emitErr
+		})
+		if emitErr != nil {
+			return "", emitErr
+		}
+		if err != nil {
+			failure := safeFailure(err, "model_stream", "model stream interrupted; received deltas are preserved")
+			if ctx.Err() != nil || !classifier.HasText() {
+				return "", failure
+			}
+			if err := markInvalid(req.ID, failure); err != nil {
+				return "", err
+			}
+			if err := scheduleRepair(req.ID, true); err != nil {
+				return "", err
+			}
+			continue
+		}
+		response, err := collector.Response()
+		if err != nil {
+			if !classifier.HasText() {
+				return "", err
+			}
+			if err := markInvalid(req.ID, err); err != nil {
+				return "", err
+			}
+			if err := scheduleRepair(req.ID, true); err != nil {
+				return "", err
+			}
+			continue
+		}
+		if err := response.ValidateProtocol(binding.Protocol); err != nil {
+			return "", protocol.E("model_protocol", "adapter returned another protocol's private data")
+		}
+		output, formatErr := classifier.Output()
+		response.Output = output
+		var final string
+		var complete bool
+		if formatErr == nil {
+			final, complete, formatErr = response.Final()
+		}
+		if formatErr == nil && len(output) == 0 && len(response.Calls) == 0 {
+			formatErr = protocol.E("output_format", "response has no explicitly categorized text or tool calls")
+		}
+		if repairOnly && len(response.Calls) > 0 {
+			formatErr = protocol.E("output_format", "format repair attempted tool calls; they will be rejected without execution")
+		}
+		if formatErr != nil {
+			response.Output = nil // No invalid final enters the confirmed projection.
+			if err := markInvalid(req.ID, formatErr); err != nil {
+				return "", err
+			}
+		}
+		if err := c.Store.RecordResponse(persist, w.Agent.ID, w.Task.ID, req.ID, response); err != nil {
+			return "", protocol.E("persistence_failed", "model response could not be saved")
+		}
+		if complete && formatErr == nil {
+			if repairOnly {
+				if err := appendEvent("model.output.repaired", map[string]any{"request_id": req.ID, "attempt": repairs}); err != nil {
+					return "", err
+				}
+			}
+			return final, nil
+		}
+		if err := c.settleCalls(ctx, persist, w, req.ID, response.Calls, repairOnly, nil, appendEvent); err != nil {
+			return "", err
+		}
+		if formatErr != nil {
+			if err := scheduleRepair(req.ID, false); err != nil {
+				return "", err
+			}
+			continue
+		}
+		if repairOnly {
+			if err := appendEvent("model.output.repaired", map[string]any{"request_id": req.ID, "attempt": repairs}); err != nil {
+				return "", err
+			}
+			repairOnly = false
+		}
+	}
+}
+
+func formatRepairInstruction(native, interrupted bool) string {
+	text := "The preceding response has an output-format or completeness error. For this next response only, provide explicitly categorized public text. Tools are disabled; any tool calls will be rejected without execution. Do not repeat completed tool calls. Their results remain in context. "
+	if interrupted {
+		text += "No tool calls from the interrupted response were executed. "
+	}
+	if native {
+		text += "Use the protocol's commentary/final categories. "
+	} else {
+		text += "Use <commentary>...</commentary> or <final>...</final>, with each tag on its own line. Keep literal tags fenced or escaped. "
+	}
+	return text + "If more work is needed, use commentary to state the next step; normal tool access resumes after valid repair. Otherwise provide one final with no following visible content."
+}

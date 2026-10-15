@@ -1,0 +1,18 @@
+[
+  {"schema_version":1,"agent_id":"agent","seq":1,"kind":"agent.created","payload":{"agent_id":"agent","cwd":"/project","state":"idle"}},
+  {"schema_version":1,"agent_id":"agent","task_id":"task","seq":2,"kind":"task.accepted","payload":{"agent_id":"agent","task_id":"task","state":"accepted","input":"检查文件"}},
+  {"schema_version":1,"agent_id":"agent","task_id":"task","seq":3,"kind":"task.started","payload":{"agent_id":"agent","task_id":"task","state":"running","input":"检查文件"}},
+  {"schema_version":1,"agent_id":"agent","task_id":"task","seq":4,"kind":"context.message","payload":{"message":{"role":"user","content":[{"type":"text","text":"检查文件"}]}}},
+  {"schema_version":1,"agent_id":"agent","task_id":"task","seq":5,"kind":"model.output.delta","payload":{"request_id":"request1","delta":{"message_id":"message1","index":0,"kind":"start","category":"commentary"}}},
+  {"schema_version":1,"agent_id":"agent","task_id":"task","seq":6,"kind":"model.output.delta","payload":{"request_id":"request1","delta":{"message_id":"message1","index":0,"kind":"text","category":"commentary","text":"正在检查中文 é 🙂"}}},
+  {"schema_version":1,"agent_id":"agent","task_id":"task","seq":7,"kind":"model.output.delta","payload":{"request_id":"request1","delta":{"message_id":"message1","index":0,"kind":"end","category":"commentary"}}},
+  {"schema_version":1,"agent_id":"agent","task_id":"task","seq":8,"kind":"model.completed","payload":{"request_id":"request1","output":[{"message_id":"message1","index":0,"category":"commentary","text":"正在检查中文 é 🙂"}]}},
+  {"schema_version":1,"agent_id":"agent","task_id":"task","seq":9,"kind":"tool.started","payload":{"operation_id":"operation","request_id":"request1","call":{"call_id":"call","name":"exec_command","arguments":{"cmd":"pwd"}},"version":"1"}},
+  {"schema_version":1,"agent_id":"agent","task_id":"task","seq":10,"kind":"tool.dispatching","payload":{"operation_id":"operation","request_id":"request1","call":{"call_id":"call","name":"exec_command","arguments":{"cmd":"pwd"}},"version":"1"}},
+  {"schema_version":1,"agent_id":"agent","task_id":"task","seq":11,"kind":"tool.completed","payload":{"invocation":{"operation_id":"operation","request_id":"request1","call":{"call_id":"call","name":"exec_command","arguments":{"cmd":"pwd"}},"version":"1"},"result":{"process_id":"process","content":[{"type":"text","text":"/project"}]}}},
+  {"schema_version":1,"agent_id":"agent","task_id":"task","seq":12,"kind":"model.output.delta","payload":{"request_id":"request2","delta":{"message_id":"message2","index":0,"kind":"start","category":"final"}}},
+  {"schema_version":1,"agent_id":"agent","task_id":"task","seq":13,"kind":"model.output.delta","payload":{"request_id":"request2","delta":{"message_id":"message2","index":0,"kind":"text","category":"final","text":"检查完成。"}}},
+  {"schema_version":1,"agent_id":"agent","task_id":"task","seq":14,"kind":"model.output.delta","payload":{"request_id":"request2","delta":{"message_id":"message2","index":0,"kind":"end","category":"final"}}},
+  {"schema_version":1,"agent_id":"agent","task_id":"task","seq":15,"kind":"model.completed","payload":{"request_id":"request2","output":[{"message_id":"message2","index":0,"category":"final","text":"检查完成。"}]}},
+  {"schema_version":1,"agent_id":"agent","task_id":"task","seq":16,"kind":"task.completed","payload":{"state":"completed","result":"检查完成。"}}
+]

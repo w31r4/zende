@@ -1,0 +1,119 @@
+// Package provider binds configured connections to model transports. The loop
+// sees only model.Binding; it never imports endpoint or credential handling.
+package provider
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"strings"
+
+	"zende.local/harness/internal/model"
+	"zende.local/harness/internal/model/responses"
+	"zende.local/harness/internal/protocol"
+	"zende.local/harness/internal/resource"
+)
+
+type Resolver struct {
+	config resource.Config
+	env    func(string) string
+}
+
+type bindingSnapshot struct {
+	Version    int                 `json:"version"`
+	Selection  string              `json:"selection"`
+	Connection resource.Connection `json:"connection"`
+	Effort     string              `json:"effort"`
+}
+
+func New(config resource.Config, env func(string) string) (*Resolver, error) {
+	if err := config.Validate(); err != nil {
+		return nil, err
+	}
+	data, err := json.Marshal(config)
+	if err != nil {
+		return nil, err
+	}
+	var snapshot resource.Config
+	if err := json.Unmarshal(data, &snapshot); err != nil {
+		return nil, err
+	}
+	if env == nil {
+		env = os.Getenv
+	}
+	return &Resolver{config: snapshot, env: env}, nil
+}
+
+func (r *Resolver) Resolve(ctx context.Context, selection string) (model.Binding, error) {
+	if err := ctx.Err(); err != nil {
+		return model.Binding{}, err
+	}
+	connection, id, ok := strings.Cut(selection, "/")
+	conn, exists := r.config.Connections[connection]
+	if !ok || !exists {
+		return model.Binding{}, protocol.E("model_unavailable", "select a configured connection/model")
+	}
+	var selected *resource.ModelConfig
+	for _, m := range conn.Models {
+		if m.ID == id {
+			selected = &m
+			break
+		}
+	}
+	if selected == nil {
+		return model.Binding{}, protocol.E("model_unavailable", "selected model is not configured")
+	}
+	effort := ""
+	if selection == r.config.Model {
+		effort = r.config.Effort
+	}
+	// Retain only the selected model, not every connection in the catalog.
+	conn.Models = []resource.ModelConfig{*selected}
+	return r.bind(ctx, bindingSnapshot{Version: 1, Selection: selection, Connection: conn, Effort: effort})
+}
+
+func (r *Resolver) Restore(ctx context.Context, raw json.RawMessage) (model.Binding, error) {
+	var saved bindingSnapshot
+	if len(raw) > model.MaxBlockBytes || protocol.StrictDecode(raw, &saved) != nil || saved.Version != 1 || len(saved.Connection.Models) != 1 {
+		return model.Binding{}, protocol.E("model_snapshot_invalid", "saved model binding is missing, invalid or unsupported")
+	}
+	connection, _, ok := strings.Cut(saved.Selection, "/")
+	check := resource.Defaults("/")
+	check.Model, check.Effort = saved.Selection, saved.Effort
+	check.Connections[connection] = saved.Connection
+	if !ok || check.Validate() != nil {
+		return model.Binding{}, protocol.E("model_snapshot_invalid", "saved model settings failed validation")
+	}
+	return r.bind(ctx, saved)
+}
+
+func (r *Resolver) bind(ctx context.Context, saved bindingSnapshot) (model.Binding, error) {
+	if err := ctx.Err(); err != nil {
+		return model.Binding{}, err
+	}
+	conn, selected := saved.Connection, saved.Connection.Models[0]
+	credential := func(ctx context.Context) (string, error) {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		return resource.ResolveCredential(conn.Credential, r.env)
+	}
+	var adapter model.Adapter
+	switch conn.Protocol {
+	case responses.Protocol:
+		value, err := responses.New(responses.Config{Endpoint: conn.BaseURL, Effort: saved.Effort, Credential: credential, Images: selected.Images})
+		if err != nil {
+			return model.Binding{}, err
+		}
+		adapter = value
+	default:
+		return model.Binding{}, protocol.E("unsupported_capability", "configured model protocol adapter is not implemented yet")
+	}
+	data, err := json.Marshal(saved)
+	if err != nil {
+		return model.Binding{}, err
+	}
+	return model.Binding{Adapter: adapter, Model: selected.ID, Protocol: conn.Protocol, NativeCategories: selected.NativeCategories, Images: selected.Images, MaxOutputTokens: selected.MaxOutput, Snapshot: data}, nil
+}
+
+var _ model.Restorer = (*Resolver)(nil)
