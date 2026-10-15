@@ -79,6 +79,7 @@ func (a *app) command() *cobra.Command {
 	a.attachmentCommands(root)
 	a.questionCommands(root)
 	a.resourceCommands(root)
+	a.workspaceCommands(root)
 	config := &cobra.Command{Use: "config", Short: "Inspect effective configuration without resolving secrets"}
 	config.AddCommand(&cobra.Command{Use: "inspect", Short: "Show values and override sources", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		p, e, err := a.environment()
@@ -274,6 +275,7 @@ func (a *app) serve(cmd *cobra.Command, _ []string) error {
 	core := runtime.New(s, e)
 	if exe, err := os.Executable(); err == nil {
 		core.Commands = append(questionHints(exe, a.profile), resourceHints(exe, a.profile)...)
+		core.Commands = append(core.Commands, workspaceHints(exe, a.profile)...)
 	}
 	configuredModels, err := provider.New(e.Config, os.Getenv)
 	if err != nil {
@@ -283,6 +285,7 @@ func (a *app) serve(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	core.RestoreModels = configuredModels
+	core.Catalog = configuredModels
 	if e.Config.Model != "" {
 		core.Models = configuredModels
 	}

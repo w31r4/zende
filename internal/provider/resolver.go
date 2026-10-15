@@ -4,6 +4,8 @@ package provider
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"strings"
@@ -15,8 +17,9 @@ import (
 )
 
 type Resolver struct {
-	config resource.Config
-	env    func(string) string
+	config  resource.Config
+	env     func(string) string
+	version string
 }
 
 type bindingSnapshot struct {
@@ -41,7 +44,8 @@ func New(config resource.Config, env func(string) string) (*Resolver, error) {
 	if env == nil {
 		env = os.Getenv
 	}
-	return &Resolver{config: snapshot, env: env}, nil
+	digest := sha256.Sum256(data)
+	return &Resolver{config: snapshot, env: env, version: hex.EncodeToString(digest[:])}, nil
 }
 
 func (r *Resolver) Resolve(ctx context.Context, selection string) (model.Binding, error) {

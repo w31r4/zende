@@ -54,6 +54,10 @@ func TestConfiguredResponsesBinaryExecutesPatch(t *testing.T) {
 		if request["model"] != "fixture" {
 			t.Error(request["model"])
 		}
+		instructions, _ := request["instructions"].(string)
+		if !strings.Contains(instructions, "workspace directory") || !strings.Contains(instructions, "model connections") {
+			t.Error("registered query commands missing from prompt")
+		}
 		var item map[string]any
 		if requests.Add(1) == 1 {
 			args, _ := json.Marshal(map[string]string{"patch": "*** Begin Patch\n*** Add File: created.txt\n+<local>fixture & text</local>\n*** End Patch\n"})
@@ -142,6 +146,18 @@ func TestConfiguredResponsesBinaryExecutesPatch(t *testing.T) {
 	}
 	if !ready {
 		t.Fatal("test core did not start")
+	}
+	// Metadata comes from this core's actual configuration without making an
+	// HTTP request or exposing its endpoint/credential reference.
+	catalog, err := run("model", "connections")
+	var connections protocol.ConnectionPage
+	if err != nil || json.Unmarshal(catalog, &connections) != nil || len(connections.Items) != 1 || connections.Items[0].ID != "test" || !connections.Items[0].Supported || requests.Load() != 0 || bytes.Contains(catalog, []byte("ZENDE_TEST_MODEL_KEY")) || bytes.Contains(catalog, []byte(server.URL)) {
+		t.Fatal("configured catalog wiring", err, string(catalog))
+	}
+	catalog, err = run("model", "list", "test", "--version", connections.Version)
+	var configured protocol.ModelPage
+	if err != nil || json.Unmarshal(catalog, &configured) != nil || len(configured.Items) != 1 || configured.Items[0].ID != "fixture" || requests.Load() != 0 {
+		t.Fatal("configured model wiring", err, string(catalog))
 	}
 	out, err := run("--request-id", "fixture-once", "agent", "create", "create the fixture file")
 	if err != nil {

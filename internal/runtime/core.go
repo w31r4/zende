@@ -23,6 +23,7 @@ type Core struct {
 	// Configure before Run; publication of hot resources is added separately.
 	Models        model.Resolver
 	RestoreModels model.Restorer
+	Catalog       ModelCatalog
 	Tools         *tool.Registry
 	Commands      []CommandHint
 	loopMu        sync.Mutex
@@ -36,6 +37,36 @@ func New(s *store.Store, config resource.Effective) *Core {
 
 func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 	switch req.Method {
+	case "workspace.directory":
+		var p protocol.DirectoryQuery
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.directory(ctx, p)
+	case "workspace.git":
+		var p protocol.GitQuery
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.gitStatus(ctx, p)
+	case "model.connections":
+		var p protocol.ConnectionQuery
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if c.Catalog == nil {
+			return nil, protocol.E("unavailable", "model catalog is not configured")
+		}
+		return c.Catalog.Connections(ctx, p)
+	case "model.list":
+		var p protocol.ModelQuery
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if c.Catalog == nil {
+			return nil, protocol.E("unavailable", "model catalog is not configured")
+		}
+		return c.Catalog.ListModels(ctx, p)
 	case "resource.register":
 		var p protocol.RegisterResource
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

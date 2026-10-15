@@ -413,6 +413,22 @@ go test -race ./internal/render ./internal/store ./internal/cli -run 'Skill|Sche
 
 首轮新增测试修正了夹具用法：回答回执须带 Task ID，内联参数命令先 Tab，CLI 问题文本使用位置参数。PTY 夹具把 skill 放在独立目录，避免将测试 socket 当成包文件；特殊文件拒绝规则保持。按 tui-design 复用下方候选与按需选择行，按 trim-cn-tech-doc 合并操作说明，保留版本、限额和恢复条件。模型使用 fixture，未访问外部服务；自动发现、目录监测和模型请求级通知仍待第 7 组实现。
 
+## 2026-10-15：模型目录与工作环境只读接口
+
+5.8 部分实现，完成数仍为 30/68。模型目录、目录分页和 Git 状态经 core/CLI 提供；查询保持 Agent 设置、任务与历史不变。全量普通测试、race 和 OpenSpec strict 校验通过。
+
+| 验证 | 入口 | 结果 |
+| --- | --- | --- |
+| 配置目录 | `TestCatalogConfiguredConnectionsVersionsAndNoCredentials`、`TestCatalogQueryValidationCancellationAndFrameLimit` | 空配置、同厂商多连接、型号/力度分页、版本变化、独立副本与页大小限制通过；凭据解析器未调用，返回值不含端点或凭据引用；未实现协议明确标记 |
+| 目录浏览 | `TestDirectoryPagesNavigationAndLiteralPaths`、`TestDirectoryPaginationAcrossReadBatches`、`TestDirectoryInvalidAndDisappearingPaths` | 中文、空格、隐藏目录、链接、根目录、跨读取批次排序和路径失效通过；特殊字符按字面处理，非法字节名称报告 skipped，cwd 保持 |
+| 真实 Git | `TestGitRealRepositoryCountsAndReadOnlyQueries`、`TestGitDetachedLinkedWorktreeAndConflict` | 初始分支、普通/暂存修改、未跟踪目录、上游计数、detached worktree 和真实未合并索引通过；索引字节/mtime 保持，fsmonitor 未执行，环境变量不重定向查询，非 Git 返回 none |
+| 错误与字节边界 | `TestGitQueryBoundsAndRedactedFailure`、`TestGitPorcelainNULParsing`、`FuzzGitPorcelain` | 缺 Git、超时、输出超限及格式损坏明确报错；诊断不泄漏，特殊文件名不冒充状态记录；5 秒 fuzz 预算检查 138821 个输入通过 |
+| CLI 与二进制 | `TestWorkspaceCLIQueriesKeepSessionAndContextUnchanged`、`TestWorkspacePromptHintsMatchCLI`、`TestConfiguredResponsesBinaryExecutesPatch` | 真实 Unix socket 验证只读、分页、帮助与错误通道；真实二进制读取配置目录不发模型请求，随后仍完成原 patch 链路；版本 4 提示词含已注册查询命令 |
+
+目录/Git 与 provider 相关测试在 race 下连续 5 次通过。首轮测试发现嵌入 `bytes.Buffer` 的 `ReadFrom` 绕过输出限额，改为私有 buffer 后，真实子进程超量输出被拒绝；另修正未合并索引及复用 JSON 解码对象的测试夹具。旧失败不计为通过。
+
+按 trim-cn-tech-doc 合并查询说明，保留来源、限额和错误条件。所有文件、Git 仓库、服务和模型端点均为临时测试对象；模型使用 HTTP 夹具。TUI 选择页、确认后持久切换和请求边界应用仍待实现，本节不作为 V21 全项通过或用户级部署验收。
+
 ## 进行中
 
-下一项为 5.8：配置驱动的模型选择、目录浏览和 Git 状态。会话复制依赖第 6、9 组；协作提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成。
+继续 5.8：接入 TUI 模型/力度选择、单页目录导航、确认后的持久切换与 Git 刷新；旧请求和工具固定原设置，显式选择在后续合法请求应用。会话复制依赖第 6、9 组；协作提示词在相关命令全部注册后验证，6.7 保持未完成。Day1 整体和本机部署尚未完成。

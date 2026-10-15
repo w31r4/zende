@@ -20,6 +20,7 @@ go build -o bin/zende ./cmd/zende
 | runtime | Agent、任务、消息、模型循环与恢复 |
 | model | 公共模型消息和供应商适配 |
 | provider | 将配置中的连接与型号绑定到 adapter，在请求时解析凭据 |
+| workspace | 只读目录分页与 Git 状态查询 |
 | tool | 工具描述、调用和结果 |
 | process | 独立 runner、tmux PTY、pipe 与输出 |
 | resource | 配置来源、凭据引用与资源版本 |
@@ -86,6 +87,22 @@ model: local/my-model
 普通任务输入用位置参数或 `--file FILE`，`--file -` 从 stdin 读，最大 2 MiB UTF-8。结果为 stdout JSON，事件为 NDJSON；错误走 stderr。退出码 0 表示请求成功，1 表示服务/命令失败，2 表示协议或输入校验失败。CLI 返回 accepted 只表示事务已提交。
 
 本地协议使用 JSON-RPC 2.0、`schema_version: 1`，每行一个对象，单帧上限 8 MiB。普通请求返回一次响应；`events.watch` 先返回确认，再发送 `event` 通知。快照与 cursor 在同一事务中读取，补发从 cursor 之后开始。seq 缺口或超前明确返回 `cursor_gap`。
+
+## 模型目录与工作目录查询
+
+`zende model connections` 列出当前 core 配置的连接，`model list CONNECTION` 返回该连接的型号、思考力度和能力声明。同厂商的连接按 ID 区分，空配置返回空列表；`supported` 只表示 adapter 已实现，当前为 Responses。查询不解析凭据、不访问端点，认证和网络状态在模型请求时检查。
+
+两级目录均支持 `--after NEXT`、`--limit`（默认 20，最多 100）和 `--version VERSION`；跨页或分步选择携带返回版本，配置变化时报 `catalog_changed`。每页最多 1 MiB，超限可减小页数或缩短元数据。返回值只含公开元数据，端点与凭据引用留在连接配置中。
+
+`zende workspace directory AGENT [PATH]` 只列当前目录的子目录，含隐藏目录和指向目录的链接；相对路径按 Agent cwd 解析。返回 `path`、`parent`、`entries`，根目录省略 parent；客户端据此展示 `.` 和 `..`。支持 `--after NEXT`、`--limit`（默认 40，最多 100）。目录为实时观察，翻页期间新增项可在刷新后出现。
+
+路径按字面处理，保留逻辑链接路径，不作 shell 展开。单次扫描最多 100000 项，超限报错后可直接输入子目录路径；非法 UTF-8 名称和失效链接计入 skipped。浏览和查询不会提交 cwd 选择。
+
+`zende workspace git AGENT [PATH]` 返回分支、commit、上游和本地 ahead/behind，以及暂存、未暂存、冲突、未跟踪项数。非 Git 目录返回 `state: none`；错误、超时和过量输出单独报错。未跟踪目录计一项，子模块内部不扫描，上游状态不 fetch。
+
+Git 查询使用 [porcelain v2](https://git-scm.com/docs/git-status#_porcelain_format_version_2) 和 NUL 分隔，关闭可选索引写入及 fsmonitor hook，忽略启动环境中的仓库重定向。默认限时 3 秒，stdout 2 MiB、诊断 16 KiB；错误不回传 Git 原始诊断。模型可通过 exec 调用这些 CLI，文件读取仍可自由使用终端命令。
+
+这些接口为 5.8 的选择页提供数据；模型/cwd 的持久切换、请求边界应用及 TUI 交互仍在实现。
 
 ## 数据与恢复边界
 
