@@ -210,5 +210,15 @@ func TestResourcePromptHintsMatchRegisteredCLI(t *testing.T) {
 		if !strings.Contains(hint.Usage, "'/binary path/zende' --profile 'current-profile'") {
 			t.Fatal("unbound CLI hint", hint.Usage)
 		}
+		if hint.Name == "plugin.command" {
+			if cmd.Flags().Lookup("file") == nil {
+				t.Fatal("missing JSON input flag")
+			}
+			for _, text := range []string{"command refs", "not its completion", "inspect/progress/result", "cancel", "request ID", "unknown effect"} {
+				if !strings.Contains(hint.Guidance, text) {
+					t.Fatal("plugin hint missing", text)
+				}
+			}
+		}
 	}
 }

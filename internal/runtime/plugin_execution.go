@@ -35,6 +35,12 @@ func (c *Core) startPluginCall(ctx context.Context, req protocol.Request, scope 
 	if c.pluginCallsClosed {
 		return store.PluginReceipt{}, protocol.E("unavailable", "plugin execution host is closed")
 	}
+	if scope.AgentID == "" && req.Method == "plugin.command.call" {
+		scope, err = c.Store.PluginCommandScope(ctx, req)
+		if err != nil {
+			return store.PluginReceipt{}, err
+		}
+	}
 	for target, worker := range c.pluginCalls {
 		if target.AgentID == scope.AgentID && worker.failure != nil {
 			return store.PluginReceipt{}, protocol.E("persistence_failed", "an earlier plugin outcome could not be saved; inspect the original operation before new work")
@@ -131,6 +137,18 @@ func (c *Core) cancelPluginCall(ctx context.Context, req protocol.Request) (prot
 		worker.cancel()
 	}
 	return accepted, nil
+}
+
+// Called only after a tree stop has committed cancellation and frozen new
+// dispatch for this Agent. Ordinary Task stops preserve unrelated commands.
+func (c *Core) cancelAgentPluginCalls(agent string) {
+	c.pluginCallMu.Lock()
+	defer c.pluginCallMu.Unlock()
+	for target, worker := range c.pluginCalls {
+		if target.AgentID == agent {
+			worker.cancel()
+		}
+	}
 }
 
 func (c *Core) closePluginCalls() {

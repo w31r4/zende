@@ -187,7 +187,7 @@ func resourceSnapshot(ctx context.Context, tx *sql.Tx, agent string) (ResourceSn
 	return r, nil
 }
 
-func resourceAgent(ctx context.Context, tx *sql.Tx, agent string, writable bool) error {
+func resourceAgent(ctx context.Context, tx rowQuerier, agent string, writable bool) error {
 	var state string
 	err := tx.QueryRowContext(ctx, "SELECT state FROM agents WHERE id=?", agent).Scan(&state)
 	if errors.Is(err, sql.ErrNoRows) {

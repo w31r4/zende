@@ -13,7 +13,7 @@ import (
 func (c *Core) preparePluginCall(req protocol.Request, scope plugin.Scope) (*plugin.Call, store.PluginInvocation, func(), error) {
 	var input store.PluginCallInput
 	var invocation store.PluginInvocation
-	if req.Validate() != nil || protocol.StrictDecode(req.Params, &input) != nil || input.AgentID != scope.AgentID || input.TaskID != scope.TaskID || (req.Method != "plugin.tool.call" && req.Method != "plugin.command.call") {
+	if req.Validate() != nil || protocol.StrictDecode(req.Params, &input) != nil || input.AgentID != scope.AgentID || input.BoundTaskID() != scope.TaskID || (req.Method != "plugin.tool.call" && req.Method != "plugin.command.call") {
 		return nil, invocation, nil, protocol.E("invalid_params", "plugin request must match its host-assigned scope and callable kind")
 	}
 	slot, release, err := c.leasePlugin(protocol.ResourceTarget{AgentID: input.AgentID, ID: input.ResourceID})

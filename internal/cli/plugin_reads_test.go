@@ -24,7 +24,7 @@ type pluginCLIReadCase struct {
 }
 
 // The test owner invokes a real fixture and retains its journal. This tests
-// read adapters, not the still-unimplemented public plugin execution entry.
+// read adapters independently of the public plugin execution entry.
 func seedPluginCLIReads(t *testing.T, ctx context.Context, s *store.Store, source string, publication protocol.Accepted, run func(bool, ...string) []byte) []pluginCLIReadCase {
 	t.Helper()
 	var cases []pluginCLIReadCase

@@ -51,20 +51,31 @@ PRAGMA user_version=15;
 // PluginCallInput is the effect identity, independent of the selected live
 // instance. TaskID is assigned/verified by the entry adapter, not plugin code.
 type PluginCallInput struct {
-	AgentID       string          `json:"agent_id"`
-	TaskID        string          `json:"task_id,omitempty"`
-	ResourceID    string          `json:"resource_id"`
-	DefinitionRef string          `json:"definition_ref"`
-	Arguments     json.RawMessage `json:"arguments"`
+	AgentID       string           `json:"agent_id"`
+	TaskID        string           `json:"task_id,omitempty"`
+	ResourceID    string           `json:"resource_id"`
+	DefinitionRef string           `json:"definition_ref"`
+	Arguments     json.RawMessage  `json:"arguments"`
+	Caller        *protocol.Caller `json:"caller,omitempty"`
+}
+
+// BoundTaskID keeps CLI provenance separate from its effect fingerprint. Native
+// tool calls continue to carry their host-assigned TaskID explicitly.
+func (p PluginCallInput) BoundTaskID() string {
+	if p.Caller != nil {
+		return p.Caller.TaskID
+	}
+	return p.TaskID
 }
 
 type PluginInvocation struct {
-	Request         protocol.Request   `json:"request"`
-	Binding         plugin.CallBinding `json:"binding"`
-	Scope           plugin.Scope       `json:"scope"`
-	Definition      plugin.Definition  `json:"definition"`
-	ResourceVersion string             `json:"resource_version"`
-	Generation      int64              `json:"generation"`
+	Request         protocol.Request     `json:"request"`
+	Binding         plugin.CallBinding   `json:"binding"`
+	Scope           plugin.Scope         `json:"scope"`
+	Definition      plugin.Definition    `json:"definition"`
+	ResourceVersion string               `json:"resource_version"`
+	Generation      int64                `json:"generation"`
+	Source          *protocol.CallSource `json:"source,omitempty"`
 }
 
 type PluginCallTarget = protocol.PluginCallTarget
@@ -73,20 +84,21 @@ type PluginCallTarget = protocol.PluginCallTarget
 // error text remain behind the explicit progress/result readers.
 type PluginReceipt struct {
 	PluginCallTarget
-	TaskID          string             `json:"task_id,omitempty"`
-	ResourceID      string             `json:"resource_id"`
-	ResourceVersion string             `json:"resource_version"`
-	Generation      int64              `json:"generation"`
-	Binding         plugin.CallBinding `json:"binding"`
-	Kind            string             `json:"kind"`
-	Name            string             `json:"name"`
-	State           string             `json:"state"`
-	RequestID       string             `json:"request_id,omitempty"`
-	ProgressSeq     int64              `json:"progress_seq"`
-	ProgressBytes   int64              `json:"progress_bytes"`
-	ResultBytes     int                `json:"result_bytes"`
-	ResultSHA256    string             `json:"result_sha256,omitempty"`
-	Error           *protocol.Error    `json:"error,omitempty"`
+	TaskID          string               `json:"task_id,omitempty"`
+	ResourceID      string               `json:"resource_id"`
+	ResourceVersion string               `json:"resource_version"`
+	Generation      int64                `json:"generation"`
+	Binding         plugin.CallBinding   `json:"binding"`
+	Kind            string               `json:"kind"`
+	Name            string               `json:"name"`
+	State           string               `json:"state"`
+	RequestID       string               `json:"request_id,omitempty"`
+	ProgressSeq     int64                `json:"progress_seq"`
+	ProgressBytes   int64                `json:"progress_bytes"`
+	ResultBytes     int                  `json:"result_bytes"`
+	ResultSHA256    string               `json:"result_sha256,omitempty"`
+	Error           *protocol.Error      `json:"error,omitempty"`
+	Source          *protocol.CallSource `json:"source,omitempty"`
 }
 
 type PluginRecord struct {
@@ -108,6 +120,9 @@ func pluginInput(req protocol.Request) (PluginCallInput, error) {
 	var p PluginCallInput
 	if req.Validate() != nil || !pluginID(req.OperationID, true) || len(req.Params) > plugin.MaxArgumentBytes+(16<<10) || (req.Method != "plugin.tool.call" && req.Method != "plugin.command.call") || protocol.StrictDecode(req.Params, &p) != nil || !pluginID(p.AgentID, true) || !pluginID(p.TaskID, false) || !pluginID(p.ResourceID, true) || !pluginID(p.DefinitionRef, true) || len(p.Arguments) == 0 || len(p.Arguments) > plugin.MaxArgumentBytes {
 		return p, protocol.E("invalid_params", "invalid plugin invocation identity or arguments")
+	}
+	if p.Caller != nil && (req.Method != "plugin.command.call" || p.TaskID != "" || p.Caller.AgentID != p.AgentID || !pluginID(p.Caller.TaskID, true) || !pluginID(p.Caller.OperationID, true)) {
+		return p, protocol.E("invalid_params", "plugin command caller must identify this Agent's execution; Task is assigned by Core")
 	}
 	return p, nil
 }
@@ -141,7 +156,7 @@ func pluginRecord(ctx context.Context, q rowQuerier, target PluginCallTarget) (*
 	}
 	p, err := pluginInput(invocation.Request)
 	b := invocation.Binding
-	if err != nil || p.AgentID != target.AgentID || p.TaskID != task || invocation.Request.OperationID != target.OperationID || b.OperationID != target.OperationID || b.DefinitionRef != p.DefinitionRef || invocation.Scope.AgentID != p.AgentID || invocation.Scope.TaskID != p.TaskID || !pluginID(owner, true) || !pluginID(request, false) || progressSeq < 0 || progressSeq > MaxPluginProgressEntries || progressBytes < 0 || progressBytes > MaxPluginProgressBytes || resultBytes > maxPluginResultBytes {
+	if err != nil || p.AgentID != target.AgentID || p.BoundTaskID() != task || invocation.Request.OperationID != target.OperationID || b.OperationID != target.OperationID || b.DefinitionRef != p.DefinitionRef || invocation.Scope.AgentID != p.AgentID || invocation.Scope.TaskID != p.BoundTaskID() || !validPluginSource(p, invocation.Source) || !pluginID(owner, true) || !pluginID(request, false) || progressSeq < 0 || progressSeq > MaxPluginProgressEntries || progressBytes < 0 || progressBytes > MaxPluginProgressBytes || resultBytes > maxPluginResultBytes {
 		return nil, protocol.E("invalid_state", "saved plugin dispatch identity changed")
 	}
 	switch state {
@@ -160,7 +175,7 @@ func pluginRecord(ctx context.Context, q rowQuerier, target PluginCallTarget) (*
 	default:
 		return nil, protocol.E("invalid_state", "unknown plugin call state")
 	}
-	return &PluginRecord{Invocation: invocation, Owner: owner, Receipt: PluginReceipt{PluginCallTarget: target, TaskID: task, ResourceID: p.ResourceID, ResourceVersion: invocation.ResourceVersion, Generation: invocation.Generation, Binding: b, Kind: invocation.Definition.Kind, Name: invocation.Definition.Name, State: state, RequestID: request, ProgressSeq: progressSeq, ProgressBytes: progressBytes, ResultBytes: resultBytes, ResultSHA256: resultHash, Error: pluginStateError(state)}}, nil
+	return &PluginRecord{Invocation: invocation, Owner: owner, Receipt: PluginReceipt{PluginCallTarget: target, TaskID: task, ResourceID: p.ResourceID, ResourceVersion: invocation.ResourceVersion, Generation: invocation.Generation, Binding: b, Kind: invocation.Definition.Kind, Name: invocation.Definition.Name, State: state, RequestID: request, ProgressSeq: progressSeq, ProgressBytes: progressBytes, ResultBytes: resultBytes, ResultSHA256: resultHash, Error: pluginStateError(state), Source: invocation.Source}}, nil
 }
 
 func (s *Store) PluginCall(ctx context.Context, target PluginCallTarget) (*PluginRecord, error) {
@@ -214,7 +229,7 @@ func publishedPluginCall(ctx context.Context, q rowQuerier, i PluginInvocation) 
 		return nil, err
 	}
 	b := i.Binding
-	if b.OperationID != i.Request.OperationID || b.PluginID != manifest.ID || b.PluginVersion != manifest.Version || b.ManifestVersion != manifest.Digest() || b.CatalogVersion != pkg.Plugin.CatalogVersion || b.DefinitionRef != p.DefinitionRef || !pluginID(b.InstanceID, true) || i.Scope.AgentID != p.AgentID || i.Scope.TaskID != p.TaskID || !filepath.IsAbs(i.Scope.Cwd) || filepath.Clean(i.Scope.Cwd) != i.Scope.Cwd || len(i.Scope.Cwd) > 4096 || !utf8.ValidString(i.Scope.Cwd) || strings.ContainsRune(i.Scope.Cwd, 0) || i.Request.Method != "plugin."+i.Definition.Kind+".call" {
+	if b.OperationID != i.Request.OperationID || b.PluginID != manifest.ID || b.PluginVersion != manifest.Version || b.ManifestVersion != manifest.Digest() || b.CatalogVersion != pkg.Plugin.CatalogVersion || b.DefinitionRef != p.DefinitionRef || !pluginID(b.InstanceID, true) || i.Scope.AgentID != p.AgentID || i.Scope.TaskID != p.BoundTaskID() || !filepath.IsAbs(i.Scope.Cwd) || filepath.Clean(i.Scope.Cwd) != i.Scope.Cwd || len(i.Scope.Cwd) > 4096 || !utf8.ValidString(i.Scope.Cwd) || strings.ContainsRune(i.Scope.Cwd, 0) || i.Request.Method != "plugin."+i.Definition.Kind+".call" {
 		return nil, protocol.E("invalid_state", "plugin binding differs from its published definition or scope")
 	}
 	for _, d := range pkg.Plugin.Definitions {
@@ -239,44 +254,57 @@ func (s *Store) BeginPluginCall(ctx context.Context, i PluginInvocation, owner s
 	if !pluginID(owner, true) {
 		return nil, false, protocol.E("invalid_params", "plugin call owner is required")
 	}
-	raw, err := json.Marshal(i)
-	if err != nil || len(raw) > maxPluginIntentBytes {
-		return nil, false, protocol.E("invalid_params", "plugin dispatch exceeds the retained intent budget")
-	}
 	fresh := false
 	_, err = s.accept(ctx, i.Request, func(tx *sql.Tx) (protocol.Accepted, error) {
-		if err := resourceAgent(ctx, tx, p.AgentID, true); err != nil {
+		if err := pluginAgentDispatchable(ctx, tx, p.AgentID); err != nil {
 			return protocol.Accepted{}, err
 		}
-		var unresolved bool
-		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM plugin_calls WHERE agent_id=? AND state='unknown')`, p.AgentID).Scan(&unresolved); err != nil {
-			return protocol.Accepted{}, err
-		}
-		if unresolved {
-			return protocol.Accepted{}, protocol.E("operation_unknown", "an earlier plugin outcome is unverified; inspect the original operation before new calls")
-		}
-		if p.TaskID != "" {
-			if err := activeTask(ctx, tx, p.AgentID, p.TaskID); err != nil {
+		if p.BoundTaskID() != "" {
+			if err := activeTask(ctx, tx, p.AgentID, p.BoundTaskID()); err != nil {
 				return protocol.Accepted{}, err
+			}
+		}
+		if p.Caller != nil {
+			scope, source, err := pluginCommandScope(ctx, tx, p)
+			if err != nil {
+				return protocol.Accepted{}, err
+			}
+			if scope != i.Scope {
+				return protocol.Accepted{}, protocol.E("invalid_state", "plugin command scope differs from the original model request")
+			}
+			i.Source = source
+		} else if i.Source != nil {
+			return protocol.Accepted{}, protocol.E("invalid_state", "plugin source requires a caller")
+		} else if i.Request.Method == "plugin.command.call" && p.TaskID == "" {
+			scope, _, err := pluginCommandScope(ctx, tx, p)
+			if err != nil {
+				return protocol.Accepted{}, err
+			}
+			if scope != i.Scope {
+				return protocol.Accepted{}, protocol.E("selection_changed", "Agent directory changed before plugin dispatch; retry the command")
 			}
 		}
 		if _, err := publishedPluginCall(ctx, tx, i); err != nil {
 			return protocol.Accepted{}, err
 		}
+		raw, err := json.Marshal(i)
+		if err != nil || len(raw) > maxPluginIntentBytes {
+			return protocol.Accepted{}, protocol.E("invalid_params", "plugin dispatch exceeds the retained intent budget")
+		}
 		// The FK to operations is deferred until the enclosing accept transaction
 		// inserts its receipt. Both rows must become visible together.
-		if _, err := tx.ExecContext(ctx, `INSERT INTO plugin_calls(operation_id,agent_id,task_id,owner,intent,intent_hash,state) VALUES(?,?,nullif(?,''),?,?,?,'dispatched')`, i.Request.OperationID, p.AgentID, p.TaskID, owner, string(raw), pluginDigest(raw)); err != nil {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO plugin_calls(operation_id,agent_id,task_id,owner,intent,intent_hash,state) VALUES(?,?,nullif(?,''),?,?,?,'dispatched')`, i.Request.OperationID, p.AgentID, p.BoundTaskID(), owner, string(raw), pluginDigest(raw)); err != nil {
 			return protocol.Accepted{}, err
 		}
 		record, err := pluginRecord(ctx, tx, PluginCallTarget{AgentID: p.AgentID, OperationID: i.Request.OperationID})
 		if err != nil {
 			return protocol.Accepted{}, err
 		}
-		if _, err := appendEvent(ctx, tx, p.AgentID, p.TaskID, "plugin.dispatched", record.Receipt); err != nil {
+		if _, err := appendEvent(ctx, tx, p.AgentID, p.BoundTaskID(), "plugin.dispatched", record.Receipt); err != nil {
 			return protocol.Accepted{}, err
 		}
 		fresh = true
-		return protocol.Accepted{AgentID: p.AgentID, TaskID: p.TaskID}, nil
+		return protocol.Accepted{AgentID: p.AgentID, TaskID: p.BoundTaskID()}, nil
 	})
 	if err != nil {
 		return nil, false, err

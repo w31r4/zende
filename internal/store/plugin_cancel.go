@@ -44,7 +44,18 @@ func (s *Store) CancelPluginCall(ctx context.Context, req protocol.Request) (pro
 // A Task stop commits plugin cancellation in the same transaction as its own
 // state change. Runtime notification happens only after that commit succeeds.
 func cancelTaskPluginCalls(ctx context.Context, tx *sql.Tx, agent, task string) error {
-	rows, err := tx.QueryContext(ctx, `SELECT operation_id FROM plugin_calls WHERE agent_id=? AND task_id=? AND state='dispatched'`, agent, task)
+	return cancelScopedPluginCalls(ctx, tx, agent, &task)
+}
+
+// nil Task selects every call owned by this Agent, including human commands.
+func cancelScopedPluginCalls(ctx context.Context, tx *sql.Tx, agent string, task *string) error {
+	query := `SELECT operation_id FROM plugin_calls WHERE agent_id=? AND state='dispatched'`
+	args := []any{agent}
+	if task != nil {
+		query += ` AND task_id=?`
+		args = append(args, *task)
+	}
+	rows, err := tx.QueryContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}

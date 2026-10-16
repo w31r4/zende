@@ -39,6 +39,7 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
 	t.Setenv("XDG_RUNTIME_DIR", runDir)
 	t.Setenv("ZENDE_TEST_PLUGIN", "1")
+	t.Setenv(protocol.CallerEnvironment, "")
 	t.Setenv("ZENDE_TEST_PLUGIN_MODE", "")
 	t.Setenv("ZENDE_TEST_PLUGIN_REWRITE", "")
 	audit := filepath.Join(dir, "plugin-audit.jsonl")
@@ -169,6 +170,7 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	if err := json.Unmarshal(run(false, "plugin", "catalog", agent.AgentID, id, "--version", "latest"), &failure); err != nil || failure.Data.Kind != "invalid_params" {
 		t.Fatal(failure, err)
 	}
+	checkPluginCLICommands(t, ctx, s, binary, source, run)
 	retainedCalls := seedPluginCLIReads(t, ctx, s, source, updated, run)
 	c.CloseResources()
 	before, _ = os.ReadFile(audit)

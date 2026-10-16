@@ -196,6 +196,13 @@ func treeStopReady(ctx context.Context, q rowQuerier, plan TreeStopRecord) error
 		if !paused {
 			return protocol.E("invalid_state", "tree stop member is not paused")
 		}
+		var pendingPlugin bool
+		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM plugin_calls WHERE agent_id=? AND state IN ('dispatched','cancelling','unknown'))`, member.AgentID).Scan(&pendingPlugin); err != nil {
+			return err
+		}
+		if pendingPlugin {
+			return protocol.E("tree_stopping", "plugin calls are still settling or unverified; inspect their original operations")
+		}
 		if member.TaskID == "" {
 			continue
 		}

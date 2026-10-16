@@ -3,7 +3,7 @@ package protocol
 import "testing"
 
 func TestCollaborationEffectIdentityExcludesRetryCallerOnly(t *testing.T) {
-	for _, method := range []string{"agent.spawn", "agent.submit"} {
+	for _, method := range []string{"agent.spawn", "agent.submit", "agent.send", "plugin.command.call"} {
 		first, _ := NewRequest(method, "stable", map[string]any{"input": "work", "caller": Caller{AgentID: "a", TaskID: "t", OperationID: "first"}})
 		retry, _ := NewRequest(method, "stable", map[string]any{"input": "work", "caller": Caller{AgentID: "a", TaskID: "t", OperationID: "second"}})
 		human, _ := NewRequest(method, "stable", map[string]any{"input": "work"})

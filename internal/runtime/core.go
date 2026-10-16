@@ -11,6 +11,7 @@ import (
 	"zende.local/harness/internal/process"
 	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/resource"
+	"zende.local/harness/internal/resource/plugin"
 	"zende.local/harness/internal/store"
 	"zende.local/harness/internal/tool"
 )
@@ -173,6 +174,14 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 			return nil, protocol.E("not_found", "plugin call not found for this Agent")
 		}
 		return record.Receipt, nil
+	case "plugin.command.call":
+		// Public clients cannot assign a Task or cwd. Caller provenance is
+		// resolved from the original exec_command and checked at acceptance.
+		var p protocol.PluginCommand
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.startPluginCall(ctx, req, plugin.Scope{})
 	case "plugin.cancel":
 		return c.cancelPluginCall(ctx, req)
 	case "plugin.progress":

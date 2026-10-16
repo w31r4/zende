@@ -379,7 +379,7 @@ Core 重启后，已保存结果可补入原工具结果位置，无须重连 MC
 
 ## 插件启动与协议协商
 
-Core 已接入插件注册、实例引用、后台执行与持久调用记录。模型工具与 CLI 执行入口、provider/resource/event 扩展仍由 OpenSpec 8.2–8.5 交付。
+Core 已接入插件注册、实例引用、CLI 命令执行与持久调用记录。原生模型工具、provider/resource/event 扩展仍由 OpenSpec 8.2–8.5 交付。
 
 ```yaml
 schema_version: 1
@@ -428,13 +428,33 @@ zende --request-id refresh-plugin resource refresh AGENT RESOURCE
 
 新版发布后，新调用只能取得新实例；已取得引用的调用仍使用原定义、Scope 和进程，保存结果后释放引用，最后一个引用释放时关闭旧实例。准备失败保留当前实例；Core 退出会关闭全部新旧实例。每个 Agent/资源最多保留 32 个退役实例，达到上限时拒绝需要增加退役实例的刷新；原调用结束并回收实例后可重新刷新，同版本健康实例的刷新不占名额。
 
-真实子进程测试已验证调用期间换版、旧调用完成后回收、失败候选、保留上限和并发关闭。公开执行入口及 provider 模型流仍在实施，8.4 保持未完成。
+真实子进程测试已验证调用期间换版、旧调用完成后回收、失败候选、保留上限和并发关闭。provider 模型流仍在实施，8.4 保持未完成。
+
+### CLI 命令执行
+
+从 `plugin catalog` 选择 kind 为 command 的定义，按 input_schema 准备 JSON。CLI 只接收命令引用；原生 tool 入口仍待实现。
+
+```sh
+zende --request-id plugin-job-1 plugin command AGENT RESOURCE REF --file arguments.json
+zende plugin inspect AGENT plugin-job-1
+zende plugin progress AGENT plugin-job-1
+zende plugin result AGENT plugin-job-1
+zende --request-id cancel-job-1 plugin cancel AGENT plugin-job-1
+```
+
+`--file -` 读取 stdin，参数最多 1 MiB。命令立即返回持久回执，退出 0 表示已接受；完成、失败、取消和待核实由 `state` 区分。取消命令使用新的请求 ID，读取原调用回执确认结果。客户端退出后调用仍由 Core 管理。
+
+Runner 提供 `ZENDE_CALLER` 时，Core 核对原 `exec_command`，绑定 Agent/Task、模型请求和工具调用，使用该模型请求保存的 cwd。后续目录选择和 shell 临时 cd 不改变它。来源与调用意图同事务保存，回执的 `source` 可查询；Task 已停止或树停止未完成时拒绝新调用。人工调用使用 Agent 当前 cwd，派发提交前再次核对。客户端不能自行指定 Task 或 cwd；caller 是来源记录，不是认证凭据。
+
+模型同一次终端执行中，相同命令参数自动得到相同操作 ID；跨终端、Task 或人工重试时使用原 `--request-id`。重试保持首次来源、版本和结果，改变参数报冲突；unknown 须先核实，不能换 ID 重做。人工新调用省略请求 ID 时会创建新操作。
+
+提示词参考 Pi `7bc154ad082e2f0029c19117a16d22a504439476` 的 `packages/coding-agent/src/core/system-prompt.ts` 和 `packages/coding-agent/src/core/tools/bash.ts`：保留短入口、结果语义和重试规则，参数细节通过 `--help` 查询。
 
 ### 插件调用底层
 
 初始化后，`Instance.Discover` 通过 `plugin.describe` 读取已声明的 tools/commands，验证名称、描述和 input_schema/output_schema，再固定本实例的目录。定义引用包含插件身份、manifest 摘要、能力类别和完整定义；JSON 键顺序及新增无关定义不改变原引用。更新定义须准备新实例。
 
-`PrepareCall` 选择引用、校验参数并保存有效 Scope；`Binding/Definition/Scope/Arguments` 返回可记录的绑定。Core 的 `preparePluginCall` 先取得当前实例引用，核对请求类别及宿主分配的 Agent/Task，再返回调用与完整绑定。所有者先提交派发意图，再执行一次 `Invoke`，保存结果或放弃准备后释放引用；校验失败自动释放。模型工具和 CLI 执行入口仍需接入这条流程。
+`PrepareCall` 选择引用、校验参数并保存有效 Scope；`Binding/Definition/Scope/Arguments` 返回可记录的绑定。Core 的 `preparePluginCall` 先取得当前实例引用，核对请求类别及宿主分配的 Agent/Task，再返回调用与完整绑定。所有者先提交派发意图，再执行一次 `Invoke`，保存结果或放弃准备后释放引用；校验失败自动释放。CLI 已接入，原生模型工具仍待接入。
 
 | 协议消息 | 内容 |
 | --- | --- |
@@ -449,11 +469,11 @@ zende --request-id refresh-plugin resource refresh AGENT RESOURCE
 
 ### 持久调用记录
 
-存储接口供后续工具与 CLI 执行入口共用。`PriorPluginCall` 在连接或派发前查询原请求；`BeginPluginCall` 核对该 Agent 发布过的确切版本、定义、参数与 Scope，将操作接受、调用意图和 `plugin.dispatched` 事件同事务提交。并发重试只有一次获得派发资格，换传输 ID 仍返回原记录，换参数报冲突。Task 身份由入口核实并填入；存储层要求它正在运行且未被暂停或取消。
+`PriorPluginCall` 在连接或派发前查询原请求；`BeginPluginCall` 核对该 Agent 发布过的确切版本、定义、参数与 Scope，将操作接受、调用意图和 `plugin.dispatched` 事件同事务提交。并发重试只有一次获得派发资格，换传输 ID 仍返回原记录，换参数报冲突。Task 身份由宿主核实；存储层要求它正在运行且未被暂停或取消。
 
-Core 的 `startPluginCall` 共用这条流程：接受后后台执行并保存进度与结果，调用方断开不取消已接受工作。Core 最多管理 64 个活动调用或未能保存结果的故障记录，`plugin instances` 的 `max_active_calls` 返回此上限。公开执行入口仍需补齐调用者绑定与 CLI/工具适配。
+Core 的 `startPluginCall` 接受后后台执行并保存进度与结果。最多管理 64 个活动调用或未能保存结果的故障记录，`plugin instances` 的 `max_active_calls` 返回此上限。
 
-Core RPC `plugin.cancel` 使用独立操作请求 ID，参数为原调用的 `agent_id/operation_id`；取消意图、cancelling 事件和接受回执同事务保存后，才通知原 worker。重复请求返回原回执，已确认终态保持不变。停止 Task 同时保存所属插件的取消意图；Task 等这些调用落定后再结束。Core 退出取消并等待插件 worker，保存可确认的结果，再回收实例。
+Core RPC `plugin.cancel` 使用独立操作请求 ID，参数为原调用的 `agent_id/operation_id`；取消意图、cancelling 事件和接受回执同事务保存后，才通知原 worker。重复请求返回原回执，已确认终态保持不变。停止 Task 同时保存所属插件的取消意图；Task 等这些调用落定后再结束。显式树停止还包括成员 Agent 的人工命令，相关调用仍在运行或结果未知时保持停止未完成；其他 Agent 不受影响。Core 退出取消并等待插件 worker，保存可确认的结果，再回收实例。
 
 插件结果未知时，所属 Task 保持待核实，拒绝该 Agent 的新插件调用；换 ID 或刷新插件不能绕过。结果保存失败时，Core 保留有界故障记录，`plugin inspect` 返回 persistence_failed，并阻止该 Agent 继续派发插件调用。重启后原持久意图转为 unknown，已有进度保留。其他 Agent 的插件调用继续独立处理。
 
@@ -481,7 +501,9 @@ go test -race ./internal/runtime ./internal/cli -run 'TestPlugin(Lease|Retiremen
 go test -race ./internal/runtime -run '^TestPluginExecution' -count=3
 ```
 
-覆盖 tool/command、进度、已确认取消、异常退出、并发去重、事务回滚、分页完整性、进度限额及 schema 14→15。第二条验证旧实例回收和真实 CLI 查询；第三条验证 Core 后台执行、断开、取消回滚、结果保存失败、Task 结束条件与并发退出。测试调用底层或 Core 内部执行接口，CLI 只读；公开执行入口仍待接入。
+覆盖 tool/command、进度、已确认取消、异常退出、并发去重、事务回滚、分页完整性、进度限额及 schema 14→15。第二条验证旧实例回收，以及真实 CLI 的执行、查询、取消和重复提交；第三条验证 Core 后台执行、断开、取消回滚、结果保存失败、Task 结束条件与并发退出。CLI 测试预置 caller 事件，使用真实二进制、Unix socket 和插件子进程，不代表真实模型验收。
+
+`go test -race ./internal/runtime -run '^TestPluginCommand' -count=3` 验证来源绑定、原请求目录、停止后拒绝新调用、跨来源重试、旧记录兼容和派发提交前复核；树停止覆盖无 Task 的命令、取消回滚、未知结果和无关 Agent 保留。
 
 ## Responses 接入
 

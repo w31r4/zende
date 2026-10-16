@@ -193,7 +193,7 @@ func spawnCaller(ctx context.Context, tx *sql.Tx, source *protocol.SpawnSource) 
 	return nil
 }
 
-func callSource(ctx context.Context, tx *sql.Tx, caller *protocol.Caller) (*protocol.CallSource, error) {
+func callSource(ctx context.Context, tx rowQuerier, caller *protocol.Caller) (*protocol.CallSource, error) {
 	if caller == nil {
 		return nil, nil
 	}

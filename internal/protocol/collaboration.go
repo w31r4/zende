@@ -6,12 +6,12 @@ import (
 	"strings"
 )
 
-// EffectFingerprint excludes retry provenance only for collaboration writes.
+// EffectFingerprint excludes retry provenance for collaboration and CLI plugin writes.
 // Explicit request IDs may be retried from a different shell/tool call. The
 // first accepted caller remains in history; changing task content still fails.
 // Fingerprint itself retains provenance for automatic caller-local IDs.
 func (r Request) EffectFingerprint() (string, error) {
-	if r.Method == "agent.spawn" || r.Method == "agent.submit" || r.Method == "agent.send" {
+	if r.Method == "agent.spawn" || r.Method == "agent.submit" || r.Method == "agent.send" || r.Method == "plugin.command.call" {
 		var params map[string]json.RawMessage
 		if err := json.Unmarshal(r.Params, &params); err != nil {
 			return "", err
