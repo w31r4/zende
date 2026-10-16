@@ -246,6 +246,17 @@ func RunFromEnv() {
 				result = plugin.Completion{OperationID: p.OperationID, State: "completed", Output: p.Arguments}
 			case "call-exit":
 				os.Exit(8)
+			case "call-effect-exit":
+				// A real, fsynced artifact establishes that the external effect
+				// happened before the response was lost. Only test-owned paths.
+				f, err := os.OpenFile(os.Getenv("ZENDE_TEST_PLUGIN_EFFECT"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+				if err != nil {
+					os.Exit(10)
+				}
+				if json.NewEncoder(f).Encode(map[string]string{"operation_id": p.OperationID}) != nil || f.Sync() != nil || f.Close() != nil {
+					os.Exit(10)
+				}
+				os.Exit(8)
 			case "call-cancel":
 				waitingID, waitingOperation = req.ID, p.OperationID
 				continue
