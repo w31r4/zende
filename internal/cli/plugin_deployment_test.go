@@ -139,7 +139,7 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	}
 	for range 2 {
 		var instances runtime.PluginInstances
-		if err := json.Unmarshal(run(true, "plugin", "instances", agent.AgentID, id), &instances); err != nil || instances.AgentID != agent.AgentID || instances.ResourceID != id || len(instances.Items) != 1 || instances.Current == "" || instances.MaxRetiring != runtime.MaxRetiringPluginInstances {
+		if err := json.Unmarshal(run(true, "plugin", "instances", agent.AgentID, id), &instances); err != nil || instances.AgentID != agent.AgentID || instances.ResourceID != id || len(instances.Items) != 1 || instances.Current == "" || instances.MaxRetiring != runtime.MaxRetiringPluginInstances || instances.MaxActiveCalls != runtime.MaxActivePluginCalls {
 			t.Fatal(instances, err)
 		}
 		item := instances.Items[0]

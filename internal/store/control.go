@@ -51,6 +51,9 @@ func pauseAgent(ctx context.Context, tx *sql.Tx, operation, agent string) (strin
 		if _, err := appendEvent(ctx, tx, agent, task, "task.cancelling", map[string]string{"operation_id": operation}); err != nil {
 			return "", err
 		}
+		if err := cancelTaskPluginCalls(ctx, tx, agent, task); err != nil {
+			return "", err
+		}
 	}
 	_, err = appendEvent(ctx, tx, agent, task, "agent.paused", map[string]any{"operation_id": operation, "paused": true, "state": next})
 	return task, err
@@ -125,6 +128,13 @@ func activeTask(ctx context.Context, tx *sql.Tx, agent, task string) error {
 	}
 	if state == "cancelling" || paused {
 		return protocol.E("task_cancelled", "task cancellation was requested")
+	}
+	plugins, err := pluginTaskStatus(ctx, tx, agent, task)
+	if err != nil {
+		return err
+	}
+	if plugins.Unknown != 0 {
+		return protocol.E("operation_unknown", "Task has an unverified plugin outcome; inspect the original operation")
 	}
 	return nil
 }

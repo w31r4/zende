@@ -62,6 +62,7 @@ func (c *Core) Run(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	var workers sync.WaitGroup
 	defer workers.Wait()
+	defer c.closePluginCalls()
 	defer cancel()
 	stopsDone := make(chan error, 1)
 	workers.Add(1)
@@ -204,9 +205,16 @@ func (c *Core) Run(ctx context.Context) error {
 
 func (c *Core) cancelTask(id string) {
 	c.loopMu.Lock()
-	defer c.loopMu.Unlock()
 	if cancel := c.workers[id]; cancel != nil {
 		cancel()
+	}
+	c.loopMu.Unlock()
+	c.pluginCallMu.Lock()
+	defer c.pluginCallMu.Unlock()
+	for _, call := range c.pluginCalls {
+		if call.task == id && id != "" {
+			call.cancel()
+		}
 	}
 }
 func (c *Core) forgetTask(id string) {
@@ -243,7 +251,26 @@ func (c *Core) executeWork(ctx, persist context.Context, w store.Work, resume *r
 			state = "unknown"
 		}
 	}
-	return c.Store.FinishTask(persist, w.Agent.ID, w.Task.ID, state, result, reason)
+	for {
+		if state != "unknown" {
+			if err := c.waitPluginTask(persist, w.Agent.ID, w.Task.ID); err != nil {
+				if persist.Err() != nil {
+					return nil
+				}
+				state, result = "unknown", ""
+				reason = safeFailure(err, "persistence_failed", "plugin completion could not be verified")
+			}
+		}
+		err := c.Store.FinishTask(persist, w.Agent.ID, w.Task.ID, state, result, reason)
+		var known *protocol.Error
+		if errors.As(err, &known) && (known.Data.Kind == "plugin_pending" || known.Data.Kind == "operation_unknown") && state != "unknown" {
+			if known.Data.Kind == "operation_unknown" {
+				state, result, reason = "unknown", "", known
+			}
+			continue // A plugin was accepted or became unknown before commit.
+		}
+		return err
+	}
 }
 
 type requestRecord struct {

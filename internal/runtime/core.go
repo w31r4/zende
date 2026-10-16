@@ -21,23 +21,28 @@ type Core struct {
 	InstanceID string
 	Runner     process.Runner
 	// Configure before Run; publication of hot resources is added separately.
-	Models        model.Resolver
-	RestoreModels model.Restorer
-	Catalog       ModelCatalog
-	Tools         *tool.Registry
-	Commands      []CommandHint
-	loopMu        sync.Mutex
-	loopRunning   bool
-	workers       map[string]context.CancelFunc // task ID, never just Agent ID
-	mcpMu         sync.Mutex
-	mcpSlots      map[protocol.ResourceTarget]*mcpSlot
-	mcpClosed     bool
-	pluginMu      sync.Mutex
-	pluginSlots   map[protocol.ResourceTarget]*pluginSlot
-	pluginOwned   map[*pluginSlot]protocol.ResourceTarget
-	pluginCleanup sync.WaitGroup
-	pluginClosed  chan struct{}
-	pluginsClosed bool
+	Models            model.Resolver
+	RestoreModels     model.Restorer
+	Catalog           ModelCatalog
+	Tools             *tool.Registry
+	Commands          []CommandHint
+	loopMu            sync.Mutex
+	loopRunning       bool
+	workers           map[string]context.CancelFunc // task ID, never just Agent ID
+	mcpMu             sync.Mutex
+	mcpSlots          map[protocol.ResourceTarget]*mcpSlot
+	mcpClosed         bool
+	pluginMu          sync.Mutex
+	pluginSlots       map[protocol.ResourceTarget]*pluginSlot
+	pluginOwned       map[*pluginSlot]protocol.ResourceTarget
+	pluginCleanup     sync.WaitGroup
+	pluginClosed      chan struct{}
+	pluginsClosed     bool
+	pluginCallMu      sync.Mutex
+	pluginCalls       map[protocol.PluginCallTarget]*pluginExecution
+	pluginCallWorkers sync.WaitGroup
+	pluginCallsClosed bool
+	pluginCallsDone   chan struct{}
 }
 
 func New(s *store.Store, config resource.Effective) *Core {
@@ -157,6 +162,9 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
 			return nil, err
 		}
+		if err := c.pluginCallFailure(p); err != nil {
+			return nil, err
+		}
 		record, err := c.Store.PluginCall(ctx, p)
 		if err != nil {
 			return nil, err
@@ -165,6 +173,8 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 			return nil, protocol.E("not_found", "plugin call not found for this Agent")
 		}
 		return record.Receipt, nil
+	case "plugin.cancel":
+		return c.cancelPluginCall(ctx, req)
 	case "plugin.progress":
 		var p protocol.PluginProgressQuery
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

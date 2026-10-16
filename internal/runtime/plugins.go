@@ -178,15 +178,16 @@ type PluginInstanceStatus struct {
 }
 
 type PluginInstances struct {
-	AgentID     string                 `json:"agent_id"`
-	ResourceID  string                 `json:"resource_id"`
-	Current     string                 `json:"current_instance_id,omitempty"`
-	Items       []PluginInstanceStatus `json:"items"`
-	MaxRetiring int                    `json:"max_retiring_instances"`
+	AgentID        string                 `json:"agent_id"`
+	ResourceID     string                 `json:"resource_id"`
+	Current        string                 `json:"current_instance_id,omitempty"`
+	Items          []PluginInstanceStatus `json:"items"`
+	MaxRetiring    int                    `json:"max_retiring_instances"`
+	MaxActiveCalls int                    `json:"max_active_calls"`
 }
 
 func (c *Core) pluginInstances(ctx context.Context, target protocol.ResourceTarget) (PluginInstances, error) {
-	out := PluginInstances{AgentID: target.AgentID, ResourceID: target.ID, Items: []PluginInstanceStatus{}, MaxRetiring: MaxRetiringPluginInstances}
+	out := PluginInstances{AgentID: target.AgentID, ResourceID: target.ID, Items: []PluginInstanceStatus{}, MaxRetiring: MaxRetiringPluginInstances, MaxActiveCalls: MaxActivePluginCalls}
 	status, err := c.Store.ResourceStatus(ctx, target)
 	if err != nil {
 		return out, err

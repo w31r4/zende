@@ -248,6 +248,13 @@ func (s *Store) BeginPluginCall(ctx context.Context, i PluginInvocation, owner s
 		if err := resourceAgent(ctx, tx, p.AgentID, true); err != nil {
 			return protocol.Accepted{}, err
 		}
+		var unresolved bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM plugin_calls WHERE agent_id=? AND state='unknown')`, p.AgentID).Scan(&unresolved); err != nil {
+			return protocol.Accepted{}, err
+		}
+		if unresolved {
+			return protocol.Accepted{}, protocol.E("operation_unknown", "an earlier plugin outcome is unverified; inspect the original operation before new calls")
+		}
 		if p.TaskID != "" {
 			if err := activeTask(ctx, tx, p.AgentID, p.TaskID); err != nil {
 				return protocol.Accepted{}, err

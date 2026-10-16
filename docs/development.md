@@ -379,7 +379,7 @@ Core 重启后，已保存结果可补入原工具结果位置，无须重连 MC
 
 ## 插件启动与协议协商
 
-Core 已接入插件注册、目录持久化、实例引用管理和状态查询，存储层保存调用、进度和结果回执。模型工具与 CLI 执行入口、provider/resource/event 扩展仍由 OpenSpec 8.2–8.5 交付。
+Core 已接入插件注册、实例引用、后台执行与持久调用记录。模型工具与 CLI 执行入口、provider/resource/event 扩展仍由 OpenSpec 8.2–8.5 交付。
 
 ```yaml
 schema_version: 1
@@ -451,6 +451,12 @@ zende --request-id refresh-plugin resource refresh AGENT RESOURCE
 
 存储接口供后续工具与 CLI 执行入口共用。`PriorPluginCall` 在连接或派发前查询原请求；`BeginPluginCall` 核对该 Agent 发布过的确切版本、定义、参数与 Scope，将操作接受、调用意图和 `plugin.dispatched` 事件同事务提交。并发重试只有一次获得派发资格，换传输 ID 仍返回原记录，换参数报冲突。Task 身份由入口核实并填入；存储层要求它正在运行且未被暂停或取消。
 
+Core 的 `startPluginCall` 共用这条流程：接受后后台执行并保存进度与结果，调用方断开不取消已接受工作。Core 最多管理 64 个活动调用或未能保存结果的故障记录，`plugin instances` 的 `max_active_calls` 返回此上限。公开执行入口仍需补齐调用者绑定与 CLI/工具适配。
+
+Core RPC `plugin.cancel` 使用独立操作请求 ID，参数为原调用的 `agent_id/operation_id`；取消意图、cancelling 事件和接受回执同事务保存后，才通知原 worker。重复请求返回原回执，已确认终态保持不变。停止 Task 同时保存所属插件的取消意图；Task 等这些调用落定后再结束。Core 退出取消并等待插件 worker，保存可确认的结果，再回收实例。
+
+插件结果未知时，所属 Task 保持待核实，拒绝该 Agent 的新插件调用；换 ID 或刷新插件不能绕过。结果保存失败时，Core 保留有界故障记录，`plugin inspect` 返回 persistence_failed，并阻止该 Agent 继续派发插件调用。重启后原持久意图转为 unknown，已有进度保留。其他 Agent 的插件调用继续独立处理。
+
 `AppendPluginProgress` 按连续 sequence 保存进度和事件；相同内容重复提交去重，缺号或改写报错。单调用最多保存 1024 条、合计 8 MiB，超限保留已提交部分。`MarkPluginCancelling` 只记录取消处理中；`FinishPluginCall` 接受原实例的已确认终态或 unknown/not_dispatched，并按原发布版本的 schema 核对完成证据。结果和事件原子提交，终态及旧进度保持不可改写。
 
 公开事件只含身份、状态、大小和固定错误，参数、进度值、结果正文留在独立记录中。CLI 查询已接通原操作记录，插件离线后仍可读取：
@@ -472,9 +478,10 @@ Core 启动把旧 Core 尚未结束的插件调用记为 unknown，保留原操�
 ```sh
 go test -race ./internal/store ./internal/runtime -run 'Test(PluginJournal|PluginSchema|CoreStartupHoldsUnfinishedPluginCall)' -count=3
 go test -race ./internal/runtime ./internal/cli -run 'TestPlugin(Lease|Retirement|CatalogThroughBinaryCLI)' -count=3
+go test -race ./internal/runtime -run '^TestPluginExecution' -count=3
 ```
 
-覆盖 tool/command、进度、已确认取消、异常退出、并发去重、事务回滚、分页完整性、进度限额及 schema 14→15。第二条验证 Core 的旧实例保持与回收，以及真实 CLI 的实例/回执查询、退出码、进度分页和中文结果重组。调用由测试所有者发起并保存，CLI 只读；公开执行入口仍待接入。
+覆盖 tool/command、进度、已确认取消、异常退出、并发去重、事务回滚、分页完整性、进度限额及 schema 14→15。第二条验证旧实例回收和真实 CLI 查询；第三条验证 Core 后台执行、断开、取消回滚、结果保存失败、Task 结束条件与并发退出。测试调用底层或 Core 内部执行接口，CLI 只读；公开执行入口仍待接入。
 
 ## Responses 接入
 

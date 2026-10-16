@@ -279,6 +279,18 @@ func (s *Store) FinishTask(ctx context.Context, agent, task, state, result strin
 		if err := runningTask(ctx, tx, agent, task); err != nil {
 			return err
 		}
+		if state != "unknown" {
+			plugins, err := pluginTaskStatus(ctx, tx, agent, task)
+			if err != nil {
+				return err
+			}
+			if plugins.Unknown != 0 {
+				return protocol.E("operation_unknown", "Task has an unverified plugin outcome")
+			}
+			if plugins.Pending != 0 {
+				return protocol.E("plugin_pending", "Task is waiting for its original plugin calls")
+			}
+		}
 		var previous string
 		var agentBefore string
 		var paused bool

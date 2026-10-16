@@ -74,15 +74,10 @@ func (s *Store) MarkPluginCancelling(ctx context.Context, target PluginCallTarge
 	err := s.Transaction(ctx, func(tx *sql.Tx) error {
 		var err error
 		r, err = ownedPlugin(ctx, tx, target, owner)
-		if err != nil || r.Receipt.State != "dispatched" {
+		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE plugin_calls SET state='cancelling' WHERE operation_id=?`, target.OperationID); err != nil {
-			return err
-		}
-		r.Receipt.State = "cancelling"
-		_, err = appendEvent(ctx, tx, target.AgentID, r.Receipt.TaskID, "plugin.cancelling", r.Receipt)
-		return err
+		return markPluginCancelling(ctx, tx, r)
 	})
 	if err != nil {
 		return nil, err
