@@ -137,5 +137,86 @@ func TestWorkspacePromptHintsMatchCLI(t *testing.T) {
 		if !strings.Contains(hint.Usage, "'/binary path/zende' --profile 'bound-profile'") {
 			t.Fatal(hint.Usage)
 		}
+		if hint.Name == "model.connections" {
+			if !strings.Contains(hint.Usage, "[--agent AGENT]") || !strings.Contains(hint.Guidance, "--agent AGENT") || !strings.Contains(hint.Guidance, "same --agent") {
+				t.Fatal("model hint omits Agent scope", hint)
+			}
+			for _, name := range []string{"connections", "list"} {
+				modelCmd, _, err := root.Find([]string{"model", name})
+				if err != nil || modelCmd.Flags().Lookup("agent") == nil {
+					t.Fatal("hint advertises an unregistered flag", name, err)
+				}
+			}
+		}
+	}
+}
+
+type workspaceQueryEcho struct{}
+
+func (workspaceQueryEcho) Handle(_ context.Context, req protocol.Request) (any, error) {
+	return req, nil
+}
+
+func (workspaceQueryEcho) Subscribe(context.Context, protocol.Request, func(protocol.Event) error) error {
+	return protocol.E("unsupported", "fixture only accepts queries")
+}
+
+func TestWorkspaceModelCLIForwardsAgentScope(t *testing.T) {
+	dir, err := os.MkdirTemp("/tmp", "zende-model-query-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+	paths, err := (&app{profile: "queries"}).paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := protocol.Listen(paths.Socket, workspaceQueryEcho{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(ctx) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	for _, tc := range []struct {
+		name, method string
+		args         []string
+		params       string
+	}{
+		{"connections default", "model.connections", []string{"model", "connections"}, `{"limit":20}`},
+		{"models default", "model.list", []string{"model", "list", "configured"}, `{"connection":"configured","limit":20}`},
+		{"connections scoped", "model.connections", []string{"model", "connections", "--agent", "agent-one", "--after", "previous", "--limit", "3", "--version", "catalog-one"}, `{"agent_id":"agent-one","after":"previous","limit":3,"version":"catalog-one"}`},
+		{"models scoped", "model.list", []string{"model", "list", "--agent", "agent-two", "plugin:resource:provider", "--after", "previous-model", "--limit", "7", "--version", "catalog-two"}, `{"agent_id":"agent-two","connection":"plugin:resource:provider","after":"previous-model","limit":7,"version":"catalog-two"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var out, diagnostic bytes.Buffer
+			code := Run(ctx, append([]string{"--profile", "queries"}, tc.args...), nil, &out, &diagnostic, BuildInfo{})
+			if code != 0 || diagnostic.Len() != 0 {
+				t.Fatal(code, diagnostic.String())
+			}
+			var req protocol.Request
+			if err := json.Unmarshal(out.Bytes(), &req); err != nil || req.Method != tc.method || req.OperationID != "" {
+				t.Fatal("incorrect read request", req, err)
+			}
+			var got, want map[string]any
+			if err := json.Unmarshal(req.Params, &got); err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal([]byte(tc.params), &want); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("query = %v; want %v", got, want)
+			}
+		})
 	}
 }

@@ -896,6 +896,24 @@ go test ./internal/resource/mcp \
 
 回查 TUI 发现来源校验只接受绝对路径，补齐 `plugin://` 和来源验证后重跑全量测试。提示词版本 17 参考 Pi 的短入口组织；文档按 trim-cn-tech-doc 保留用法、限额、来源和失败条件，CLI 帮助与键盘入口按 tui-design 核对。
 
+## 2026-10-16：插件模型与热替换
+
+8.4 完成，累计 46/68 项。8.3 的 provider 已接通公共模型循环，双向事件订阅仍待完成。
+
+| 检查 | 测试 | 结果 |
+| --- | --- | --- |
+| 模型协议 | `TestPluginModelTwoRoundToolAndPrivateState`、`TestPluginModelResolvedImagesExceedOrdinaryFrame`、`TestPluginModelRejectsBrokenStreams` | 两轮工具、错误回填、私有字段及图片字节通过；缺终态、错关联、断流和未完整参数不成为成功响应 |
+| 取消与预算 | `TestPluginModelCancellationIsCorrelatedAndConfirmed`、`TestPluginModelFailureBoundsAndCompletionBeforeExit`、`TestPluginModelQueueByteBudgetAndChannelIsolation` | 取消关联原请求；确认后保留同实例其他调用，无确认时关闭故障实例；消息数、字节和通道各自检查 |
+| 模型目录 | `TestModelCatalogScopedMergeIsolationAndNoRPC`、`TestModelCatalogVersionPublicationAndOffline`、`TestPluginModelPrivateDataIsScopedToInstallation` | Agent 范围、分页和版本正确；查询不派发插件 RPC；私有数据区分安装来源、定义版本及型号 |
+| 换版与引用 | `TestPluginModelLeaseRefreshAndExactRestore`、`TestPluginLeasePreservesRunningCallAcrossRefresh`、`TestPluginRetirementLimitPreservesCurrentAndReleasesCapacity` | 当前工具/模型流保留旧实例；失败候选保留旧版；引用归零后回收，新请求显式选用新版 |
+| 持久模型循环 | `TestPluginModelRunsTwoToolRoundsWithoutConfiguredProvider`、`TestPluginModelRecoveryUsesExplicitUpgradeAndKeepsTask`、`TestPluginModelUnavailableBeforeDispatchKeepsTask` | 请求保存实际实例与资源版本；旧快照可离线验证，显式升级后在原 Task 继续；离线依赖保留待恢复状态，部分工具不重放 |
+| 子 Agent | `TestPluginSpawnReadyOwnedDependencyAndChildCompletion`、`TestPluginSpawnPreparationFailureLeavesNoChild`、`TestSpawnWithDependencyRollsBackEveryProjection` | 普通目录/worktree 均使用独立实例；父换版不影响子任务；准备或事务失败无半成品，重试返回原身份 |
+| CLI/TUI | `TestPluginModelThroughBinaryCLI`、`TestModelSelectionQueryCapturesCurrentAgent` | 真实二进制经 UDS 注册、发现、选择及执行；子插件初始化等待 11 秒仍可创建并完成任务；TUI 查询带当前 Agent，沿用已有选择界面 |
+
+全量 `go test ./...`、`go test -race ./...`、模型恢复定向 race 五轮、相关包 `go vet`、CLI 帮助和 OpenSpec strict 校验通过。首轮全量测试发现：离线快照恢复成功后，自动恢复会提前激活任务，随后因进程缺失变成 failed。现已在激活前检查当前显式选择，并保留检查后失去依赖的原 Task；回归测试等待自动恢复结束后再断言状态。
+
+测试使用隔离目录、本地真实插件子进程和确定性模型；CLI 二进制通过 UDS 连接测试进程内的 Core。未访问外部模型或使用用户凭据，真实端点与本机部署仍待验收。提示词版本 18 参考 Pi 的短能力入口，文档按 trim-cn-tech-doc 保留用法、预算和失败条件；tui-design 用于核对模型选择与 CLI 入口，主界面未增文字。
+
 ## 进行中
 
-继续 8.3 的 provider 模型流和双向事件订阅。7.1、7.2 的配置/provider 热发布与外部目录监视尚未完成，会话复制还依赖第 9 组。Day1 整体与本机部署尚未完成。origin 已连接用户创建的 `w31r4/zende`，实现按原子提交推送。
+继续 8.3 的双向事件订阅及 8.5 的完整故障验收。7.1、7.2 的配置/provider 热发布与外部目录监视尚未完成，会话复制还依赖第 9 组。Day1 整体与本机部署尚未完成。origin 已连接用户创建的 `w31r4/zende`，实现按原子提交推送。

@@ -27,13 +27,17 @@ func selectionShell(t *testing.T) (Shell, *imageTestClient) {
 		case "agent.selection":
 			*target.(*protocol.AgentSelection) = protocol.AgentSelection{AgentID: "a", Cwd: "/project", Revision: 7}
 		case "model.connections":
+			var q protocol.ConnectionQuery
+			if protocol.StrictDecode(req.Params, &q) != nil || q.AgentID != "a" {
+				t.Fatal("connection query lost Agent scope", q)
+			}
 			*target.(*protocol.ConnectionPage) = protocol.ConnectionPage{Version: "catalog-1", Items: []protocol.ConnectionInfo{
 				{ID: "one", Label: "Same brand", Protocol: "responses", Supported: true},
 				{ID: "two", Label: "Same brand", Protocol: "responses", Supported: true},
 			}}
 		case "model.list":
 			var q protocol.ModelQuery
-			if protocol.StrictDecode(req.Params, &q) != nil || q.Version != "catalog-1" || q.Limit != 40 {
+			if protocol.StrictDecode(req.Params, &q) != nil || q.AgentID != "a" || q.Version != "catalog-1" || q.Limit != 40 {
 				t.Fatal(q)
 			}
 			*target.(*protocol.ModelPage) = protocol.ModelPage{Connection: protocol.ConnectionInfo{ID: q.Connection, Supported: true}, Version: q.Version,
@@ -77,6 +81,67 @@ func selectionLocal(t *testing.T, m Shell, name string, args ...string) Shell {
 		t.Fatal(name, err, "local choice caused I/O")
 	}
 	return m
+}
+
+func TestModelSelectionQueryCapturesCurrentAgent(t *testing.T) {
+	for _, agent := range []string{"agent-one", "agent-two"} {
+		for _, tc := range []struct {
+			kind    string
+			initial bool
+		}{
+			{"connections", true},
+			{"connections", false},
+			{"models", false},
+		} {
+			t.Run(fmt.Sprint(agent, "/", tc.kind, "/", tc.initial), func(t *testing.T) {
+				m, client := selectionShell(t)
+				m.agent = agent
+				m.selection = &selectionPanel{connection: "configured", version: "catalog-1"}
+				client.handle = func(req protocol.Request, out any) error {
+					if req.OperationID != "" {
+						t.Fatal("catalog query is a mutation")
+					}
+					switch req.Method {
+					case "agent.selection":
+						var q protocol.Target
+						if protocol.StrictDecode(req.Params, &q) != nil || q.AgentID != agent {
+							t.Fatal(q)
+						}
+						*out.(*protocol.AgentSelection) = protocol.AgentSelection{AgentID: agent, Cwd: "/project"}
+					case "model.connections":
+						var q protocol.ConnectionQuery
+						want := protocol.ConnectionQuery{AgentID: agent, After: "next", Limit: 40, Version: "catalog-1"}
+						if protocol.StrictDecode(req.Params, &q) != nil || q != want {
+							t.Fatal("connection scope or paging changed", q)
+						}
+					case "model.list":
+						var q protocol.ModelQuery
+						want := protocol.ModelQuery{AgentID: agent, Connection: "configured", After: "next", Limit: 40, Version: "catalog-1"}
+						if protocol.StrictDecode(req.Params, &q) != nil || q != want {
+							t.Fatal("model scope or paging changed", q)
+						}
+					default:
+						t.Fatal("unexpected query", req.Method)
+					}
+					return nil
+				}
+				cmd := m.selectionQuery(tc.kind, "", "next", tc.initial)
+				if len(client.requests) != 0 || cmd == nil {
+					t.Fatal("query did I/O before tea.Cmd ran")
+				}
+				// A deferred command must not borrow a later UI selection's identity.
+				m.agent = "another-agent"
+				msg := cmd().(selectionMsg)
+				wantRequests := 1
+				if tc.initial {
+					wantRequests++
+				}
+				if msg.err != nil || len(client.requests) != wantRequests {
+					t.Fatal("query failed or fetched extra pages", msg.err, client.requests)
+				}
+			})
+		}
+	}
 }
 
 func TestModelPickerUsesConfiguredConnectionsAndDefersAllWrites(t *testing.T) {

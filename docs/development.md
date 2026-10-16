@@ -92,9 +92,9 @@ model: local/my-model
 
 ## 模型目录与工作目录查询
 
-`zende model connections` 列出当前 core 配置的连接，`model list CONNECTION` 返回该连接的型号、思考力度和能力声明。同厂商的连接按 ID 区分，空配置返回空列表；`supported` 只表示 adapter 已实现，当前为 Responses。查询不解析凭据、不访问端点，认证和网络状态在模型请求时检查。
+`zende model connections` 列出当前 core 配置的连接，`model list CONNECTION` 返回型号、思考力度和能力声明。两条命令加 `--agent AGENT` 可包含该 Agent 的就绪插件 provider。同厂商连接按 ID 区分，空配置返回空列表；`supported` 只表示 adapter 已实现，内置协议目前为 Responses。查询不解析凭据、不访问端点，认证和网络状态在模型请求时检查。
 
-两级目录均支持 `--after NEXT`、`--limit`（默认 20，最多 100）和 `--version VERSION`；跨页或分步选择携带返回版本，配置变化时报 `catalog_changed`。每页最多 1 MiB，超限可减小页数或缩短元数据。返回值只含公开元数据，端点与凭据引用留在连接配置中。
+两级目录均支持 `--after NEXT`、`--limit`（默认 20，最多 100）和 `--version VERSION`；跨页或分步选择携带返回版本，配置或插件目录变化时报 `catalog_changed`。每页最多 1 MiB，超限可减小页数或缩短元数据。返回值只含公开元数据，端点与凭据引用留在连接配置中。
 
 `zende workspace directory AGENT [PATH]` 只列当前目录的子目录，含隐藏目录和指向目录的链接；相对路径按 Agent cwd 解析。返回 `path`、`parent`、`entries`，根目录省略 parent；客户端据此展示 `.` 和 `..`。支持 `--after NEXT`、`--limit`（默认 40，最多 100）。目录为实时观察，翻页期间新增项可在刷新后出现。
 
@@ -379,7 +379,7 @@ Core 重启后，已保存结果可补入原工具结果位置，无须重连 MC
 
 ## 插件启动与协议协商
 
-Core 已接入插件注册、实例引用、原生模型工具、CLI 命令、skill/prompt 资源和持久调用记录。provider 模型流、双向事件订阅及完整故障验收仍由 OpenSpec 8.3–8.5 交付。
+Core 已接入插件工具、CLI 命令、provider 模型流和 skill/prompt 资源，按请求保留实例和版本。双向事件订阅及完整故障验收继续由 OpenSpec 8.3、8.5 交付。
 
 ```yaml
 schema_version: 1
@@ -401,7 +401,7 @@ stdin/stdout 使用 [JSON-RPC 2.0](https://www.jsonrpc.org/specification)，UTF-
 
 初始化最多 30 秒，调用方可提前取消；准备上下文结束不关闭已就绪实例。所有者调用 Close 时先请求 `plugin.shutdown`，最多等 2 秒，再对进程组发送 TERM，最多等 300 ms 后发送 KILL，回收主进程并关闭管道。退出时诊断最多再排空 100 ms；脱离原进程组的外部进程不在此回收保证内。
 
-协议帧上限 8 MiB。stderr 持续读取，保存脱敏后的末尾 64 KiB，记录读取和淘汰字节数，展示时转义控制字符。显式环境引用值，以及继承环境中名称含 KEY/TOKEN/SECRET/PASSWORD/PASSWD/CREDENTIAL/AUTH 的值用于脱敏；单值最多 64 KiB、最多收集 256 项。跨读取边界的凭据仍脱敏，最多暂存最长凭据长度减一的尾部，关闭时冲刷。未知或编码后的敏感值需插件自行处理。
+插件输出帧上限 8 MiB；宿主输入帧同限，只有 `plugin.model.stream` 放宽至 32 MiB，以容纳图片。stderr 持续读取，保存脱敏后的末尾 64 KiB，记录读取和淘汰字节数，展示时转义控制字符。显式环境引用值，以及继承环境中名称含 KEY/TOKEN/SECRET/PASSWORD/PASSWD/CREDENTIAL/AUTH 的值用于脱敏；单值最多 64 KiB、最多收集 256 项。跨读取边界的凭据仍脱敏，最多暂存最长凭据长度减一的尾部，关闭时冲刷。未知或编码后的敏感值需插件自行处理。
 
 Info 返回实例身份、manifest 摘要、协商版本、状态、PID、能力、限额和 trusted_execution。摘要覆盖启动配置，不是可执行文件哈希。插件按当前用户权限运行；进程分离用于生命周期管理，外部副作用不随关闭回滚。初始化错误返回的实例已关闭，仅供诊断，失败候选不影响其他实例。
 
@@ -426,7 +426,7 @@ provider 声明名称、描述和型号列表，型号使用公共 `ModelInfo` �
 
 resource 声明 skill/prompt 的名称、描述、entry、disable_model_invocation，以及文件路径、字节数、SHA-256 和执行位。skill 入口为 SKILL.md，prompt 只有一个入口文件；路径限定包内相对路径，文件限额沿用资源包。定义引用覆盖文件清单，后续读取须核对正文。仅 tools/commands 的旧目录保持原版本算法；同一 manifest 内增加无关定义保留已有条目的 ref。
 
-provider 目录已可读取，模型流尚未接入。资源正文使用下面的注册和读取入口；双向事件订阅仍在实施。
+模型选择、资源注册和读取入口见下文；双向事件订阅仍在实施。
 
 `status` 区分进程可用性与最近更新状态。客户端退出后插件由 Core 持有；Core 关闭时回收进程。重启后保留目录，进程状态为 unavailable，显式 refresh 准备新实例。重复已接受请求只返回原回执；同版本 refresh 保留健康实例，离线时重新启动。修改可执行文件后应更新 manifest 的 version，因为摘要不覆盖二进制内容。
 
@@ -434,7 +434,39 @@ provider 目录已可读取，模型流尚未接入。资源正文使用下面�
 
 新版发布后，新调用只能取得新实例；已取得引用的调用仍使用原定义、Scope 和进程，保存结果后释放引用，最后一个引用释放时关闭旧实例。准备失败保留当前实例；Core 退出会关闭全部新旧实例。每个 Agent/资源最多保留 32 个退役实例，达到上限时拒绝需要增加退役实例的刷新；原调用结束并回收实例后可重新刷新，同版本健康实例的刷新不占名额。
 
-真实子进程测试已验证调用期间换版、旧调用完成后回收、失败候选、保留上限和并发关闭。provider 模型流仍在实施，8.4 保持未完成。
+真实子进程测试覆盖工具调用和模型流期间换版、旧实例回收、失败候选、保留上限及并发关闭。
+
+### 插件模型
+
+注册声明 `providers` 的插件后，按当前 Agent 查询并显式选择：
+
+```sh
+zende model connections --agent AGENT
+zende model list plugin:RESOURCE:PROVIDER --agent AGENT
+zende agent select AGENT --model plugin:RESOURCE:PROVIDER/MODEL --effort high
+```
+
+TUI `/model` 使用同一目录和型号/力度选择流程。目录只包含配置连接及该 Agent 已就绪的插件；不传 `--agent` 时保持原配置目录。分页版本绑定 Agent、配置和当前插件版本，变化后重新查询。查询不启动插件，也不检查外部端点或凭据。
+
+选择保存资源 ID/版本、provider 定义、型号和力度。每次请求先取得对应实例引用，`model.started.plugin_binding` 保存实际实例、manifest、目录、资源版本和 generation，随后发送。冲突重试或流结束释放引用；更新不切换已开始的请求。实例离线或版本替换阻止后续派发时，Task 以 model_dependency_unavailable 保留待恢复状态；恢复前重新检查当前显式选择，避免离线依赖将原 Task 变成失败。
+
+Core 重启后从保存的目录恢复原选择，发送下一请求时再检查实例。原版本重新 ready 后可继续；也可显式选择兼容的新模型，在恢复任务的下一请求生效。缺失、换版或另一 Agent 未发布该资源时明确报错。manifest 摘要不覆盖可执行文件字节，修改二进制须更新版本。
+
+子 Agent 继承插件模型时，先准备独立实例，核对父选择的资源版本与定义，再将子身份、资源发布、选择和首个 Task 一起提交。准备失败不创建子 Agent；原操作可重试，已成功的重试返回原回执。CLI spawn 等待预算为 40 秒，覆盖 30 秒插件准备及收尾，调用方可提前取消。普通目录和 worktree 使用同一路径，父 Agent 后续换版不影响子实例。源文件已换版时须先显式重选；保存的目录不包含旧可执行文件。
+
+| 协议消息 | 内容 |
+| --- | --- |
+| `plugin.model.stream` | params 含 operation_id、definition_ref、name、effort、protocol、scope、公共 request 和 images |
+| `plugin.model.delta` | 无 id 通知；params 含 request_id、operation_id、从 1 连续递增的 sequence、公共 model.Delta |
+| 原请求响应 | result 含 operation_id、state；completed/cancelled 不带 error，failed 必须带有界 kind/message |
+
+`operation_id` 等于公共 request_id，通知中的 request_id 则匹配 JSON-RPC 请求 ID。公共事件包括文本、类别、工具参数、协议私有数据、用量和 response.end。response.end 与合法 completed 回执均到达后才成功；断流或参数不完整时不执行工具。缺失用量保留未知值。私有数据只回传给同安装来源、同定义版本、同型号的插件；切换不兼容模型时报错并保留历史。
+
+images 按附件 ID 映射 `{media_type,data}`，data 为 base64，仅发送实际引用的本地 PNG/JPEG 字节；单图最多 4 MiB、总计 12 MiB，仍受请求帧预算限制。模型流和工具进度分别关联，互相串用即协议错误。每请求最多排队 32 条模型通知、合计 8 MiB；公共响应组装上限沿用 4 MiB、单块 1 MiB、128 块。
+
+取消使用已有 `plugin.cancel`，最多等 5 秒确认。已确认取消保留同实例其他能力；无确认则关闭故障实例，保留已收事件并报告 transport_unknown。观察者持久化失败也终止连接。该通道直接接入公共模型循环和历史，不经工具结果包装。
+
+测试入口：`go test -race ./internal/resource/plugin ./internal/runtime -run TestPluginModel`。使用真实本地插件子进程，覆盖图片、两轮工具、断流、取消、换版和精确快照恢复；外部模型服务仍需单独验收。
 
 ### 插件 skill/prompt
 

@@ -22,6 +22,7 @@ import (
 	"zende.local/harness/internal/provider"
 	"zende.local/harness/internal/resource"
 	"zende.local/harness/internal/resource/mcp"
+	"zende.local/harness/internal/resource/plugin"
 	"zende.local/harness/internal/runtime"
 	"zende.local/harness/internal/store"
 	"zende.local/harness/internal/tool"
@@ -295,6 +296,9 @@ func requestTimeout(method string, params any) time.Duration {
 		return time.Duration(p.WaitMS)*time.Millisecond + 5*time.Second
 	}
 	switch method {
+	case "agent.spawn":
+		// A selected plugin model must prepare an independent child instance.
+		return plugin.InitializeTimeout + 10*time.Second
 	case "resource.register", "resource.refresh", "mcp.search":
 		// MCP initialization/catalog refresh may consume the full server budget.
 		// Leave time for receipt persistence and process cleanup before replying.

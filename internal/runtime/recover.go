@@ -55,6 +55,9 @@ func (c *Core) recoverWork(taskCtx, persist context.Context, held store.HeldTask
 		if failure == nil {
 			resume, failure = c.prepareResume(persist, j)
 		}
+		if failure == nil {
+			failure = c.checkResumeModelDependency(persist, resume)
+		}
 		if failure != nil {
 			err := c.Store.RecordRecoveryFailure(persist, held.AgentID, held.TaskID, j.Work.Agent.Seq, safeFailure(failure, "recovery_unavailable", "original task cannot yet continue; inspect recovery records"))
 			if isFailure(err, "recovery_conflict") {
@@ -149,19 +152,15 @@ func (c *Core) prepareResume(ctx context.Context, j *recoveryJournal) (*resumedT
 		if j.Request != nil {
 			return nil, protocol.E("model_snapshot_missing", "original model settings were not recorded; task remains held")
 		}
-		if c.modelResolver() == nil {
+		if !c.modelAvailable() {
 			return nil, protocol.E("model_unavailable", "no model is configured for this not-yet-dispatched task")
 		}
 		return nil, nil // Claimed before any settings/request: start same Task.
 	}
-	restorer := c.RestoreModels
-	if restorer == nil {
-		restorer, _ = c.Models.(model.Restorer)
-	}
-	if restorer == nil || len(j.Settings.Binding) == 0 {
+	if len(j.Settings.Binding) == 0 {
 		return nil, protocol.E("model_snapshot_missing", "original provider binding cannot be restored")
 	}
-	b, err := restorer.Restore(ctx, append(json.RawMessage(nil), j.Settings.Binding...))
+	b, err := c.restoreBinding(ctx, j.Work.Agent.ID, append(json.RawMessage(nil), j.Settings.Binding...))
 	if err != nil {
 		return nil, err
 	}

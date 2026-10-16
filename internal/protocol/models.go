@@ -1,12 +1,14 @@
 package protocol
 
 type ConnectionQuery struct {
+	AgentID string `json:"agent_id,omitempty"`
 	After   string `json:"after,omitempty"`
 	Limit   int    `json:"limit,omitempty"`
 	Version string `json:"version,omitempty"`
 }
 
 type ModelQuery struct {
+	AgentID    string `json:"agent_id,omitempty"`
 	Connection string `json:"connection"`
 	After      string `json:"after,omitempty"`
 	Limit      int    `json:"limit,omitempty"`

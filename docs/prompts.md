@@ -59,6 +59,8 @@ Zende 保持 exec、进程继续操作和 patch 的工具边界。Pi 的 read/ed
 
 版本 17 在 `resource.register` 短说明中补充插件资源：先查 `plugin catalog`，按 kind/name 注册 `plugin://` 来源，更新时先刷新父插件。正文沿用版本化资源读取，参数细节留给帮助；用户选中的 skill 另带 `plugin_origin`。旧 Task 保留原提示词。
 
+版本 18 为模型目录入口补充 `--agent AGENT`，让模型发现当前 Agent 的就绪插件 provider；型号和力度仍通过 `model list` 查询，再显式选用。继续采用 Pi 的短入口和按能力组合方式，详细协议留给帮助与开发文档，旧 Task 保留原提示词。
+
 ## Skill/prompt 的请求级更新
 
 `resource.register/refresh` 校验并保存不可变文件包；失败保留上一版。任务每次请求从同一数据库事务读取上下文和当前资源目录，`model.started.resource_catalog` 保存 generation 及全部 ID/版本。它记录当时可发现的定义，不代表正文已经应用。

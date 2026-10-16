@@ -17,7 +17,17 @@ import (
 // Spawn writes identity, provenance, inherited context, settings, first Task
 // and the retry receipt together. cwd was checked by core against revision.
 func (s *Store) Spawn(ctx context.Context, req protocol.Request, p protocol.SpawnAgent, cwd string, revision int64, maxAgents, maxDepth int) (protocol.Accepted, error) {
-	return s.accept(ctx, req, func(tx *sql.Tx) (protocol.Accepted, error) {
+	accepted, _, err := s.SpawnWithDependency(ctx, req, p, cwd, revision, maxAgents, maxDepth, nil)
+	return accepted, err
+}
+
+// SpawnWithDependency also publishes the prepared selected-model dependency.
+// publication is non-nil only for a newly committed child, never a retry or a
+// rolled-back transaction. The runtime installs its ready instance before
+// releasing its publication lock or exposing the acceptance to the caller.
+func (s *Store) SpawnWithDependency(ctx context.Context, req protocol.Request, p protocol.SpawnAgent, cwd string, revision int64, maxAgents, maxDepth int, dependency *SpawnDependency) (protocol.Accepted, *SpawnDependencyPublication, error) {
+	var publication *SpawnDependencyPublication
+	accepted, err := s.accept(ctx, req, func(tx *sql.Tx) (protocol.Accepted, error) {
 		var tree *protocol.Worktree
 		if p.Workspace == "worktree" {
 			r, err := worktreeRecord(ctx, tx, req.OperationID)
@@ -32,6 +42,9 @@ func (s *Store) Spawn(ctx context.Context, req protocol.Request, p protocol.Spaw
 		}
 		settings, source, entries, err := prepareSpawn(ctx, tx, p, cwd, revision, maxAgents, maxDepth)
 		if err != nil {
+			return protocol.Accepted{}, err
+		}
+		if err := validateSpawnDependency(ctx, tx, p.ParentID, settings, dependency); err != nil {
 			return protocol.Accepted{}, err
 		}
 		child := protocol.Agent{ID: protocol.NewID("agent"), ParentID: p.ParentID, Cwd: cwd, State: "idle", Model: settings.Choice.Model}
@@ -51,6 +64,12 @@ func (s *Store) Spawn(ctx context.Context, req protocol.Request, p protocol.Spaw
 		}
 		if _, err := appendEvent(ctx, tx, child.ID, "", "agent.selection", choice); err != nil {
 			return protocol.Accepted{}, err
+		}
+		if dependency != nil {
+			publication, err = publishSpawnDependency(ctx, tx, child.ID, dependency.Package)
+			if err != nil {
+				return protocol.Accepted{}, err
+			}
 		}
 		for _, entry := range entries {
 			record := entry.Record
@@ -118,6 +137,10 @@ func (s *Store) Spawn(ctx context.Context, req protocol.Request, p protocol.Spaw
 		}
 		return accepted, nil
 	})
+	if err != nil {
+		return protocol.Accepted{}, nil, err
+	}
+	return accepted, publication, nil
 }
 
 func prepareSpawn(ctx context.Context, tx *sql.Tx, p protocol.SpawnAgent, cwd string, revision int64, maxAgents, maxDepth int) (Selection, protocol.SpawnSource, []contextEntry, error) {

@@ -29,21 +29,23 @@ func (a *app) workspaceCommands(root *cobra.Command) {
 	}})
 	root.AddCommand(workspace)
 
-	model := &cobra.Command{Use: "model", Short: "Inspect configured connections and models; credentials remain unresolved"}
+	model := &cobra.Command{Use: "model", Short: "Inspect model catalogs; credentials remain unresolved"}
 	var connectionQuery protocol.ConnectionQuery
-	connections := &cobra.Command{Use: "connections", Short: "List configured connections and installed protocol support (not network health)", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	connections := &cobra.Command{Use: "connections", Short: "List connections and installed protocol support (not network health)", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		return a.call(cmd, "model.connections", false, connectionQuery)
 	}}
+	connections.Flags().StringVar(&connectionQuery.AgentID, "agent", "", "Include this Agent's plugin providers")
 	connections.Flags().StringVar(&connectionQuery.After, "after", "", "Previous page's next cursor")
 	connections.Flags().IntVar(&connectionQuery.Limit, "limit", 20, "Maximum connections (1–100)")
 	connections.Flags().StringVar(&connectionQuery.Version, "version", "", "Require an unchanged catalog version")
 	model.AddCommand(connections)
 	var modelQuery protocol.ModelQuery
-	list := &cobra.Command{Use: "list CONNECTION", Short: "List configured models, context limits, images and supported efforts", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+	list := &cobra.Command{Use: "list CONNECTION", Short: "List models, context limits, images and supported efforts", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		p := modelQuery
 		p.Connection = args[0]
 		return a.call(cmd, "model.list", false, p)
 	}}
+	list.Flags().StringVar(&modelQuery.AgentID, "agent", "", "Include this Agent's plugin providers")
 	list.Flags().StringVar(&modelQuery.After, "after", "", "Previous page's next cursor")
 	list.Flags().IntVar(&modelQuery.Limit, "limit", 20, "Maximum models (1–100)")
 	list.Flags().StringVar(&modelQuery.Version, "version", "", "Require an unchanged catalog version")
@@ -56,6 +58,6 @@ func workspaceHints(executable, profile string) []runtime.CommandHint {
 	return []runtime.CommandHint{
 		{Name: "workspace.directory", Usage: prefix + "workspace directory AGENT [PATH]", Guidance: "Browse directories relative to the Agent cwd without changing it. Use --after NEXT for another page. Shell commands may still inspect files directly."},
 		{Name: "workspace.git", Usage: prefix + "workspace git AGENT [PATH]", Guidance: "Read local branch and change counts without fetching or updating the index. Counts exclude submodule internals; an untracked directory counts once."},
-		{Name: "model.connections", Usage: prefix + "model connections", Guidance: "Inspect configured connections, not a built-in vendor list. Supported means an installed adapter, not verified credentials or endpoint health. Use model list CONNECTION for models and efforts."},
+		{Name: "model.connections", Usage: prefix + "model connections [--agent AGENT]", Guidance: "Inspect configured connections; add --agent AGENT to include that Agent's plugin providers. Use model list CONNECTION with the same --agent for models and efforts. Supported means an installed adapter, not verified credentials or endpoint health."},
 	}
 }

@@ -73,9 +73,9 @@ func (m *Shell) selectionQuery(kind, path, after string, initial bool) tea.Cmd {
 		}
 		switch kind {
 		case "connections":
-			result.err = queryUI(ctx, client, "model.connections", protocol.ConnectionQuery{After: after, Limit: 40, Version: p.version}, &result.connections)
+			result.err = queryUI(ctx, client, "model.connections", protocol.ConnectionQuery{AgentID: agent, After: after, Limit: 40, Version: p.version}, &result.connections)
 		case "models":
-			result.err = queryUI(ctx, client, "model.list", protocol.ModelQuery{Connection: p.connection, After: after, Limit: 40, Version: p.version}, &result.models)
+			result.err = queryUI(ctx, client, "model.list", protocol.ModelQuery{AgentID: agent, Connection: p.connection, After: after, Limit: 40, Version: p.version}, &result.models)
 		case "directory":
 			if path == "" {
 				path = p.base.Cwd

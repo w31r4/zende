@@ -167,6 +167,9 @@ func (j *recoveryJournal) add(e protocol.Event) error {
 		if r.ResourceCatalog != nil && (!r.ResourceCatalog.Valid() || r.ResourceCatalog.Generation > r.Cursor) {
 			return recoveryInvalid()
 		}
+		if !validPluginModelRecord(r) {
+			return recoveryInvalid()
+		}
 		if j.Request != nil && j.Request.ResourceCatalog != nil && (r.ResourceCatalog == nil || r.ResourceCatalog.Generation < j.Request.ResourceCatalog.Generation) {
 			return recoveryInvalid()
 		}

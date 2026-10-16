@@ -12,7 +12,7 @@ import (
 func (c *Core) spawnAgent(ctx context.Context, req protocol.Request, p protocol.SpawnAgent) (protocol.Accepted, error) {
 	// An accepted retry does not revalidate paths, current limits or the parent's
 	// now changed settings. Its durable identity is the answer.
-	if old, found, err := c.Store.AcceptedRequest(ctx, req); found || err != nil {
+	if old, found, err := c.acceptedSpawn(ctx, req); found || err != nil {
 		return old, err
 	}
 	mode, err := protocol.SpawnWorkspaceMode(p.Workspace, p.WorktreePath)
@@ -34,7 +34,7 @@ func (c *Core) spawnAgent(ctx context.Context, req protocol.Request, p protocol.
 	if err != nil {
 		return protocol.Accepted{}, err
 	}
-	return c.Store.Spawn(ctx, req, p, cwd, settings.Choice.Revision, c.Config.Config.Limits.Agents, c.Config.Config.Limits.Depth)
+	return c.spawnWithModelDependency(ctx, req, p, cwd, settings)
 }
 
 func (c *Core) spawnInWorktree(ctx context.Context, req protocol.Request, p protocol.SpawnAgent) (protocol.Accepted, error) {
@@ -48,7 +48,7 @@ func (c *Core) spawnInWorktree(ctx context.Context, req protocol.Request, p prot
 		return failure(err)
 	}
 	defer lock.Close()
-	if old, found, err := c.Store.AcceptedRequest(ctx, req); found || err != nil {
+	if old, found, err := c.acceptedSpawn(ctx, req); found || err != nil {
 		return old, err
 	}
 	record, err := c.Store.WorktreeRecord(ctx, req)
@@ -127,7 +127,7 @@ func (c *Core) spawnInWorktree(ctx context.Context, req protocol.Request, p prot
 	if err != nil {
 		return failure(err)
 	}
-	accepted, err := c.Store.Spawn(ctx, req, record.Params, record.Operation.Workspace.Path, settings.Choice.Revision, c.Config.Config.Limits.Agents, c.Config.Config.Limits.Depth)
+	accepted, err := c.spawnWithModelDependency(ctx, req, record.Params, record.Operation.Workspace.Path, settings)
 	if err != nil {
 		return failure(err)
 	}

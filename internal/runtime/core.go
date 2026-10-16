@@ -112,19 +112,13 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
 			return nil, err
 		}
-		if c.Catalog == nil {
-			return nil, protocol.E("unavailable", "model catalog is not configured")
-		}
-		return c.Catalog.Connections(ctx, p)
+		return c.modelConnections(ctx, p)
 	case "model.list":
 		var p protocol.ModelQuery
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
 			return nil, err
 		}
-		if c.Catalog == nil {
-			return nil, protocol.E("unavailable", "model catalog is not configured")
-		}
-		return c.Catalog.ListModels(ctx, p)
+		return c.modelList(ctx, p)
 	case "resource.register":
 		var p protocol.RegisterResource
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

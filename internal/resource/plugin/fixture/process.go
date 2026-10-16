@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"zende.local/harness/internal/model"
 	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/resource/plugin"
 )
@@ -35,7 +36,7 @@ func RunFromEnv() {
 		}
 	}
 	scanner := bufio.NewScanner(os.Stdin)
-	scanner.Buffer(make([]byte, 4096), plugin.MaxFrameBytes+1)
+	scanner.Buffer(make([]byte, 4096), plugin.MaxModelRequestBytes+1)
 	respond := func(id string, result any) {
 		if json.NewEncoder(os.Stdout).Encode(map[string]any{"jsonrpc": "2.0", "id": id, "result": result}) != nil {
 			os.Exit(7)
@@ -48,6 +49,8 @@ func RunFromEnv() {
 		}
 	}
 	var waitingID, waitingOperation string
+	var waitingModel bool
+	var pluginVersion string
 	for scanner.Scan() {
 		var req struct {
 			ID     string          `json:"id"`
@@ -61,11 +64,15 @@ func RunFromEnv() {
 		var result any
 		switch req.Method {
 		case "plugin.initialize":
+			if os.Getenv("ZENDE_TEST_PLUGIN_MODE") == "slow-initialize" {
+				time.Sleep(11 * time.Second)
+			}
 			var params plugin.InitializeParams
 			if json.Unmarshal(req.Params, &params) != nil {
 				os.Exit(4)
 			}
 			result = plugin.InitializeResult{ProtocolVersion: 1, Plugin: params.Plugin, Capabilities: params.Capabilities}
+			pluginVersion = params.Plugin.Version
 		case "plugin.describe":
 			var query struct {
 				Kinds []string `json:"kinds"`
@@ -154,6 +161,61 @@ func RunFromEnv() {
 			if mode == "resource-null-executable" {
 				result = map[string]any{"ref": r.Ref, "path": r.Path, "data": r.Data, "executable": nil}
 			}
+		case "plugin.model.stream":
+			var p plugin.ModelParams
+			if protocol.StrictDecode(req.Params, &p) != nil || p.OperationID != p.Request.ID || p.Request.Model != "fixture-text" || p.Name != "fixture-models" || p.Scope.AgentID == "" {
+				os.Exit(4)
+			}
+			mode := os.Getenv("ZENDE_TEST_PLUGIN_MODE")
+			var sequence int64
+			emit := func(d model.Delta) {
+				sequence++
+				if json.NewEncoder(os.Stdout).Encode(map[string]any{"jsonrpc": "2.0", "method": "plugin.model.delta", "params": plugin.ModelDelta{RequestID: req.ID, OperationID: p.OperationID, Sequence: sequence, Delta: d}}) != nil {
+					os.Exit(7)
+				}
+			}
+			results := 0
+			for _, m := range p.Request.Messages {
+				if m.Role == "tool" {
+					results++
+				}
+			}
+			if mode == "model-tools" && results < 2 || mode == "model-partial" {
+				name, call := "echo", "first"
+				if results == 1 {
+					name, call = "fail", "second"
+				}
+				emit(model.Delta{Kind: model.CallStart, CallID: call, Name: name})
+				emit(model.Delta{Kind: model.ArgumentsDelta, CallID: call, Text: `{"text":`})
+				if mode == "model-partial" {
+					os.Exit(8)
+				}
+				emit(model.Delta{Kind: model.ArgumentsDelta, CallID: call, Text: `"fixture"}`})
+				emit(model.Delta{Kind: model.CallEnd, CallID: call})
+			} else {
+				emit(model.Delta{Kind: model.MessageStart, MessageID: "reply", Category: "final"})
+				if mode == "model-cancel" {
+					waitingID, waitingOperation, waitingModel = req.ID, p.OperationID, true
+					continue
+				}
+				if mode == "model-block" {
+					deadline := time.Now().Add(15 * time.Second)
+					for {
+						if _, err := os.Stat(os.Getenv("ZENDE_TEST_PLUGIN_RELEASE")); err == nil {
+							break
+						}
+						if time.Now().After(deadline) {
+							os.Exit(9)
+						}
+						time.Sleep(5 * time.Millisecond)
+					}
+				}
+				text, _ := json.Marshal(map[string]any{"version": pluginVersion, "scope": p.Scope, "effort": p.Effort, "tool_results": results})
+				emit(model.Delta{Kind: model.TextDelta, MessageID: "reply", Text: string(text)})
+				emit(model.Delta{Kind: model.MessageEnd, MessageID: "reply"})
+			}
+			emit(model.Delta{Kind: model.ResponseEnd})
+			result = plugin.ModelCompletion{OperationID: p.OperationID, State: "completed"}
 		case "plugin.tool.call", "plugin.command.call":
 			var p struct {
 				OperationID string          `json:"operation_id"`
@@ -192,8 +254,13 @@ func RunFromEnv() {
 			if waitingID == "" {
 				os.Exit(6)
 			}
-			progress(waitingID, waitingOperation, 2)
-			respond(waitingID, plugin.Completion{OperationID: waitingOperation, State: "cancelled"})
+			if waitingModel {
+				respond(waitingID, plugin.ModelCompletion{OperationID: waitingOperation, State: "cancelled"})
+			} else {
+				progress(waitingID, waitingOperation, 2)
+				respond(waitingID, plugin.Completion{OperationID: waitingOperation, State: "cancelled"})
+			}
+			waitingModel = false
 			waitingID, waitingOperation = "", ""
 			continue
 		case "plugin.shutdown":

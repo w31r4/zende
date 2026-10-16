@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
 	"zende.local/harness/internal/model"
 	"zende.local/harness/internal/protocol"
+	"zende.local/harness/internal/resource/plugin"
 	"zende.local/harness/internal/store"
 	"zende.local/harness/internal/tool"
 )
@@ -17,7 +19,7 @@ import (
 func (c *Core) loopStatus() string {
 	c.loopMu.Lock()
 	defer c.loopMu.Unlock()
-	if c.modelResolver() == nil {
+	if !c.modelAvailable() {
 		return "unavailable"
 	}
 	if !c.loopRunning {
@@ -101,7 +103,7 @@ func (c *Core) Run(ctx context.Context) error {
 				candidates = append(candidates, candidate{agent: h.AgentID, held: &h})
 			}
 		}
-		if c.modelResolver() != nil {
+		if c.modelAvailable() {
 			for _, id := range ids {
 				// A configured catalog without a default may still run an
 				// explicitly selected Agent. Others keep their accepted work.
@@ -247,7 +249,7 @@ func (c *Core) executeWork(ctx, persist context.Context, w store.Work, resume *r
 		reason = safeFailure(failure, "runtime_error", "model loop failed; inspect request and tool events")
 		state = "failed"
 		switch reason.Data.Kind {
-		case "operation_unknown", "transport_unknown", "persistence_failed":
+		case "operation_unknown", "transport_unknown", "persistence_failed", "model_dependency_unavailable":
 			state = "unknown"
 		}
 	}
@@ -274,18 +276,19 @@ func (c *Core) executeWork(ctx, persist context.Context, w store.Work, resume *r
 }
 
 type requestRecord struct {
-	ID              string                    `json:"request_id"`
-	Model           string                    `json:"model"`
-	Protocol        string                    `json:"protocol"`
-	Cursor          int64                     `json:"context_cursor"`
-	ViewID          string                    `json:"context_view,omitempty"`
-	Tools           []tool.Descriptor         `json:"tools"`
-	MaxOutputTokens int                       `json:"max_output_tokens"`
-	FormatRepair    bool                      `json:"format_repair"`
-	RepairAttempt   int                       `json:"repair_attempt"`
-	RepairLimit     int                       `json:"repair_limit"`
-	Settings        *taskSettings             `json:"settings,omitempty"`
-	ResourceCatalog *protocol.ResourceCatalog `json:"resource_catalog,omitempty"`
+	ID              string                     `json:"request_id"`
+	Model           string                     `json:"model"`
+	Protocol        string                     `json:"protocol"`
+	Cursor          int64                      `json:"context_cursor"`
+	ViewID          string                     `json:"context_view,omitempty"`
+	Tools           []tool.Descriptor          `json:"tools"`
+	MaxOutputTokens int                        `json:"max_output_tokens"`
+	FormatRepair    bool                       `json:"format_repair"`
+	RepairAttempt   int                        `json:"repair_attempt"`
+	RepairLimit     int                        `json:"repair_limit"`
+	Settings        *taskSettings              `json:"settings,omitempty"`
+	ResourceCatalog *protocol.ResourceCatalog  `json:"resource_catalog,omitempty"`
+	PluginBinding   *pluginModelRequestBinding `json:"plugin_binding,omitempty"`
 }
 type invocation struct {
 	SchemaVersion int            `json:"schema_version,omitempty"`
@@ -342,14 +345,14 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 	var binding model.Binding
 	var err error
 	if resume == nil {
-		if choice.Choice.ModelRevision > 0 {
-			resolver, ok := c.modelResolver().(model.SelectionResolver)
-			if !ok {
-				return "", protocol.E("model_unavailable", "model selection is unavailable")
-			}
-			binding, err = resolver.ResolveSelection(ctx, selection, choice.Choice.Effort, "")
-		} else {
+		if strings.HasPrefix(selection, "plugin:") && len(choice.Binding) > 0 {
+			binding, err = c.restoreBinding(ctx, w.Agent.ID, choice.Binding)
+		} else if choice.Choice.ModelRevision > 0 || strings.HasPrefix(selection, "plugin:") {
+			binding, err = c.resolveModelSelection(ctx, w.Agent.ID, selection, choice.Choice.Effort, "")
+		} else if c.modelResolver() != nil {
 			binding, err = c.modelResolver().Resolve(ctx, selection)
+		} else {
+			return "", protocol.E("model_unavailable", "model selection is unavailable")
 		}
 		if err != nil {
 			return "", safeFailure(err, "model_unavailable", "selected model is unavailable")
@@ -389,7 +392,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if err := appendEvent("task.config", settings); err != nil {
 			return "", err
 		}
-		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "17", Body: system}); err != nil {
+		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "18", Body: system}); err != nil {
 			return "", err
 		}
 	} else {
@@ -400,7 +403,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if resume.Journal.Prompt.Body != "" {
 			system = resume.Journal.Prompt.Body
 		} else {
-			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "17", Body: system}); err != nil {
+			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "18", Body: system}); err != nil {
 				return "", err
 			}
 		}
@@ -537,9 +540,16 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 				return "", err
 			}
 		}
+		adapter, pluginBinding, releaseModel, err := c.prepareModelRequest(nextBinding, plugin.Scope{AgentID: w.Agent.ID, TaskID: w.Task.ID, Cwd: nextSettings.Cwd}, req.ID)
+		if err != nil {
+			return "", modelDependencyFailure(nextBinding, err)
+		}
 		err = c.Store.BeginModelRequest(persist, w.Agent.ID, w.Task.ID, nextSettings.SelectionRevision, cursor, notices, func(cursor int64) any {
-			return requestRecord{ID: req.ID, Model: nextBinding.Model, Protocol: nextBinding.Protocol, Cursor: cursor, ViewID: contextSnapshot.View.ID, Tools: requestDescriptors, MaxOutputTokens: req.MaxOutputTokens, FormatRepair: repairOnly, RepairAttempt: repairs, RepairLimit: limit, Settings: &nextSettings, ResourceCatalog: &contextSnapshot.Resources.Catalog}
+			return requestRecord{ID: req.ID, Model: nextBinding.Model, Protocol: nextBinding.Protocol, Cursor: cursor, ViewID: contextSnapshot.View.ID, Tools: requestDescriptors, MaxOutputTokens: req.MaxOutputTokens, FormatRepair: repairOnly, RepairAttempt: repairs, RepairLimit: limit, Settings: &nextSettings, ResourceCatalog: &contextSnapshot.Resources.Catalog, PluginBinding: pluginBinding}
 		})
+		if err != nil {
+			releaseModel()
+		}
 		if isFailure(err, "request_conflict") && conflicts < 8 {
 			conflicts++
 			continue
@@ -554,7 +564,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		var collector model.Collector
 		classifier := model.Classifier{Native: binding.NativeCategories}
 		var emitErr error
-		err = binding.Adapter.Stream(ctx, req, func(delta model.Delta) error {
+		err = adapter.Stream(ctx, req, func(delta model.Delta) error {
 			if emitErr != nil {
 				return emitErr
 			}
@@ -598,11 +608,12 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 			}
 			return emitErr
 		})
+		releaseModel()
 		if emitErr != nil {
 			return "", emitErr
 		}
 		if err != nil {
-			failure := safeFailure(err, "model_stream", "model stream interrupted; received deltas are preserved")
+			failure := safeFailure(modelDependencyFailure(binding, err), "model_stream", "model stream interrupted; received deltas are preserved")
 			if ctx.Err() != nil || !classifier.HasText() {
 				return "", failure
 			}
