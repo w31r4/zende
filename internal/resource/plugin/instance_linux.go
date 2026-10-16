@@ -41,16 +41,17 @@ type Instance struct {
 	stderr *os.File
 	diag   *diagnosticBuffer
 
-	mu      sync.Mutex
-	info    Info
-	pending map[string]*pendingResponse
-	gate    chan struct{}
-	catalog *Catalog
-	once    sync.Once
-	closing sync.Once
-	done    chan struct{}
-	closed  chan struct{}
-	readers sync.WaitGroup
+	mu            sync.Mutex
+	info          Info
+	pending       map[string]*pendingResponse
+	gate          chan struct{}
+	catalog       *Catalog
+	subscriptions map[string]*EventSubscription
+	once          sync.Once
+	closing       sync.Once
+	done          chan struct{}
+	closed        chan struct{}
+	readers       sync.WaitGroup
 }
 
 // Start accepts resolved environment values only at the process boundary.

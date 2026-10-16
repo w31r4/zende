@@ -43,10 +43,11 @@ type ResourceDefinition struct {
 }
 
 type catalogReply struct {
-	Tools     []Callable `json:"tools,omitempty"`
-	Commands  []Callable `json:"commands,omitempty"`
-	Providers []Provider `json:"providers,omitempty"`
-	Resources []Resource `json:"resources,omitempty"`
+	Tools     []Callable        `json:"tools,omitempty"`
+	Commands  []Callable        `json:"commands,omitempty"`
+	Providers []Provider        `json:"providers,omitempty"`
+	Resources []Resource        `json:"resources,omitempty"`
+	Events    []EventCapability `json:"events,omitempty"`
 }
 
 func (c *Catalog) Providers() []ProviderDefinition {
@@ -72,14 +73,15 @@ func (c *Catalog) Resources() []ResourceDefinition {
 
 func (c *Catalog) digest() string {
 	// Preserve existing tools/commands-only versions and persisted packages.
-	if len(c.providers)+len(c.resources) == 0 {
+	if len(c.providers)+len(c.resources)+len(c.events) == 0 {
 		return digest(c.Definitions())
 	}
 	return digest(struct {
 		Definitions []Definition         `json:"definitions"`
 		Providers   []ProviderDefinition `json:"providers,omitempty"`
 		Resources   []ResourceDefinition `json:"resources,omitempty"`
-	}{c.Definitions(), c.providers, c.resources})
+		Events      []EventDefinition    `json:"events,omitempty"`
+	}{c.Definitions(), c.providers, c.resources, c.Events()})
 }
 
 func boundedID(s string, limit int) bool {

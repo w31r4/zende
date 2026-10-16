@@ -144,6 +144,12 @@ type Limits struct {
 	ResourceFiles      int `json:"resource_files"`
 	ModelRequestBytes  int `json:"model_request_bytes"`
 	QueuedModelBytes   int `json:"queued_model_bytes"`
+	EventSubscriptions int `json:"event_subscriptions"`
+	EventBatch         int `json:"event_batch"`
+	EventBytes         int `json:"event_bytes"`
+	EventBatchBytes    int `json:"event_batch_bytes"`
+	EventWaitMS        int `json:"event_wait_ms"`
+	EventRequestMS     int `json:"event_request_ms"`
 }
 
 func DefaultLimits() Limits {
@@ -151,7 +157,8 @@ func DefaultLimits() Limits {
 		ConcurrentRequests: MaxConcurrentRequests, QueuedProgress: MaxQueuedProgress, ProgressBytes: MaxProgressBytes, CancelMS: int(CancelTimeout.Milliseconds()), WriteMS: int(WriteTimeout.Milliseconds()),
 		Definitions: MaxDefinitions, CatalogBytes: MaxCatalogBytes, DefinitionBytes: MaxDefinitionBytes, ArgumentBytes: MaxArgumentBytes, ResultBytes: MaxResultBytes, ProviderModels: MaxProviderModels,
 		ResourceReadMS: int(ResourceReadTimeout.Milliseconds()), ResourceFileBytes: protocol.MaxResourceFileBytes, ResourceBytes: protocol.MaxResourceBytes, ResourceFiles: protocol.MaxResourceFiles,
-		ModelRequestBytes: MaxModelRequestBytes, QueuedModelBytes: MaxQueuedModelBytes}
+		ModelRequestBytes: MaxModelRequestBytes, QueuedModelBytes: MaxQueuedModelBytes,
+		EventSubscriptions: MaxEventSubscriptions, EventBatch: MaxEventBatch, EventBytes: MaxEventBytes, EventBatchBytes: MaxEventBatchBytes, EventWaitMS: MaxEventWaitMS, EventRequestMS: int(EventRequestTimeout.Milliseconds())}
 }
 
 type InitializeParams struct {

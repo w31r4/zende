@@ -420,13 +420,13 @@ zende --request-id refresh-plugin resource refresh AGENT RESOURCE
 
 注册使用 Agent cwd 解析相对路径。初始化和目录发现共用 30 秒预算，完成后再复读 manifest；校验成功才事务保存 manifest 原文、目录、发布版本和回执。包中只有凭据引用，启动时解析的值留在进程边界。非法定义、源文件变化、取消或过期候选均关闭，更新失败保留旧版本与旧实例。
 
-`catalog` 返回已保存的 tools/commands 定义，以及分开的 providers、resources 目录。每项有绑定 manifest 与完整定义的 ref；`catalog_version` 覆盖整个目录，`version` 覆盖 manifest 原文与目录。查询只读数据库，`--version` 指定历史资源版本，`read` 读取该版本 manifest。目录合计最多 256 项/4 MiB，读取时重新核对定义、引用和版本。
+`catalog` 返回已保存的 tools/commands 定义，以及分开的 providers、resources、events 目录。每项有绑定 manifest 与完整定义的 ref；`catalog_version` 覆盖整个目录，`version` 覆盖 manifest 原文与目录。查询只读数据库，`--version` 指定历史资源版本，`read` 读取该版本 manifest。目录合计最多 256 项/4 MiB，读取时重新核对定义、引用和版本。
 
 provider 声明名称、描述和型号列表，型号使用公共 `ModelInfo` 字段：model、label、context_window、max_output、efforts、images、native_categories。所有 provider 合计最多 256 个型号，单型号最多 16 项力度；同 provider 型号 ID 和力度不能重复，输出上限须小于上下文长度。凭据通过插件启动环境提供。
 
 resource 声明 skill/prompt 的名称、描述、entry、disable_model_invocation，以及文件路径、字节数、SHA-256 和执行位。skill 入口为 SKILL.md，prompt 只有一个入口文件；路径限定包内相对路径，文件限额沿用资源包。定义引用覆盖文件清单，后续读取须核对正文。仅 tools/commands 的旧目录保持原版本算法；同一 manifest 内增加无关定义保留已有条目的 ref。
 
-模型选择、资源注册和读取入口见下文；双向事件订阅仍在实施。
+模型选择、资源读取已接入 Core；双向事件的目录与传输已实现，持久订阅及 CLI 尚待接通。
 
 `status` 区分进程可用性与最近更新状态。客户端退出后插件由 Core 持有；Core 关闭时回收进程。重启后保留目录，进程状态为 unavailable，显式 refresh 准备新实例。重复已接受请求只返回原回执；同版本 refresh 保留健康实例，离线时重新启动。修改可执行文件后应更新 manifest 的 version，因为摘要不覆盖二进制内容。
 
@@ -517,9 +517,32 @@ Core 分配 Agent、Task、cwd 和操作 ID，调用时取得当前实例，沿�
 
 Task 取消先保存取消意图，再通知原调用并等待确认；cancelled 表示插件确认取消，已产生的外部效果仍保留。已确认失败作为工具错误回填，unknown、结果保存失败或校验失败则让 Task 等待核实。重启后，已保存结果可补回原工具位置，无须启动插件；缺少派发记录返回未执行，已派发但结果未知的操作保持待核实，禁止自动重发。
 
+### 双向事件传输
+
+manifest 声明 `events`，`plugin.describe` 返回 events 定义：name、description、direction 和可选 schema。direction 表示来源：`core` 接收原 Core 事件，使用 Core 的 schema；`plugin` 提供插件数据，必须声明 object schema。定义引用以 `plugin_event_` 开头，绑定 manifest 与完整定义。无 events 的旧目录保持原摘要。
+
+宿主选择确切 definition_ref、Agent Scope、operation_id 和 subscription_id 后打开订阅。绑定中保留实例、manifest、目录版本和定义引用；Scope.task_id 表示创建来源，Core 事件范围为 Scope.agent_id，kinds 可筛选类型。
+
+| RPC | 参数与响应 |
+| --- | --- |
+| `plugin.events.open` | operation_id、subscription_id、definition_ref、scope、after、kinds，以及目录中的 name/direction；返回 subscription_id、cursor=after、state=open |
+| `plugin.events.read` | 插件来源使用 subscription_id、after、limit、wait_ms；返回 subscription_id、after、next、events、closed，所有字段必需 |
+| `plugin.events.deliver` | Core 来源使用 subscription_id、after、through、events；确认同一订阅的 cursor=through、state=open |
+| `plugin.events.close` | subscription_id、独立 operation_id 和当前 cursor；确认同一订阅和游标的 state=closed |
+
+插件来源从 after=0 开始，每条数据包含连续 sequence、kind 和符合 schema 的 value。读取不消费事件；宿主保存整页后才能推进下次 after，旧游标重试须返回相同数据或明确报缺口。next 必须等于 after 加返回条数，空页保持游标。closed=true 表示事件源已结束，仍须保存该页数据。
+
+Core 来源保留原 schema_version、agent_id、seq、kind、task_id 和 payload。after 必须匹配当前确认游标；through 可以跨过被 kinds 过滤的事件。插件确认后才推进游标，不能将一次投递改写成另一 Agent 的事件。
+
+单实例最多 32 个活动订阅，共用 8 个并发 RPC 名额。同一订阅串行交换，每批最多 64 条/4 MiB，插件单条 value 最多 256 KiB。短轮询 wait_ms 最大 1000；写请求最多 2 秒，发出后等响应最多 5 秒。限额随初始化公开。
+
+调用方取消后，已发出的交换仍在原预算内收尾。读取缺口保留游标；关闭确认后拒绝继续读取或投递。错误关联、乱序、越限、schema 不符或无法确认的修改操作关闭故障实例，状态为 unknown，不自动重发。实例退出时，尚未确认关闭的订阅也显示 unknown；已有关闭确认保留。其他实例保持独立。
+
+这些接口目前是传输层。Core 持久订阅、事件查询、重启处理及 CLI 尚待接通；插件 value 将作为带来源的数据保存，不进入用户指令或驱动 Core 状态。测试入口：`go test -race ./internal/resource/plugin -run TestPluginEvent`。
+
 ### 插件调用底层
 
-初始化后，`Instance.Discover` 通过 `plugin.describe` 读取已声明的 tools/commands/providers/resources，校验各类定义后固定本实例的目录。定义引用包含插件身份、manifest 摘要、能力类别和完整定义；JSON 键顺序及同一 manifest 内新增无关定义不改变原引用。更新定义须准备新实例。
+初始化后，`Instance.Discover` 通过 `plugin.describe` 读取已声明的 tools/commands/providers/resources/events，校验各类定义后固定本实例的目录。定义引用包含插件身份、manifest 摘要、能力类别和完整定义；JSON 键顺序及同一 manifest 内新增无关定义不改变原引用。更新定义须准备新实例。
 
 `PrepareCall` 选择引用、校验参数并保存有效 Scope；`Binding/Definition/Scope/Arguments` 返回可记录的绑定。Core 的 `preparePluginCall` 先取得当前实例引用，核对请求类别及宿主分配的 Agent/Task，再返回调用与完整绑定。所有者先提交派发意图，再执行一次 `Invoke`，保存结果或放弃准备后释放引用；校验失败自动释放。CLI 与原生模型工具共用此流程。
 

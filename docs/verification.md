@@ -914,6 +914,23 @@ go test ./internal/resource/mcp \
 
 测试使用隔离目录、本地真实插件子进程和确定性模型；CLI 二进制通过 UDS 连接测试进程内的 Core。未访问外部模型或使用用户凭据，真实端点与本机部署仍待验收。提示词版本 18 参考 Pi 的短能力入口，文档按 trim-cn-tech-doc 保留用法、预算和失败条件；tui-design 用于核对模型选择与 CLI 入口，主界面未增文字。
 
+## 2026-10-16：双向插件事件传输
+
+8.3 的事件目录与传输已实现，累计仍为 46/68 项。Core 持久订阅、查询、重启处理及 CLI 尚待接通。
+
+| 检查 | 测试 | 结果 |
+| --- | --- | --- |
+| 定义与版本 | `TestPluginEventCatalogVersionsAndRestoration`、`TestPluginEventCatalogRejectsInvalidDefinitions` | 两种来源分别校验；引用绑定定义，旧目录摘要保持；拒绝伪造引用、排序、schema、重复定义及越限 |
+| 双向与来源 | `TestPluginEventsBothDirectionsAndConfirmedClose` | 插件读取可按旧游标重复；Core 投递保留 Agent、Task、seq；绑定保留实例及版本，关闭确认后不再派发 |
+| 数据完整性 | `TestPluginEventsRejectMalformedReplies`、`TestPluginEventAcknowledgementRequiresEveryField` | 错关联、缺字段、乱序、重复键、schema 不符、越限和错误关闭状态均拒绝；显式零游标不能由缺字段代替 |
+| 取消与顺序 | `TestPluginEventsCloseWaitsAndDoesNotBlockOtherSubscription`、`TestPluginEventsSerializeReadBeforeClose` | 客户端取消不能提前宣称关闭；同订阅读取结束后才按新游标关闭，其他订阅仍可读取 |
+| 实例退出 | `TestPluginEventsInstanceExitLeavesUnclosedSubscriptionUnknown` | 未确认关闭的订阅显示 unknown，已确认关闭的状态保留；进程退出不等于订阅关闭确认 |
+| 故障与预算 | `TestPluginEventsCancelledReadDrainsAndFailureIsBounded`、`TestPluginEventsLimitsAndCancelledEntry`、`TestPluginEventsPreflightDoesNotDispatch` | 已发读取保留响应；无确认关闭在预算内变为 unknown，其他实例继续；活动数、字节及输入限制在派发前校验 |
+
+全量 `go test ./...`、`go test -race ./...`、事件定向 race 三轮、相关包 `go vet`、OpenSpec strict 和 diff 检查通过。首轮重复键用例期望语义校验错误，实际由外层协议读取器先拒绝，调用返回 transport_unknown；修正断言后重跑通过。
+
+测试使用真实本地插件子进程和隔离目录，覆盖传输及目录；未使用外部模型、服务或用户凭据，也未完成持久事件和部署验收。文档按 trim-cn-tech-doc 保留协议字段、游标、预算和未知结果边界；提示词及 TUI 未改。
+
 ## 进行中
 
-继续 8.3 的双向事件订阅及 8.5 的完整故障验收。7.1、7.2 的配置/provider 热发布与外部目录监视尚未完成，会话复制还依赖第 9 组。Day1 整体与本机部署尚未完成。origin 已连接用户创建的 `w31r4/zende`，实现按原子提交推送。
+继续 8.3 的 Core 持久订阅、查询及 CLI，随后完成 8.5 故障验收。7.1、7.2 的配置/provider 热发布与外部目录监视尚未完成，会话复制还依赖第 9 组。Day1 整体与本机部署尚未完成。origin 已连接用户创建的 `w31r4/zende`，实现按原子提交推送。

@@ -40,6 +40,7 @@ type Catalog struct {
 	entries   []callableEntry
 	providers []ProviderDefinition
 	resources []ResourceDefinition
+	events    []eventEntry
 }
 
 // SavedCatalog is public, immutable discovery data. It contains neither process
@@ -49,14 +50,15 @@ type SavedCatalog struct {
 	Definitions    []Definition         `json:"definitions"`
 	Providers      []ProviderDefinition `json:"providers,omitempty"`
 	Resources      []ResourceDefinition `json:"resources,omitempty"`
+	Events         []EventDefinition    `json:"events,omitempty"`
 }
 
 func (c *Catalog) Export() SavedCatalog {
-	return SavedCatalog{CatalogVersion: c.Version(), Definitions: c.Definitions(), Providers: c.Providers(), Resources: c.Resources()}
+	return SavedCatalog{CatalogVersion: c.Version(), Definitions: c.Definitions(), Providers: c.Providers(), Resources: c.Resources(), Events: c.Events()}
 }
 
 func RestoreCatalog(manifest Manifest, saved SavedCatalog) (*Catalog, error) {
-	if manifest.Validate() != nil || len(saved.Definitions)+len(saved.Providers)+len(saved.Resources) > MaxDefinitions {
+	if manifest.Validate() != nil || len(saved.Definitions)+len(saved.Providers)+len(saved.Resources)+len(saved.Events) > MaxDefinitions {
 		return nil, invalidCatalog()
 	}
 	groups := catalogReply{Tools: []Callable{}, Commands: []Callable{}}
@@ -75,6 +77,9 @@ func RestoreCatalog(manifest Manifest, saved SavedCatalog) (*Catalog, error) {
 	}
 	for _, d := range saved.Resources {
 		groups.Resources = append(groups.Resources, d.Resource)
+	}
+	for _, d := range saved.Events {
+		groups.Events = append(groups.Events, d.EventCapability)
 	}
 	raw, err := json.Marshal(groups)
 	if err != nil {
@@ -129,7 +134,7 @@ func (i *Instance) Discover(ctx context.Context) (*Catalog, error) {
 	defer cancel()
 	info := i.Info()
 	kinds := []string{}
-	for _, kind := range []string{"tools", "commands", "providers", "resources"} {
+	for _, kind := range []string{"tools", "commands", "providers", "resources", "events"} {
 		if slices.Contains(info.Capabilities, kind) {
 			kinds = append(kinds, kind)
 		}
@@ -171,7 +176,7 @@ func compileCatalog(info Info, raw []byte) (*Catalog, error) {
 		return nil, invalidCatalog()
 	}
 	var catalog catalogReply
-	if protocol.StrictDecode(raw, &catalog) != nil || !bytes.HasPrefix(bytes.TrimSpace(raw), []byte{'{'}) || len(catalog.Tools)+len(catalog.Commands)+len(catalog.Providers)+len(catalog.Resources) > MaxDefinitions {
+	if protocol.StrictDecode(raw, &catalog) != nil || !bytes.HasPrefix(bytes.TrimSpace(raw), []byte{'{'}) || len(catalog.Tools)+len(catalog.Commands)+len(catalog.Providers)+len(catalog.Resources)+len(catalog.Events) > MaxDefinitions {
 		return nil, invalidCatalog()
 	}
 	if len(catalog.Tools) > 0 && !slices.Contains(info.Capabilities, "tools") || len(catalog.Commands) > 0 && !slices.Contains(info.Capabilities, "commands") {
@@ -217,6 +222,9 @@ func compileCatalog(info Info, raw []byte) (*Catalog, error) {
 		return strings.Compare(a.definition.Kind+":"+a.definition.Name, b.definition.Kind+":"+b.definition.Name)
 	})
 	if err := out.compileCapabilities(info, catalog); err != nil {
+		return nil, err
+	}
+	if err := out.compileEvents(info, catalog.Events); err != nil {
 		return nil, err
 	}
 	out.version = out.digest()
