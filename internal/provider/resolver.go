@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"zende.local/harness/internal/model"
+	"zende.local/harness/internal/model/chatcompletions"
 	"zende.local/harness/internal/model/responses"
 	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/resource"
@@ -120,6 +121,16 @@ func (r *Resolver) bind(ctx context.Context, saved bindingSnapshot) (model.Bindi
 	}
 	var adapter model.Adapter
 	switch conn.Protocol {
+	case chatcompletions.Protocol:
+		config := chatcompletions.Config{Endpoint: conn.BaseURL, Effort: saved.Effort, Credential: credential, Images: selected.Images}
+		if options := selected.Chat; options != nil {
+			config.MaxTokensField, config.InstructionRole, config.IncludeUsage, config.ReasoningField = options.MaxTokensField, options.InstructionRole, options.IncludeUsage, options.ReasoningField
+		}
+		value, err := chatcompletions.New(config)
+		if err != nil {
+			return model.Binding{}, err
+		}
+		adapter = value
 	case responses.Protocol:
 		value, err := responses.New(responses.Config{Endpoint: conn.BaseURL, Effort: saved.Effort, Credential: credential, Images: selected.Images})
 		if err != nil {

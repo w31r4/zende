@@ -986,6 +986,23 @@ doc-coauthoring 独立读者检查补齐工具链、后台启动、取消等待/
 
 Core 发布、provider 就绪检查与目录监视尚待接入；暂时合法的中间文件无法仅靠读取判断是否还会续写，文档建议完成后 rename。trim-cn-tech-doc 将说明收敛为限制、观察结果和未完成边界。测试只使用临时配置与本地夹具，未访问外部模型或用户凭据，未执行部署验收。
 
+## 2026-10-16：Chat Completions 协议与配置接线
+
+Chat Completions 已接入 provider 目录、选配和保存绑定的恢复。10.1、10.2 保持未完成，累计 48/68；完整共享套件的压缩、MCP 等验收继续补齐。
+
+| 检查 | 测试入口 | 结果 |
+| --- | --- | --- |
+| 多轮、私有续接与用量 | `TestHTTPMultipleRoundsPrivateReplayAndUnknownUsage`、`TestRefusalReplayAndDelayedCallIdentity` | 两轮工具、交错参数、错误回填及显式 final 通过；缺失用量保持未知，专用思考字段不进入正文，绑定或私有内容不符拒绝重放 |
+| 兼容选项与图片 | `TestCompatibleMinimalRequestAndImageInput`、`TestHistoricalCallsAndPreflight` | 可选字段缺省省略，输出字段/指令角色按配置，图片保持顺序；预检不读凭据，缺结果、重复结果和缺失图片报错 |
+| 流故障与取消 | `TestDecoderRejectsIncompleteCallsAndUnexpectedSemantics`、`TestSSEFragmentationExplicitClassificationAndBudgets`、`TestHTTPFailuresCancellationAndNoRetry` | 截断、缺 sentinel、非法 JSON、身份变化、重复键、未知内容和越限不授权执行；字节/换行分片、消费者错误、HTTP 脱敏及取消通过，不推断 final |
+| 绑定与目录 | `TestChatBindingCatalogAndOfflineRestore` | 目录不发请求；当前配置移除连接后仍可按原绑定恢复兼容选项，凭据请求时解析且不进快照 |
+| Core 共同行为 | `TestChatCompletionsLoopTwoRoundsErrorAndPersistence`、`TestChatCompletionsPartialArgumentsNeverExecute` | 与 Responses 共用循环断言，工具两轮执行一次、错误和原文持久保存；断流参数有记录但不执行 |
+| 真实 CLI | `TestConfiguredChatCompletionsBinaryExecutesPatch` | 与 Responses 共用二进制/配置/UDS/patch 验收路径，模型目录来自配置，真实文件落盘且工具结果进入下一请求，历史不含测试 key |
+
+`go test ./...`、`go test -race ./...`、`go vet ./...`、`openspec validate build-day1-harness --strict` 和 `git diff --check` 均通过。Chat adapter/provider 与 Core/CLI 新增用例分别通过 `-race -count=3`。构建使用 Go 1.26.5 和隔离缓存，未修改参考仓库。
+
+协议依据与兼容选项见 [Chat Completions 接入](./development.md#chat-completions-接入)。OpenAI Docs 用于核对官方请求与流格式，Pi 源码用于识别兼容差异；trim-cn-tech-doc 更新过时支持范围，保留配置、预算和失败条件。提示词及 TUI 布局未改。全部请求来自本地 HTTP 夹具，未访问用户端点或凭据，真实模型与部署仍未验收。
+
 ## 进行中
 
 继续 7.1、7.2 的配置/provider 热发布与外部目录监视，会话复制还依赖第 9 组。Day1 整体与本机部署尚未完成。origin 已连接用户创建的 `w31r4/zende`，实现按原子提交推送。

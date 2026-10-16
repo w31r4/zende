@@ -1,6 +1,6 @@
 # 本地开发
 
-CLI 支持持久会话、子 Agent 创建与复用、历史查询、进程工具和 Responses 接入；独立 runner 管理 pipe、tmux PTY 与输出。当前验证使用本地模型夹具，完整 Day1 和部署验收仍在实施。进度见 [OpenSpec 任务](../openspec/changes/build-day1-harness/tasks.md)。
+CLI 支持持久会话、子 Agent 创建与复用、历史查询、进程工具、Responses 和 Chat Completions；独立 runner 管理 pipe、tmux PTY 与输出。当前验证使用本地模型夹具，完整 Day1 和部署验收仍在实施。进度见 [OpenSpec 任务](../openspec/changes/build-day1-harness/tasks.md)。
 
 ## 构建与测试
 
@@ -96,7 +96,7 @@ model: local/my-model
 
 ## 模型目录与工作目录查询
 
-`zende model connections` 列出当前 core 配置的连接，`model list CONNECTION` 返回型号、思考力度和能力声明。两条命令加 `--agent AGENT` 可包含该 Agent 的就绪插件 provider。同厂商连接按 ID 区分，空配置返回空列表；`supported` 只表示 adapter 已实现，内置协议目前为 Responses。查询不解析凭据、不访问端点，认证和网络状态在模型请求时检查。
+`zende model connections` 列出当前 core 配置的连接，`model list CONNECTION` 返回型号、思考力度和能力声明。两条命令加 `--agent AGENT` 可包含该 Agent 的就绪插件 provider。同厂商连接按 ID 区分，空配置返回空列表；`supported` 只表示 adapter 已实现，内置协议目前为 Responses 和 Chat Completions。查询不解析凭据、不访问端点，认证和网络状态在模型请求时检查。
 
 两级目录均支持 `--after NEXT`、`--limit`（默认 20，最多 100）和 `--version VERSION`；跨页或分步选择携带返回版本，配置或插件目录变化时报 `catalog_changed`。每页最多 1 MiB，超限可减小页数或缩短元数据。返回值只含公开元数据，端点与凭据引用留在连接配置中。
 
@@ -623,7 +623,7 @@ go test -race ./internal/runtime -run '^TestPluginExecution' -count=3
 
 ## Responses 接入
 
-连接使用 `protocol: responses`，`base_url` 为 API 根地址，adapter 追加 `/responses`。型号、输出上限和可选思考力度均来自配置。`native_categories: true` 仅用于已确认支持 assistant `phase` 的具体型号，默认使用显式文本标签。其他三种协议的配置元数据已接受，adapter 由后续任务交付；当前选择它们会明确报不支持。
+连接使用 `protocol: responses`，`base_url` 为 API 根地址，adapter 追加 `/responses`。型号、输出上限和可选思考力度均来自配置。`native_categories: true` 仅用于已确认支持 assistant `phase` 的具体型号，默认使用显式文本标签。Anthropic 和 Gemini adapter 仍待交付。
 
 | 内容 | 当前处理 |
 | --- | --- |
@@ -639,3 +639,32 @@ go test -race ./internal/runtime -run '^TestPluginExecution' -count=3
 `reasoning` 只保存为协议数据，不进入可见正文。端点、型号或协议变化导致私有数据不兼容时返回 `protocol_mismatch`，原历史保留。user 图片输入见上一节；assistant/tool 附件、内置远端工具、原生 tool search、自动重试和上下文压缩仍待接入。遇到不支持的输出事件/类型会报错，`limits.model_retries` 此阶段不驱动 HTTP 重试。
 
 协议与本地源码依据：OpenAI [流事件](https://developers.openai.com/api/reference/resources/responses/streaming-events)、[函数调用](https://developers.openai.com/api/docs/guides/function-calling)、[reasoning](https://developers.openai.com/api/docs/guides/reasoning)；Pi `7bc154ad082e2f0029c19117a16d22a504439476` 的 `packages/ai/src/providers/openai-responses{,-shared}.ts`，Codex `7219fd735bef2f9cfd0363fecdbbb212e3df5255` 的 `codex-rs/codex-api/src/sse/responses.rs`。实现及测试不代表任意兼容端点支持这些字段；真实端点、凭据和原生 phase 仍未验收。
+
+## Chat Completions 接入
+
+连接使用 `protocol: chat-completions`，adapter 在 `base_url` 后追加 `/chat/completions`。型号仍来自用户配置；输出使用显式 commentary/final 标签，`native_categories: true` 会报配置错误。支持 user 图片、交错工具参数、多轮结果回填、取消及原绑定恢复。
+
+每个 `models` 项可设置 `chat`。缺省只发送模型、消息、stream、输出上限，以及实际需要的工具和已选思考力度。字段按[官方请求定义](https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create)核对，兼容选项如下：
+
+| `chat` 字段 | 缺省 | 可选值与作用 |
+| --- | --- | --- |
+| `max_tokens_field` | `max_completion_tokens` | 旧接口可显式改为 `max_tokens`；每次只发送一个上限字段 |
+| `instruction_role` | `system` | 可选 `developer`；基础指令和历史 system/developer 消息使用该角色 |
+| `include_usage` | `false` | 启用后发送 `stream_options.include_usage`；缺失 token 数保持未知 |
+| `reasoning_field` | 空 | 可声明 `reasoning_content`、`reasoning` 或 `reasoning_text`，仅用于支持该扩展的端点 |
+
+例如，某型号要求旧输出字段并支持流用量，可在其配置项增加：
+
+```yaml
+chat:
+  max_tokens_field: max_tokens
+  include_usage: true
+```
+
+`reasoning_field` 是兼容扩展，参考 Pi `7bc154ad082e2f0029c19117a16d22a504439476` 的 `packages/ai/src/providers/openai-completions.ts`，不按厂商名自动选择。声明后，assistant 续接携带该字段，缺失内容用空字符串；收到的内容作为同端点、型号和设置的私有数据保存，不进入可见正文。refusal 保留可见文本及续接字段。协议、绑定或正文不匹配时报错，原历史保留。
+
+流按 choice/index 与 call ID 组装，参数必须是完整 JSON 对象。需要合法 `finish_reason` 及随后 `[DONE]` 才结束响应；EOF、截断、过滤、未支持内容或不完整调用均报错。`stop` 不代表任务 final；分类仍由模型标签决定。[官方流格式](https://developers.openai.com/api/reference/resources/chat/subresources/completions/streaming-events)中的缺省用量与附加用量块均有夹具覆盖。
+
+请求最多 32 MiB，SSE 单事件 8 MiB、单次流 64 MiB；公共组装限单块 1 MiB、响应 4 MiB/128 块，最多 127 个工具调用，私有数据计入额度。支持 LF/CRLF/CR 和字节分片，拒绝重定向，HTTP 错误只保存状态码。adapter 不自动换字段重试；不支持的能力返回错误。
+
+Responses 与 Chat 共用两轮工具/错误回填、断流不执行和真实 CLI patch 测试。完整共享套件中的压缩、MCP 和跨协议迁移仍由 9、10 组补齐，10.2 保持未完成；当前证据来自本地 HTTP 夹具，真实兼容端点未验收。

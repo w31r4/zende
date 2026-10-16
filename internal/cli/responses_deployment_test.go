@@ -23,6 +23,14 @@ import (
 // Real executable/config/UDS/store/patch, but the provider is an HTTP fixture.
 // This is wiring verification, not a real model or deployment acceptance test.
 func TestConfiguredResponsesBinaryExecutesPatch(t *testing.T) {
+	testConfiguredProtocolBinaryExecutesPatch(t, "responses")
+}
+
+func TestConfiguredChatCompletionsBinaryExecutesPatch(t *testing.T) {
+	testConfiguredProtocolBinaryExecutesPatch(t, "chat-completions")
+}
+
+func testConfiguredProtocolBinaryExecutesPatch(t *testing.T, protocolName string) {
 	if testing.Short() {
 		t.Skip("real binary integration")
 	}
@@ -55,6 +63,9 @@ func TestConfiguredResponsesBinaryExecutesPatch(t *testing.T) {
 			t.Error(request["model"])
 		}
 		instructions, _ := request["instructions"].(string)
+		if protocolName == "chat-completions" {
+			instructions = request["messages"].([]any)[0].(map[string]any)["content"].(string)
+		}
 		if !strings.Contains(instructions, "workspace directory") || !strings.Contains(instructions, "model connections") {
 			t.Error("registered query commands missing from prompt")
 		}
@@ -68,9 +79,12 @@ func TestConfiguredResponsesBinaryExecutesPatch(t *testing.T) {
 			args = bytes.ReplaceAll(args, []byte(`\u0026`), []byte("&"))
 			item = map[string]any{"type": "function_call", "id": "fc", "call_id": "call", "name": "apply_patch", "arguments": string(args), "status": "completed"}
 		} else {
-			input := request["input"].([]any)
+			input, _ := request["input"].([]any)
+			if protocolName == "chat-completions" {
+				input = request["messages"].([]any)
+			}
 			last := input[len(input)-1].(map[string]any)
-			if last["type"] != "function_call_output" || last["call_id"] != "call" {
+			if protocolName == "responses" && (last["type"] != "function_call_output" || last["call_id"] != "call") || protocolName == "chat-completions" && (last["role"] != "tool" || last["tool_call_id"] != "call") {
 				t.Error("missing patch result", last)
 			}
 			item = map[string]any{"type": "message", "id": "m", "role": "assistant", "status": "completed", "content": []any{map[string]any{"type": "output_text", "text": "<final>\npatch saved\n</final>", "annotations": []any{}}}}
@@ -86,6 +100,19 @@ func TestConfiguredResponsesBinaryExecutesPatch(t *testing.T) {
 			start["content"] = []any{}
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
+		if protocolName == "chat-completions" {
+			delta := map[string]any{}
+			finish := "stop"
+			if item["type"] == "function_call" {
+				delta["tool_calls"] = []any{map[string]any{"index": 0, "id": "call", "type": "function", "function": map[string]any{"name": "apply_patch", "arguments": item["arguments"]}}}
+				finish = "tool_calls"
+			} else {
+				delta["content"] = item["content"].([]any)[0].(map[string]any)["text"]
+			}
+			raw, _ := json.Marshal(map[string]any{"id": "chat_fixture", "choices": []any{map[string]any{"index": 0, "delta": delta, "finish_reason": finish}}})
+			io.WriteString(w, "data: "+string(raw)+"\n\ndata: [DONE]\n\n")
+			return
+		}
 		io.WriteString(w, frame("response.created", map[string]any{"response": map[string]any{"id": "r", "status": "in_progress"}})+frame("response.output_item.added", map[string]any{"output_index": 0, "item": start})+frame("response.output_item.done", map[string]any{"output_index": 0, "item": item})+frame("response.completed", map[string]any{"response": map[string]any{"id": "r", "status": "completed", "output": []any{item}}}))
 	}))
 	defer server.Close()
@@ -93,7 +120,7 @@ func TestConfiguredResponsesBinaryExecutesPatch(t *testing.T) {
 	if err := os.MkdirAll(configDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	config := fmt.Sprintf("model: test/fixture\nconnections:\n  test:\n    protocol: responses\n    base_url: %s\n    credential: env:ZENDE_TEST_MODEL_KEY\n    models:\n      - id: fixture\n        context_window: 32000\n        max_output: 4096\n", server.URL)
+	config := fmt.Sprintf("model: test/fixture\nconnections:\n  test:\n    protocol: %s\n    base_url: %s\n    credential: env:ZENDE_TEST_MODEL_KEY\n    models:\n      - id: fixture\n        context_window: 32000\n        max_output: 4096\n", protocolName, server.URL)
 	if err := os.WriteFile(filepath.Join(configDir, "config.yaml"), []byte(config), 0600); err != nil {
 		t.Fatal(err)
 	}

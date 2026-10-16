@@ -29,13 +29,22 @@ type Limits struct {
 }
 
 type ModelConfig struct {
-	ID               string   `json:"id" yaml:"id"`
-	Label            string   `json:"label,omitempty" yaml:"label,omitempty"`
-	ContextWindow    int      `json:"context_window" yaml:"context_window"`
-	MaxOutput        int      `json:"max_output" yaml:"max_output"`
-	Efforts          []string `json:"efforts,omitempty" yaml:"efforts,omitempty"`
-	Images           bool     `json:"images,omitempty" yaml:"images,omitempty"`
-	NativeCategories bool     `json:"native_categories,omitempty" yaml:"native_categories,omitempty"`
+	ID               string      `json:"id" yaml:"id"`
+	Label            string      `json:"label,omitempty" yaml:"label,omitempty"`
+	ContextWindow    int         `json:"context_window" yaml:"context_window"`
+	MaxOutput        int         `json:"max_output" yaml:"max_output"`
+	Efforts          []string    `json:"efforts,omitempty" yaml:"efforts,omitempty"`
+	Images           bool        `json:"images,omitempty" yaml:"images,omitempty"`
+	NativeCategories bool        `json:"native_categories,omitempty" yaml:"native_categories,omitempty"`
+	Chat             *ChatConfig `json:"chat,omitempty" yaml:"chat,omitempty"`
+}
+
+// ChatConfig declares wire differences for a specific configured model.
+type ChatConfig struct {
+	MaxTokensField  string `json:"max_tokens_field,omitempty" yaml:"max_tokens_field,omitempty"`
+	InstructionRole string `json:"instruction_role,omitempty" yaml:"instruction_role,omitempty"`
+	IncludeUsage    bool   `json:"include_usage,omitempty" yaml:"include_usage,omitempty"`
+	ReasoningField  string `json:"reasoning_field,omitempty" yaml:"reasoning_field,omitempty"`
 }
 
 type Connection struct {
@@ -252,6 +261,15 @@ func (c Config) Validate() error {
 				return fmt.Errorf("invalid or duplicate model definition")
 			}
 			seen[m.ID] = true
+			if m.Chat != nil {
+				o := m.Chat
+				if conn.Protocol != "chat-completions" || o.MaxTokensField != "" && o.MaxTokensField != "max_tokens" && o.MaxTokensField != "max_completion_tokens" || o.InstructionRole != "" && o.InstructionRole != "system" && o.InstructionRole != "developer" || o.ReasoningField != "" && o.ReasoningField != "reasoning_content" && o.ReasoningField != "reasoning" && o.ReasoningField != "reasoning_text" {
+					return fmt.Errorf("invalid Chat Completions compatibility settings")
+				}
+			}
+			if conn.Protocol == "chat-completions" && m.NativeCategories {
+				return fmt.Errorf("Chat Completions uses explicit text markers, not native categories")
+			}
 		}
 	}
 	if c.Model != "" {

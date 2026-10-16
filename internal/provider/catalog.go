@@ -7,12 +7,15 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"zende.local/harness/internal/model/chatcompletions"
 	"zende.local/harness/internal/model/responses"
 	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/resource"
 )
 
-func supportsProtocol(name string) bool { return name == responses.Protocol }
+func supportsProtocol(name string) bool {
+	return name == responses.Protocol || name == chatcompletions.Protocol
+}
 
 func connectionInfo(id string, c resource.Connection) protocol.ConnectionInfo {
 	return protocol.ConnectionInfo{ID: id, Label: c.Label, Vendor: c.Vendor, Protocol: c.Protocol, Models: len(c.Models), Supported: supportsProtocol(c.Protocol)}
