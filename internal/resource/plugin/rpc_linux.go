@@ -37,11 +37,13 @@ type Progress struct {
 }
 
 type pendingResponse struct {
-	id        string
-	operation string
-	sequence  int64 // owned by the protocol reader while mu is held
-	complete  bool
-	ch        chan response // progress and final share wire order
+	id           string
+	operation    string
+	notification string
+	sequence     int64 // owned by the protocol reader while mu is held
+	queuedBytes  int
+	complete     bool
+	ch           chan response // progress and final share wire order
 }
 
 func (i *Instance) forget(p *pendingResponse) {
@@ -52,13 +54,19 @@ func (i *Instance) forget(p *pendingResponse) {
 
 func (i *Instance) startRequest(ctx context.Context, method string, params any, operation string) (*pendingResponse, bool, error) {
 	p := &pendingResponse{id: protocol.NewID("rpc"), operation: operation, ch: make(chan response, MaxQueuedProgress+1)}
+	limit := MaxFrameBytes
+	if method == "plugin.model.stream" {
+		p.notification, limit = "plugin.model.delta", MaxModelRequestBytes
+	} else if method == "plugin.tool.call" || method == "plugin.command.call" {
+		p.notification = "plugin.progress"
+	}
 	raw, err := json.Marshal(struct {
 		JSONRPC string `json:"jsonrpc"`
 		ID      string `json:"id"`
 		Method  string `json:"method"`
 		Params  any    `json:"params"`
 	}{"2.0", p.id, method, params})
-	if err != nil || len(raw) > MaxFrameBytes {
+	if err != nil || len(raw) > limit {
 		return p, false, protocol.E("invalid_params", "plugin request exceeds the protocol budget")
 	}
 	i.mu.Lock()
@@ -158,21 +166,41 @@ func (i *Instance) route(frame response) bool {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 	if frame.Method != "" {
-		if frame.Method != "plugin.progress" || frame.ID != "" || len(frame.Result) != 0 || len(frame.Error) != 0 || len(frame.Params) > MaxProgressBytes {
+		if frame.ID != "" || len(frame.Result) != 0 || len(frame.Error) != 0 {
 			return false
 		}
-		var progress Progress
-		if protocol.StrictDecode(frame.Params, &progress) != nil || len(progress.Value) == 0 {
+		var requestID, operation string
+		var sequence int64
+		switch frame.Method {
+		case "plugin.progress":
+			var progress Progress
+			if len(frame.Params) > MaxProgressBytes || protocol.StrictDecode(frame.Params, &progress) != nil || len(progress.Value) == 0 {
+				return false
+			}
+			if _, err := decodeValue(progress.Value, MaxProgressBytes); err != nil {
+				return false
+			}
+			requestID, operation, sequence = progress.RequestID, progress.OperationID, progress.Sequence
+		case "plugin.model.delta":
+			var delta ModelDelta
+			if protocol.StrictDecode(frame.Params, &delta) != nil || delta.Delta.Kind == "" {
+				return false
+			}
+			requestID, operation, sequence = delta.RequestID, delta.OperationID, delta.Sequence
+		default:
 			return false
 		}
-		if _, err := decodeValue(progress.Value, MaxProgressBytes); err != nil {
+		p := i.pending[requestID]
+		if p == nil || p.complete || p.notification != frame.Method || p.operation == "" || p.operation != operation || sequence != p.sequence+1 || sequence < 1 || len(p.ch) >= MaxQueuedProgress {
 			return false
 		}
-		p := i.pending[progress.RequestID]
-		if p == nil || p.complete || p.operation == "" || p.operation != progress.OperationID || progress.Sequence != p.sequence+1 || progress.Sequence < 1 || len(p.ch) >= MaxQueuedProgress {
-			return false
+		if frame.Method == "plugin.model.delta" {
+			if p.queuedBytes+len(frame.Params) > MaxQueuedModelBytes {
+				return false
+			}
+			p.queuedBytes += len(frame.Params)
 		}
-		p.sequence = progress.Sequence
+		p.sequence = sequence
 		p.ch <- frame
 		return true
 	}

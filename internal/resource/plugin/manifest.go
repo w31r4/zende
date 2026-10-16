@@ -142,13 +142,16 @@ type Limits struct {
 	ResourceFileBytes  int `json:"resource_file_bytes"`
 	ResourceBytes      int `json:"resource_bytes"`
 	ResourceFiles      int `json:"resource_files"`
+	ModelRequestBytes  int `json:"model_request_bytes"`
+	QueuedModelBytes   int `json:"queued_model_bytes"`
 }
 
 func DefaultLimits() Limits {
 	return Limits{InitializeMS: int(InitializeTimeout.Milliseconds()), ShutdownMS: int(ShutdownTimeout.Milliseconds()), FrameBytes: MaxFrameBytes, DiagnosticBytes: MaxDiagnosticBytes,
 		ConcurrentRequests: MaxConcurrentRequests, QueuedProgress: MaxQueuedProgress, ProgressBytes: MaxProgressBytes, CancelMS: int(CancelTimeout.Milliseconds()), WriteMS: int(WriteTimeout.Milliseconds()),
 		Definitions: MaxDefinitions, CatalogBytes: MaxCatalogBytes, DefinitionBytes: MaxDefinitionBytes, ArgumentBytes: MaxArgumentBytes, ResultBytes: MaxResultBytes, ProviderModels: MaxProviderModels,
-		ResourceReadMS: int(ResourceReadTimeout.Milliseconds()), ResourceFileBytes: protocol.MaxResourceFileBytes, ResourceBytes: protocol.MaxResourceBytes, ResourceFiles: protocol.MaxResourceFiles}
+		ResourceReadMS: int(ResourceReadTimeout.Milliseconds()), ResourceFileBytes: protocol.MaxResourceFileBytes, ResourceBytes: protocol.MaxResourceBytes, ResourceFiles: protocol.MaxResourceFiles,
+		ModelRequestBytes: MaxModelRequestBytes, QueuedModelBytes: MaxQueuedModelBytes}
 }
 
 type InitializeParams struct {

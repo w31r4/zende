@@ -75,16 +75,10 @@ func (i *Instance) PrepareCall(ref, operation string, scope Scope, arguments jso
 	if operation == "" || len(operation) > 128 || !utf8.ValidString(operation) || strings.IndexFunc(operation, func(r rune) bool { return r < 33 || r == 127 }) >= 0 {
 		return nil, protocol.E("invalid_params", "plugin call needs a bounded operation ID")
 	}
-	if scope.Cwd == "" {
-		scope.Cwd = i.cmd.Dir
-	}
-	if !filepath.IsAbs(scope.Cwd) || filepath.Clean(scope.Cwd) != scope.Cwd || len(scope.Cwd) > 4096 || !utf8.ValidString(scope.Cwd) || strings.ContainsRune(scope.Cwd, 0) {
-		return nil, protocol.E("invalid_params", "plugin call cwd must be an absolute clean path")
-	}
-	for _, id := range []string{scope.AgentID, scope.TaskID} {
-		if len(id) > 128 || !utf8.ValidString(id) || strings.IndexFunc(id, func(r rune) bool { return r < 33 || r == 127 }) >= 0 {
-			return nil, protocol.E("invalid_params", "invalid plugin call scope")
-		}
+	var err error
+	scope, err = i.validateScope(scope)
+	if err != nil {
+		return nil, err
 	}
 	i.mu.Lock()
 	info, catalog := i.info, i.catalog
@@ -110,6 +104,21 @@ func (i *Instance) PrepareCall(ref, operation string, scope Scope, arguments jso
 		return nil, protocol.E("invalid_arguments", "plugin arguments do not match the selected schema")
 	}
 	return &Call{instance: i, entry: *entry, binding: CallBinding{info.ID, info.Version, info.ManifestVersion, info.InstanceID, catalog.version, ref, operation}, scope: scope, arguments: bytes.Clone(arguments)}, nil
+}
+
+func (i *Instance) validateScope(scope Scope) (Scope, error) {
+	if scope.Cwd == "" {
+		scope.Cwd = i.cmd.Dir
+	}
+	if !filepath.IsAbs(scope.Cwd) || filepath.Clean(scope.Cwd) != scope.Cwd || len(scope.Cwd) > 4096 || !utf8.ValidString(scope.Cwd) || strings.ContainsRune(scope.Cwd, 0) {
+		return scope, protocol.E("invalid_params", "plugin call cwd must be an absolute clean path")
+	}
+	for _, id := range []string{scope.AgentID, scope.TaskID} {
+		if id != "" && !boundedID(id, 128) {
+			return scope, protocol.E("invalid_params", "invalid plugin call scope")
+		}
+	}
+	return scope, nil
 }
 
 // Invoke is one-shot. emit runs in wire order, outside transport locks, and

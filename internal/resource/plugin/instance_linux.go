@@ -35,6 +35,7 @@ type Info struct {
 // Capability adapters and their call lifetimes are layered on this transport.
 type Instance struct {
 	cmd    *exec.Cmd
+	source string
 	stdin  *os.File
 	stdout *os.File
 	stderr *os.File
@@ -135,7 +136,7 @@ func Start(ctx context.Context, source string, manifest Manifest, resolved map[s
 	stdinReader.Close()
 	stdoutWriter.Close()
 	stderrWriter.Close()
-	i := &Instance{cmd: cmd, stdin: stdin, stdout: stdout, stderr: stderr, diag: newDiagnostics(secrets),
+	i := &Instance{cmd: cmd, source: source, stdin: stdin, stdout: stdout, stderr: stderr, diag: newDiagnostics(secrets),
 		info: Info{Identity: Identity{ID: manifest.ID, Version: manifest.Version}, InstanceID: protocol.NewID("plugin"), ManifestVersion: manifest.Digest(),
 			State: "preparing", PID: cmd.Process.Pid, Trusted: true, Limits: DefaultLimits(), Capabilities: []string{}},
 		gate: make(chan struct{}, 1), pending: make(map[string]*pendingResponse), done: make(chan struct{}), closed: make(chan struct{})}
