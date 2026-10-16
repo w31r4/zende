@@ -393,3 +393,48 @@ func TestSkillLayoutRemainsBoundedAndEveryTargetUsesRegistry(t *testing.T) {
 		}
 	}
 }
+
+func TestPluginSkillCatalogAndKeyboardSelection(t *testing.T) {
+	info := uiSkill("resource_" + strings.Repeat("a", 32))
+	parent := protocol.ResourceRef{ID: "resource_" + strings.Repeat("b", 32), Version: strings.Repeat("c", 64)}
+	info.Source = "plugin://" + parent.ID + "/skill/" + info.Name
+	info.PluginOrigin = &protocol.PluginResourceOrigin{Plugin: parent, DefinitionRef: "plugin_resource_" + strings.Repeat("d", 64)}
+	client := &imageTestClient{handle: func(_ protocol.Request, out any) error {
+		*out.(*protocol.ResourcePage) = protocol.ResourcePage{Generation: 1, Items: []protocol.ResourceInfo{info}}
+		return nil
+	}}
+	msg := skillCatalogCmd(t.Context(), client, "a", 1)().(skillCatalogMsg)
+	if msg.err != nil || len(msg.items) != 1 {
+		t.Fatal(msg)
+	}
+	for _, prefix := range []string{"$", "/skill "} {
+		m := skillShell(t)
+		m.skills = msg.items
+		m = typeText(t, m, prefix+info.Name)
+		m, _ = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+		if len(m.input.skills) != 1 || !reflect.DeepEqual(m.input.skills[0], info) {
+			t.Fatal(m.input.skills)
+		}
+		m, _ = update(t, m, tea.KeyPressMsg{Code: tea.KeyEnter})
+		var p protocol.Submit
+		if m.pending == nil || protocol.StrictDecode(m.pending.Params, &p) != nil || !reflect.DeepEqual(p.Skills, []protocol.ResourceRef{{ID: info.ID, Version: info.Version}}) {
+			t.Fatal(p)
+		}
+	}
+	for _, alter := range []func(*protocol.ResourceInfo){
+		func(i *protocol.ResourceInfo) { i.PluginOrigin = nil },
+		func(i *protocol.ResourceInfo) { i.Source = "/fake/local/SKILL.md" },
+		func(i *protocol.ResourceInfo) { i.Name = "other" },
+		func(i *protocol.ResourceInfo) { i.PluginOrigin.Plugin.Version = "latest" },
+		func(i *protocol.ResourceInfo) { i.PluginOrigin.DefinitionRef = "forged" },
+		func(i *protocol.ResourceInfo) { i.Source = strings.Replace(i.Source, "/skill/", "/prompt/", 1) },
+	} {
+		copy := info
+		origin := *info.PluginOrigin
+		copy.PluginOrigin = &origin
+		alter(&copy)
+		if validSkillInfo(copy) {
+			t.Fatal("invalid plugin source accepted", copy)
+		}
+	}
+}

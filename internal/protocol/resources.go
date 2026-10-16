@@ -45,15 +45,23 @@ func (c ResourceCatalog) Valid() bool {
 
 // IDs identify a source within a profile; versions identify its immutable bytes.
 type ResourceInfo struct {
-	ID                     string `json:"resource_id"`
-	Kind                   string `json:"kind"`
-	Name                   string `json:"name"`
-	Description            string `json:"description"`
-	Source                 string `json:"source"`
-	Version                string `json:"version"`
-	DisableModelInvocation bool   `json:"disable_model_invocation,omitempty"`
-	Files                  int    `json:"files"`
-	Bytes                  int64  `json:"bytes"`
+	ID                     string                `json:"resource_id"`
+	Kind                   string                `json:"kind"`
+	Name                   string                `json:"name"`
+	Description            string                `json:"description"`
+	Source                 string                `json:"source"`
+	Version                string                `json:"version"`
+	DisableModelInvocation bool                  `json:"disable_model_invocation,omitempty"`
+	Files                  int                   `json:"files"`
+	Bytes                  int64                 `json:"bytes"`
+	PluginOrigin           *PluginResourceOrigin `json:"plugin_origin,omitempty"`
+}
+
+// PluginResourceOrigin identifies the plugin publication that supplied bytes.
+// Reading this resource does not require that plugin process to remain alive.
+type PluginResourceOrigin struct {
+	Plugin        ResourceRef `json:"plugin"`
+	DefinitionRef string      `json:"definition_ref"`
 }
 
 type RegisterResource struct {

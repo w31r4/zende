@@ -33,7 +33,7 @@ func publication(t *testing.T, s *Store, agent, operation string, p resource.Pac
 		t.Fatal(err)
 	}
 	a, err := s.PublishResource(context.Background(), r, agent, p, base)
-	if err != nil || a.Resource == nil || *a.Resource != p.Info {
+	if err != nil || a.Resource == nil || !reflect.DeepEqual(*a.Resource, p.Info) {
 		t.Fatal(a, err)
 	}
 	return r, a

@@ -46,6 +46,9 @@ func validatedPackage(p resource.Package) (resource.Package, error) {
 	if p.Info.Kind == "plugin" && p.Plugin != nil {
 		checked, err = resource.BuildPluginPackage(p.Info.Source, p.Files, *p.Plugin)
 	}
+	if p.PluginResource != nil && p.Info.PluginOrigin != nil {
+		checked, err = resource.BuildPluginResourcePackage(p.Info.Source, *p.Info.PluginOrigin, *p.PluginResource, p.Files)
+	}
 	if err != nil || !reflect.DeepEqual(checked, p) {
 		return resource.Package{}, protocol.E("invalid_resource", "resource metadata or bytes do not match their version")
 	}
@@ -89,6 +92,9 @@ func (s *Store) publishResource(ctx context.Context, req protocol.Request, agent
 			return protocol.Accepted{}, err
 		}
 		if err := checkResourcePreparation(ctx, tx, req, agent, p, attempt); err != nil {
+			return protocol.Accepted{}, err
+		}
+		if err := checkPluginResourceParent(ctx, tx, agent, p); err != nil {
 			return protocol.Accepted{}, err
 		}
 		var previous string

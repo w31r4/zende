@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"zende.local/harness/internal/protocol"
@@ -21,7 +22,7 @@ func (c *Core) registerResource(ctx context.Context, req protocol.Request, p pro
 	if p.Path == "" {
 		return protocol.Accepted{}, protocol.E("invalid_params", "resource path is required")
 	}
-	if !filepath.IsAbs(p.Path) {
+	if !filepath.IsAbs(p.Path) && !strings.HasPrefix(p.Path, "plugin://") {
 		p.Path = filepath.Join(snapshot.Agent.Cwd, p.Path)
 	}
 	return c.prepareResource(ctx, req, p.AgentID, p.Kind, p.Path)
@@ -82,6 +83,9 @@ func (c *Core) prepareResource(ctx context.Context, req protocol.Request, agent,
 			err = failure
 		}
 	}()
+	if strings.HasPrefix(identity.Source, "plugin://") {
+		return c.publishPluginResource(ctx, req, agent, identity.Source, attempt)
+	}
 	if kind == "mcp" {
 		prepared, conn, prepareErr := resource.PrepareMCP(ctx, identity.Source, nil)
 		if prepareErr != nil {

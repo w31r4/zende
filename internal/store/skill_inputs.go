@@ -52,9 +52,10 @@ func selectedSkills(ctx context.Context, tx *sql.Tx, agent string, refs []protoc
 		// metadata identifies instructions, not a new system/developer authority.
 		metadata, err := json.Marshal(struct {
 			protocol.ResourceRef
-			Name   string `json:"name"`
-			Source string `json:"source"`
-		}{ref, p.Info.Name, p.Info.Source})
+			Name         string                         `json:"name"`
+			Source       string                         `json:"source"`
+			PluginOrigin *protocol.PluginResourceOrigin `json:"plugin_origin,omitempty"`
+		}{ref, p.Info.Name, p.Info.Source, p.Info.PluginOrigin})
 		if err != nil {
 			return nil, err
 		}

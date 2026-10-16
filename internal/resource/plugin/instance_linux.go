@@ -239,6 +239,9 @@ func (i *Instance) exchange(ctx context.Context, method string, params any) (jso
 		}
 	}
 	if len(reply.Error) != 0 {
+		if method == "plugin.resource.read" {
+			return nil, protocol.E("invalid_resource", "plugin rejected the resource read; inspect diagnostics")
+		}
 		return nil, protocol.E("plugin_initialization", "plugin rejected the lifecycle request; inspect diagnostics")
 	}
 	return reply.Result, nil

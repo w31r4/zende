@@ -379,7 +379,7 @@ Core 重启后，已保存结果可补入原工具结果位置，无须重连 MC
 
 ## 插件启动与协议协商
 
-Core 已接入插件注册、实例引用、原生模型工具、CLI 命令和持久调用记录。provider/resource/event 扩展及完整故障验收由 OpenSpec 8.3–8.5 交付。
+Core 已接入插件注册、实例引用、原生模型工具、CLI 命令、skill/prompt 资源和持久调用记录。provider 模型流、双向事件订阅及完整故障验收仍由 OpenSpec 8.3–8.5 交付。
 
 ```yaml
 schema_version: 1
@@ -426,7 +426,7 @@ provider 声明名称、描述和型号列表，型号使用公共 `ModelInfo` �
 
 resource 声明 skill/prompt 的名称、描述、entry、disable_model_invocation，以及文件路径、字节数、SHA-256 和执行位。skill 入口为 SKILL.md，prompt 只有一个入口文件；路径限定包内相对路径，文件限额沿用资源包。定义引用覆盖文件清单，后续读取须核对正文。仅 tools/commands 的旧目录保持原版本算法；同一 manifest 内增加无关定义保留已有条目的 ref。
 
-provider、resource 目录已可发布和读取；模型流、资源正文接入与双向事件订阅仍由 8.3 完成，目录声明不表示这些运行入口已经可用。
+provider 目录已可读取，模型流尚未接入。资源正文使用下面的注册和读取入口；双向事件订阅仍在实施。
 
 `status` 区分进程可用性与最近更新状态。客户端退出后插件由 Core 持有；Core 关闭时回收进程。重启后保留目录，进程状态为 unavailable，显式 refresh 准备新实例。重复已接受请求只返回原回执；同版本 refresh 保留健康实例，离线时重新启动。修改可执行文件后应更新 manifest 的 version，因为摘要不覆盖二进制内容。
 
@@ -435,6 +435,27 @@ provider、resource 目录已可发布和读取；模型流、资源正文接入
 新版发布后，新调用只能取得新实例；已取得引用的调用仍使用原定义、Scope 和进程，保存结果后释放引用，最后一个引用释放时关闭旧实例。准备失败保留当前实例；Core 退出会关闭全部新旧实例。每个 Agent/资源最多保留 32 个退役实例，达到上限时拒绝需要增加退役实例的刷新；原调用结束并回收实例后可重新刷新，同版本健康实例的刷新不占名额。
 
 真实子进程测试已验证调用期间换版、旧调用完成后回收、失败候选、保留上限和并发关闭。provider 模型流仍在实施，8.4 保持未完成。
+
+### 插件 skill/prompt
+
+从 `plugin catalog` 的 resources 目录选择 kind 和 name，再发布所需资源：
+
+```sh
+zende resource register AGENT plugin://PLUGIN_RESOURCE/skill/NAME --kind skill
+zende resource register AGENT plugin://PLUGIN_RESOURCE/prompt/NAME --kind prompt
+zende resource list AGENT --kind skill
+zende resource read AGENT CHILD_RESOURCE --version VERSION
+zende resource refresh AGENT PLUGIN_RESOURCE
+zende resource refresh AGENT CHILD_RESOURCE
+```
+
+`plugin://` 标识插件提供的资源，不是磁盘路径。Core 固定当前插件实例，按目录中的文件清单读取完整包，再核对正文的 name、description 和 disable-model-invocation。全部通过后发布为普通 skill/prompt，可沿用 `$` 选择和 `resource read`。发现目录不应用正文，也不执行脚本。
+
+插件 RPC `plugin.resource.read` 的 params 为 `ref/path`；result 必须含 `ref/path/data/executable`，data 为 base64。每次请求一个文件，核对引用、路径、字节数、SHA-256 和执行位；单文件最多 1 MiB，完整包最多 8 MiB/256 文件，入口正文最多 128 KiB。整个读取限时 30 秒；客户端取消后停止取下一文件，当前响应仍在原预算内接收，避免影响同实例的其他调用。插件超时不答或协议流损坏则关闭连接。
+
+发布和读取返回 `plugin_origin`，含父插件资源 ID、确切版本及 definition_ref；这些来源信息也参与子资源版本计算。发布事务再次核对同一 Agent 的父插件和定义，期间换版报 resource_changed。更新顺序为先刷新父插件，再刷新所需子资源；失败保留子资源的上一完整版本。
+
+已发布内容保存在数据库，插件关闭或 Core 重启后仍可按原版本读取；重试已接受的注册只返回原回执。用户选中 skill 后，正文及插件来源随 user 消息追加到上下文。普通目录和读取结果保持资源语义。
 
 ### CLI 命令执行
 

@@ -122,7 +122,7 @@ func TestPluginPackageExtendedCatalog(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer instance.Close()
-			if len(p.Plugin.Providers) != 1 || len(p.Plugin.Resources) != 1 || len(p.Plugin.Definitions) != 2 {
+			if len(p.Plugin.Providers) != 1 || len(p.Plugin.Resources) != 2 || len(p.Plugin.Definitions) != 2 {
 				t.Fatal(p.Plugin)
 			}
 			if p.Plugin.Providers[0].Models[0].ID != "fixture-text" || p.Plugin.Resources[0].Entry != "instructions.md" {

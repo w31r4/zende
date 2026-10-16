@@ -130,7 +130,7 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	if err := json.Unmarshal(run(true, "plugin", "catalog", agent.AgentID, id), &catalog); err != nil || catalog.Version != accepted.Resource.Version || len(catalog.Definitions) != 2 || catalog.Definitions[0].Kind != "command" || catalog.Definitions[1].Kind != "tool" {
 		t.Fatal(catalog, err)
 	}
-	if len(catalog.Providers) != 1 || len(catalog.Resources) != 1 || catalog.Providers[0].Models[0].ID != "fixture-text" || catalog.Resources[0].Kind != "prompt" {
+	if len(catalog.Providers) != 1 || len(catalog.Resources) != 2 || catalog.Providers[0].Models[0].ID != "fixture-text" || catalog.Resources[0].Kind != "prompt" {
 		t.Fatal("extended plugin definitions missing from retained CLI catalog", catalog)
 	}
 	var status protocol.ResourceStatus
@@ -157,6 +157,24 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	after, _ := os.ReadFile(audit)
 	if !bytes.Equal(before, after) {
 		t.Fatal("read/replay caused plugin RPC")
+	}
+	var children []protocol.Accepted
+	for _, kind := range []string{"skill", "prompt"} {
+		var a protocol.Accepted
+		args := []string{"--request-id", "install-" + kind, "resource", "register", agent.AgentID, "plugin://" + id + "/" + kind + "/fixture-" + kind, "--kind", kind}
+		first := run(true, args...)
+		if err := json.Unmarshal(first, &a); err != nil || a.Resource == nil || a.Resource.PluginOrigin == nil || a.Resource.PluginOrigin.Plugin.Version != accepted.Resource.Version {
+			t.Fatal(a, err)
+		}
+		before, _ := os.ReadFile(audit)
+		if !bytes.Equal(first, run(true, args...)) {
+			t.Fatal("child receipt changed")
+		}
+		after, _ := os.ReadFile(audit)
+		if !bytes.Equal(before, after) {
+			t.Fatal("child retry reread plugin")
+		}
+		children = append(children, a)
 	}
 	manifest.Version = "2"
 	write()
@@ -186,6 +204,15 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 		t.Fatal(offline, err)
 	}
 	checkPluginCLIReads(t, retainedCalls, run)
+	for _, a := range children {
+		var content protocol.ResourceContent
+		if err := json.Unmarshal(run(true, "resource", "read", agent.AgentID, a.Resource.ID, "--version", a.Resource.Version), &content); err != nil || content.PluginOrigin == nil || content.PluginOrigin.Plugin.Version != accepted.Resource.Version || !strings.Contains(content.Text, "Read this fixture") {
+			t.Fatal(content, err)
+		}
+		if err := json.Unmarshal(run(true, "resource", "status", agent.AgentID, a.Resource.ID), &status); err != nil || status.State != "ready" {
+			t.Fatal(status, err)
+		}
+	}
 	after, _ = os.ReadFile(audit)
 	if !bytes.Equal(before, after) {
 		t.Fatal("offline read started a process")
@@ -200,6 +227,10 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	}
 	if !protocol.ReadOnly("plugin.catalog") || !protocol.ReadOnly("plugin.instances") {
 		t.Fatal("plugin reads classified as effects")
+	}
+	help, err = exec.CommandContext(ctx, binary, "resource", "register", "--help").CombinedOutput()
+	if err != nil || !strings.Contains(string(help), "plugin://RESOURCE/skill/NAME") {
+		t.Fatal(string(help), err)
 	}
 	for _, command := range []string{"inspect", "progress", "result"} {
 		help, err := exec.CommandContext(ctx, binary, "plugin", command, "--help").CombinedOutput()

@@ -22,7 +22,12 @@ type skillCatalogMsg struct {
 
 func validSkillInfo(info protocol.ResourceInfo) bool {
 	digest, err := hex.DecodeString(info.Version)
-	return err == nil && len(digest) == 32 && info.ID != "" && len(info.ID) <= 128 && info.Kind == "skill" && len(info.Name) > 0 && len(info.Name) <= 64 && utf8.ValidString(info.Name) && len(info.Description) > 0 && utf8.RuneCountInString(info.Description) <= 1024 && utf8.ValidString(info.Description) && filepath.IsAbs(info.Source) && len(info.Source) <= 4096 && utf8.ValidString(info.Source) && info.Files > 0 && info.Files <= protocol.MaxResourceFiles && info.Bytes > 0 && info.Bytes <= protocol.MaxResourceBytes
+	sourceOK := filepath.IsAbs(info.Source) && info.PluginOrigin == nil
+	if info.PluginOrigin != nil {
+		parent, kind, name, parseErr := protocol.ParsePluginResourceSource(info.Source)
+		sourceOK = parseErr == nil && info.PluginOrigin.Valid() && parent == info.PluginOrigin.Plugin.ID && kind == info.Kind && name == info.Name
+	}
+	return err == nil && len(digest) == 32 && info.ID != "" && len(info.ID) <= 128 && info.Kind == "skill" && len(info.Name) > 0 && len(info.Name) <= 64 && utf8.ValidString(info.Name) && len(info.Description) > 0 && utf8.RuneCountInString(info.Description) <= 1024 && utf8.ValidString(info.Description) && sourceOK && len(info.Source) <= 4096 && utf8.ValidString(info.Source) && info.Files > 0 && info.Files <= protocol.MaxResourceFiles && info.Bytes > 0 && info.Bytes <= protocol.MaxResourceBytes
 }
 
 // Load metadata only. Each page must belong to one generation; concurrent

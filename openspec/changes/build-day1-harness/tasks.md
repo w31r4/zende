@@ -99,6 +99,8 @@
 
 8.2 已接通原生 `plugin_invoke` 与 CLI 命令，共用持久执行、进度、取消和结果记录。测试覆盖来源绑定、原请求目录、断开后继续、输出限额、结果损坏和重启恢复；未知结果阻止重放。8.4 已验证旧工具调用保持、退役、新版失败保留旧版与退出回收，provider 模型流仍待实现，保持未完成。测试入口见 docs/development.md 的持久调用记录。
 
+8.3 已接通插件 skill/prompt 的逐文件校验、版本化发布、来源记录、离线读取及用户选择；provider 当前只有型号目录，模型流和双向事件订阅仍待实现，保持未完成。
+
 ## 9. 上下文压缩与长期恢复
 
 对应设计 D3、D9；能力：[append-only-context](./specs/append-only-context/spec.md)、[durable-agent-runtime](./specs/durable-agent-runtime/spec.md)。

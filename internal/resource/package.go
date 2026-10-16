@@ -26,12 +26,13 @@ import (
 // Package is prepared outside the database transaction, then validated and
 // published as one version. Scripts and assets are data, never executed here.
 type Package struct {
-	Info         protocol.ResourceInfo
-	Instructions string
-	Entry        string
-	Files        []File
-	MCP          *mcp.Catalog         `json:",omitempty"`
-	Plugin       *plugin.SavedCatalog `json:",omitempty"`
+	Info           protocol.ResourceInfo
+	Instructions   string
+	Entry          string
+	Files          []File
+	MCP            *mcp.Catalog               `json:",omitempty"`
+	Plugin         *plugin.SavedCatalog       `json:",omitempty"`
+	PluginResource *plugin.ResourceDefinition `json:",omitempty"`
 }
 type File struct {
 	Path       string
@@ -44,6 +45,13 @@ var skillName = regexp.MustCompile("^[a-z0-9]+(-[a-z0-9]+)*$")
 // Identity is available before files are readable, so failed installations can
 // still be inspected and retried. It performs no filesystem I/O.
 func Identity(kind, source string) (protocol.ResourceInfo, error) {
+	if strings.HasPrefix(source, "plugin://") {
+		_, sourceKind, _, err := protocol.ParsePluginResourceSource(source)
+		if err != nil || kind != sourceKind {
+			return protocol.ResourceInfo{}, protocol.E("invalid_params", "plugin resource source must match its skill or prompt kind")
+		}
+		return resourceIdentity(kind, source), nil
+	}
 	if (kind != "skill" && kind != "prompt" && kind != "mcp" && kind != "plugin") || !filepath.IsAbs(source) || len(source) > 4096 || strings.ContainsRune(source, 0) || !utf8.ValidString(source) {
 		return protocol.ResourceInfo{}, protocol.E("invalid_params", "resource kind must be skill, prompt, mcp or plugin and source must be an absolute path of at most 4096 bytes")
 	}
@@ -54,8 +62,12 @@ func Identity(kind, source string) (protocol.ResourceInfo, error) {
 	if len(source) > 4096 {
 		return protocol.ResourceInfo{}, protocol.E("invalid_params", "resource source exceeds 4096 bytes")
 	}
+	return resourceIdentity(kind, source), nil
+}
+
+func resourceIdentity(kind, source string) protocol.ResourceInfo {
 	id := sha256.Sum256([]byte(kind + "\x00" + source))
-	return protocol.ResourceInfo{ID: fmt.Sprintf("resource_%x", id[:16]), Kind: kind, Source: source}, nil
+	return protocol.ResourceInfo{ID: fmt.Sprintf("resource_%x", id[:16]), Kind: kind, Source: source}
 }
 
 func parseInstructions(data []byte) (name, description, body string, disabled bool, err error) {
@@ -140,7 +152,7 @@ func parseInstructions(data []byte) (name, description, body string, disabled bo
 // This catches writes during preparation, not a writer's unstated future edits;
 // publishers should finish files before register, preferably by atomic rename.
 func Prepare(ctx context.Context, kind, source string) (Package, error) {
-	if kind == "mcp" || kind == "plugin" {
+	if kind == "mcp" || kind == "plugin" || strings.HasPrefix(source, "plugin://") {
 		return Package{}, protocol.E("invalid_params", "MCP and plugin preparation require a managed connection")
 	}
 	identity, err := Identity(kind, source)
@@ -264,6 +276,12 @@ func BuildPackage(kind, source, entry string, files []File) (Package, error) {
 	if (kind == "skill" && (entry != "SKILL.md" || filepath.Base(source) != entry)) || (kind == "prompt" && (len(files) != 1 || filepath.Base(source) != entry)) {
 		return Package{}, protocol.E("invalid_resource", "invalid instruction entry")
 	}
+	return buildInstructionPackage(kind, source, entry, files)
+}
+
+// Both filesystem and plugin packages use exactly the same instruction parser.
+// Their public constructors separately validate source and file inventory.
+func buildInstructionPackage(kind, source, entry string, files []File) (Package, error) {
 	p := Package{Entry: entry, Info: protocol.ResourceInfo{Kind: kind, Source: source}}
 	seen := make(map[string]bool)
 	var instructions []byte

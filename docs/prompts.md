@@ -57,6 +57,8 @@ Zende 保持 exec、进程继续操作和 patch 的工具边界。Pi 的 read/ed
 
 版本 16 加入 `plugin_invoke`。模型从目录读取 kind 为 tool 的定义与引用，调用时固定实例；大结果通过原操作 ID 续读，未知结果先核实。插件定义按需读取，原始协议证据通过显式查询获取。descriptor 沿用 Pi 的短说明、详细描述和共用规则分工，参数留给 schema；恢复旧 Task 保留原提示词。
 
+版本 17 在 `resource.register` 短说明中补充插件资源：先查 `plugin catalog`，按 kind/name 注册 `plugin://` 来源，更新时先刷新父插件。正文沿用版本化资源读取，参数细节留给帮助；用户选中的 skill 另带 `plugin_origin`。旧 Task 保留原提示词。
+
 ## Skill/prompt 的请求级更新
 
 `resource.register/refresh` 校验并保存不可变文件包；失败保留上一版。任务每次请求从同一数据库事务读取上下文和当前资源目录，`model.started.resource_catalog` 保存 generation 及全部 ID/版本。它记录当时可发现的定义，不代表正文已经应用。

@@ -880,6 +880,22 @@ go test ./internal/resource/mcp \
 
 说明按 trim-cn-tech-doc 收紧交付状态，保留协议、限额、失败边界和可运行命令。tui-design 用于核对 CLI 的 JSON、诊断和帮助，主界面及提示词未改。调用持久化、模型工具、CLI 执行和运行中实例保留继续按 8.2–8.5 实施。
 
+## 2026-10-16：插件 skill/prompt 正文
+
+8.3 的资源部分已接通，累计 45/68 项。模型流和双向事件订阅保持待办。插件资源按需经 `resource register` 发布，沿用版本化读取、用户选择与追加通知；`plugin_origin` 记录父插件版本及定义引用。
+
+| 检查 | 测试 | 结果 |
+| --- | --- | --- |
+| 内容与来源 | `TestPluginResourceReadAndImmutablePackage`、`TestPluginResourceRejectsMismatchedBytes` | 保存正文、脚本和执行位，来源参与版本；拒绝错引用、错路径、缺失/变化的字节、执行位和 frontmatter 不一致 |
+| 预算与取消 | `TestPluginResourceFullEightMiBBundleUsesBoundedFrames`、`TestPluginResourceCancelledReadDrainsLateReply` | 完整 8 MiB 包按文件传输；客户端取消后接收原响应，后续读取仍可用 |
+| 发布与恢复 | `TestPluginResourcePublicationChecksParentAndRetainsHistory`、`TestPluginResourcesPublishRefreshAndReadOffline` | 拒绝伪造定义和跨 Agent 来源；新旧版本跨数据库重开保留，失败更新保留旧版，显式选择追加原 skill 正文及来源 |
+| 并发换版 | `TestPluginResourceParentRefreshDuringReadRejectsMixedVersion` | 旧实例保留到读取结束，父插件更新后拒绝旧候选，重试取得完整新版 |
+| CLI 与 TUI | `TestPluginCatalogThroughBinaryCLI`、`TestPluginSkillCatalogAndKeyboardSelection` | 真实二进制经 UDS 注册和离线读取；重复接受不读插件；TUI 支持 `$`、`/skill` 键盘选择，拒绝不匹配来源 |
+
+最终 `go test ./...`、资源/存储/运行时/TUI 新用例的三轮 race、相关包 `go vet`、OpenSpec strict 与 diff 检查通过。相关包完整 race 也已通过，最后补充的读取字段类型校验由三轮定向 race 覆盖。测试使用隔离目录和本地插件子进程；本轮未使用外部模型或用户凭据。
+
+回查 TUI 发现来源校验只接受绝对路径，补齐 `plugin://` 和来源验证后重跑全量测试。提示词版本 17 参考 Pi 的短入口组织；文档按 trim-cn-tech-doc 保留用法、限额、来源和失败条件，CLI 帮助与键盘入口按 tui-design 核对。
+
 ## 进行中
 
-继续 8.2 的持久调用回执、模型工具注册与 CLI 执行。7.1、7.2 的配置/provider 热发布与外部目录监视尚未完成；目录安装完成的判定方式已提问，待用户选择。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。
+继续 8.3 的 provider 模型流和双向事件订阅。7.1、7.2 的配置/provider 热发布与外部目录监视尚未完成，会话复制还依赖第 9 组。Day1 整体与本机部署尚未完成。origin 已连接用户创建的 `w31r4/zende`，实现按原子提交推送。
