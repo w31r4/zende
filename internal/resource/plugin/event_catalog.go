@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"zende.local/harness/internal/protocol"
 )
 
 // Direction names the source. Core capabilities consume original Core events;
@@ -36,6 +37,44 @@ func (c *Catalog) Events() []EventDefinition {
 		out = append(out, d)
 	}
 	return out
+}
+
+// ValidateEvent applies the published source schema to a retained event as
+// well as a live response. It performs no RPC or external schema loading.
+func (c *Catalog) ValidateEvent(ref string, event PluginEvent) error {
+	for _, entry := range c.events {
+		if entry.definition.Ref != ref {
+			continue
+		}
+		value, err := decodeValue(event.Value, MaxEventBytes)
+		if entry.definition.Direction != "plugin" || event.Sequence < 1 || !eventKind.MatchString(event.Kind) || err != nil || entry.schema.Validate(value) != nil {
+			return protocol.E("invalid_params", "plugin event differs from its published source schema or budget")
+		}
+		return nil
+	}
+	return protocol.E("stale_reference", "plugin event source is not in this catalog")
+}
+
+func (c *Catalog) ValidateSubscription(p EventSubscribe) error {
+	if !boundedID(p.OperationID, 128) || !boundedID(p.SubscriptionID, 128) || !boundedID(p.Scope.AgentID, 128) || p.After < 0 || len(p.Kinds) > 32 {
+		return protocol.E("invalid_params", "invalid event subscription identity or filter budget")
+	}
+	seen := map[string]bool{}
+	for _, kind := range p.Kinds {
+		if !eventKind.MatchString(kind) || seen[kind] {
+			return protocol.E("invalid_params", "Core event kinds must be unique names of 1–128 bytes")
+		}
+		seen[kind] = true
+	}
+	for _, entry := range c.events {
+		if entry.definition.Ref == p.DefinitionRef {
+			if entry.definition.Direction == "plugin" && (p.After != 0 || len(p.Kinds) != 0) {
+				return protocol.E("invalid_params", "new plugin sources start at zero without Core filters")
+			}
+			return nil
+		}
+	}
+	return protocol.E("stale_reference", "event source is not in this catalog")
 }
 
 func (c *Catalog) compileEvents(info Info, definitions []EventCapability) error {

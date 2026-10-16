@@ -173,7 +173,7 @@ func TestMCPSchemaMigratesVersion13(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.db.Exec("DROP TABLE plugin_progress; DROP TABLE plugin_calls; DROP TABLE mcp_calls; PRAGMA user_version=13"); err != nil {
+	if _, err := s.db.Exec(dropPluginSubscriptionSchema + "DROP TABLE plugin_progress; DROP TABLE plugin_calls; DROP TABLE mcp_calls; PRAGMA user_version=13"); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

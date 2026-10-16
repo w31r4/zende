@@ -147,6 +147,16 @@ func (s *EventSubscription) invalid(message string) error {
 }
 
 func (i *Instance) OpenEvents(ctx context.Context, p EventSubscribe) (*EventSubscription, error) {
+	s, err := i.PrepareEvents(p)
+	if err != nil {
+		return nil, err
+	}
+	return s, s.Open(ctx)
+}
+
+// PrepareEvents validates and binds without sending RPC or reserving capacity.
+// The Core can durably accept this exact binding before Open dispatches it.
+func (i *Instance) PrepareEvents(p EventSubscribe) (*EventSubscription, error) {
 	if !boundedID(p.OperationID, 128) || !boundedID(p.SubscriptionID, 128) || p.Scope.AgentID == "" || p.After < 0 || len(p.Kinds) > 32 {
 		return nil, protocol.E("invalid_params", "event subscription requires operation, subscription, Agent and a nonnegative cursor")
 	}
@@ -182,38 +192,59 @@ func (i *Instance) OpenEvents(ctx context.Context, p EventSubscribe) (*EventSubs
 		i.mu.Unlock()
 		return nil, protocol.E("invalid_params", "new plugin event subscriptions start at zero without Core filters")
 	}
-	if i.subscriptions[p.SubscriptionID] != nil {
-		i.mu.Unlock()
-		return nil, protocol.E("operation_conflict", "subscription already exists on this instance; inspect the original operation")
-	}
-	if len(i.subscriptions) >= MaxEventSubscriptions {
-		i.mu.Unlock()
-		return nil, protocol.E("resource_limit", "plugin permits at most 32 open event subscriptions")
-	}
 	s := &EventSubscription{instance: i, entry: *entry, gate: make(chan struct{}, 1), info: EventSubscriptionInfo{
 		CallBinding:    CallBinding{PluginID: i.info.ID, PluginVersion: i.info.Version, ManifestVersion: i.info.ManifestVersion, InstanceID: i.info.InstanceID, CatalogVersion: i.catalog.version, DefinitionRef: p.DefinitionRef, OperationID: p.OperationID},
 		SubscriptionID: p.SubscriptionID, Direction: entry.definition.Direction, Name: entry.definition.Name,
-		Scope: p.Scope, Kinds: p.Kinds, After: p.After, Cursor: p.After, State: "opening",
+		Scope: p.Scope, Kinds: p.Kinds, After: p.After, Cursor: p.After, State: "prepared",
 	}}
+	i.mu.Unlock()
+	return s, nil
+}
+
+func (s *EventSubscription) Open(ctx context.Context) error {
+	if err := s.lock(ctx); err != nil {
+		return err
+	}
+	defer func() { <-s.gate }()
+	info := s.Info()
+	if info.State != "prepared" {
+		return protocol.E("operation_conflict", "subscription was already opened or its instance is unavailable")
+	}
+	i := s.instance
+	i.mu.Lock()
+	if i.info.State != "ready" {
+		i.mu.Unlock()
+		return protocol.E("unavailable", "plugin event instance is unavailable")
+	}
+	if i.subscriptions[info.SubscriptionID] != nil {
+		i.mu.Unlock()
+		return protocol.E("operation_conflict", "subscription already exists on this instance; inspect the original operation")
+	}
+	if len(i.subscriptions) >= MaxEventSubscriptions {
+		i.mu.Unlock()
+		return protocol.E("resource_limit", "plugin permits at most 32 open event subscriptions")
+	}
 	if i.subscriptions == nil {
 		i.subscriptions = map[string]*EventSubscription{}
 	}
-	i.subscriptions[p.SubscriptionID] = s
+	i.subscriptions[info.SubscriptionID] = s
 	i.mu.Unlock()
-	raw, sent, err := i.eventExchange(ctx, "plugin.events.open", EventOpen{p, entry.definition.Name, entry.definition.Direction})
+	s.set("opening", info.After)
+	p := EventSubscribe{OperationID: info.OperationID, SubscriptionID: info.SubscriptionID, DefinitionRef: info.DefinitionRef, Scope: info.Scope, After: info.After, Kinds: info.Kinds}
+	raw, sent, err := i.eventExchange(ctx, "plugin.events.open", EventOpen{p, info.Name, info.Direction})
 	if err != nil {
 		if sent {
 			s.set("unknown", p.After)
 		} else {
 			s.set("rejected", p.After)
 		}
-		return s, err
+		return err
 	}
 	if !eventAck(raw, p.SubscriptionID, p.After, "open") {
-		return s, s.invalid("plugin event open acknowledgement does not match the subscription")
+		return s.invalid("plugin event open acknowledgement does not match the subscription")
 	}
 	s.set("open", p.After)
-	return s, nil
+	return nil
 }
 
 func eventAck(raw []byte, id string, cursor int64, state string) bool {

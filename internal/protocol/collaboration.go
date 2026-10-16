@@ -11,7 +11,7 @@ import (
 // first accepted caller remains in history; changing task content still fails.
 // Fingerprint itself retains provenance for automatic caller-local IDs.
 func (r Request) EffectFingerprint() (string, error) {
-	if r.Method == "agent.spawn" || r.Method == "agent.submit" || r.Method == "agent.send" || r.Method == "plugin.command.call" {
+	if r.Method == "agent.spawn" || r.Method == "agent.submit" || r.Method == "agent.send" || r.Method == "plugin.command.call" || r.Method == "plugin.events.subscribe" {
 		var params map[string]json.RawMessage
 		if err := json.Unmarshal(r.Params, &params); err != nil {
 			return "", err

@@ -29,7 +29,7 @@ func pluginAgentDispatchable(ctx context.Context, q rowQuerier, agent string) er
 		return err
 	}
 	var unresolved bool
-	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM plugin_calls WHERE agent_id=? AND state='unknown')`, agent).Scan(&unresolved); err != nil {
+	if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM plugin_calls WHERE agent_id=? AND state='unknown') OR EXISTS(SELECT 1 FROM plugin_subscription_heads WHERE agent_id=? AND json_extract(payload,'$.state')='unknown')`, agent, agent).Scan(&unresolved); err != nil {
 		return err
 	}
 	if unresolved {

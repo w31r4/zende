@@ -157,6 +157,9 @@ func (s *Store) BeginTreeStop(ctx context.Context, req protocol.Request, root st
 			if err := cancelScopedPluginCalls(ctx, tx, member.AgentID, nil); err != nil {
 				return protocol.Accepted{}, err
 			}
+			if err := closeAgentPluginSubscriptions(ctx, tx, member.AgentID); err != nil {
+				return protocol.Accepted{}, err
+			}
 			if _, err := appendEvent(ctx, tx, member.AgentID, task, "agent.tree_stopping", map[string]string{"operation_id": req.OperationID, "root_agent_id": root}); err != nil {
 				return protocol.Accepted{}, err
 			}

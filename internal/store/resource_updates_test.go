@@ -213,7 +213,7 @@ func TestResourceUpdateLimitsIsolationAndMigration(t *testing.T) {
 	pkg := savedResource(t, "/skills/review/SKILL.md", "v1")
 	req, accepted := publication(t, s, a.AgentID, "initial", pkg, 0)
 	before, _ := s.Events(ctx, protocol.Cursor{AgentID: a.AgentID})
-	if _, err := s.db.Exec("DROP TABLE plugin_progress; DROP TABLE plugin_calls; DROP TABLE mcp_calls; DROP TABLE resource_updates; PRAGMA user_version=12"); err != nil {
+	if _, err := s.db.Exec(dropPluginSubscriptionSchema + "DROP TABLE plugin_progress; DROP TABLE plugin_calls; DROP TABLE mcp_calls; DROP TABLE resource_updates; PRAGMA user_version=12"); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

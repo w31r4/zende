@@ -51,6 +51,7 @@ func RunFromEnv() {
 	var waitingID, waitingOperation string
 	var waitingModel bool
 	var pluginVersion string
+	events := eventFixture{}
 	for scanner.Scan() {
 		var req struct {
 			ID     string          `json:"id"`
@@ -120,7 +121,12 @@ func RunFromEnv() {
 				}
 				catalog["resources"] = resources
 			}
+			if slices.Contains(query.Kinds, "events") {
+				catalog["events"] = EventCapabilities()
+			}
 			result = catalog
+		case "plugin.events.open", "plugin.events.read", "plugin.events.deliver", "plugin.events.close":
+			result = events.handle(req.Method, req.Params, pluginVersion)
 		case "plugin.resource.read":
 			var p plugin.ResourceFileRead
 			if json.Unmarshal(req.Params, &p) != nil {
