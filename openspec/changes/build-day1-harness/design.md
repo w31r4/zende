@@ -1,5 +1,7 @@
 # Design
 
+执行约定（2026-10-16）：按用户要求停止新增和运行测试，继续实现既定行为。下文测试方案保留为历史设计依据，不再作为当前执行步骤；实现记录与历史验证证据分开。
+
 ## Context
 
 动机与范围见 [proposal.md](./proposal.md)。当前项目没有自己的 Go 实现和测试；根目录的 [SPEC.md](../../../SPEC.md) 与 [PRINCIPLES.md](../../../PRINCIPLES.md) 是本次拆分的依据，`.research/` 是只读参考。
