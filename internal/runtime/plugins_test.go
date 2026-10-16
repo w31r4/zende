@@ -71,6 +71,20 @@ func TestCoreStartupHoldsUnfinishedPluginCall(t *testing.T) {
 		case <-time.After(5 * time.Millisecond):
 		}
 	}
+	target := protocol.PluginCallTarget{AgentID: agent, OperationID: "interrupted"}
+	inspect, _ := protocol.NewRequest("plugin.inspect", "", target)
+	read, err := c.Handle(t.Context(), inspect)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt := read.(store.PluginReceipt)
+	if receipt.State != "unknown" || receipt.Error.Data.Kind != "operation_unknown" || receipt.ResultBytes != 0 {
+		t.Fatal(receipt)
+	}
+	result, _ := protocol.NewRequest("plugin.result", "", protocol.PluginResultRead{PluginCallTarget: target})
+	if _, err := c.Handle(t.Context(), result); !isFailure(err, "unavailable") {
+		t.Fatal("recovery read fabricated an outcome", err)
+	}
 }
 
 func runtimePluginFixture(t *testing.T) (*Core, string, plugin.Manifest, string) {

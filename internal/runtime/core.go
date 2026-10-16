@@ -152,6 +152,31 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 			return nil, err
 		}
 		return c.pluginInstances(ctx, p)
+	case "plugin.inspect":
+		var p protocol.PluginCallTarget
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		record, err := c.Store.PluginCall(ctx, p)
+		if err != nil {
+			return nil, err
+		}
+		if record == nil {
+			return nil, protocol.E("not_found", "plugin call not found for this Agent")
+		}
+		return record.Receipt, nil
+	case "plugin.progress":
+		var p protocol.PluginProgressQuery
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.Store.PluginProgress(ctx, p.PluginCallTarget, p.After, p.Limit)
+	case "plugin.result":
+		var p protocol.PluginResultRead
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.Store.ReadPluginResult(ctx, p.PluginCallTarget, p.Offset, p.Limit)
 	case "resource.list":
 		var p protocol.ResourceList
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

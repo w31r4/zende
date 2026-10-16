@@ -58,7 +58,7 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(ctx) }()
 	defer func() {
@@ -80,8 +80,16 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 			return out.Bytes()
 		}
 		exit, ok := err.(*exec.ExitError)
-		if !ok || exit.ExitCode() != 2 || out.Len() != 0 || bytes.Contains(diagnostic.Bytes(), []byte{27}) || !json.Valid(diagnostic.Bytes()) {
+		var failure protocol.Error
+		if !ok || out.Len() != 0 || bytes.Contains(diagnostic.Bytes(), []byte{27}) || json.Unmarshal(diagnostic.Bytes(), &failure) != nil {
 			t.Fatal(args, err, out.String(), diagnostic.String())
+		}
+		wantExit := 1
+		if failure.Data.Kind == "invalid_params" || failure.Data.Kind == "invalid_request" {
+			wantExit = 2
+		}
+		if exit.ExitCode() != wantExit {
+			t.Fatal(args, err, "want exit", wantExit, diagnostic.String())
 		}
 		return diagnostic.Bytes()
 	}
@@ -161,6 +169,7 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	if err := json.Unmarshal(run(false, "plugin", "catalog", agent.AgentID, id, "--version", "latest"), &failure); err != nil || failure.Data.Kind != "invalid_params" {
 		t.Fatal(failure, err)
 	}
+	retainedCalls := seedPluginCLIReads(t, ctx, s, source, updated, run)
 	c.CloseResources()
 	before, _ = os.ReadFile(audit)
 	if err := json.Unmarshal(run(true, "resource", "status", agent.AgentID, id), &status); err != nil || status.State != "unavailable" {
@@ -171,6 +180,7 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	if err := json.Unmarshal(run(true, "plugin", "instances", agent.AgentID, id), &offline); err != nil || len(offline.Items) != 0 || offline.Current != "" {
 		t.Fatal(offline, err)
 	}
+	checkPluginCLIReads(t, retainedCalls, run)
 	after, _ = os.ReadFile(audit)
 	if !bytes.Equal(before, after) {
 		t.Fatal("offline read started a process")
@@ -185,5 +195,11 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	}
 	if !protocol.ReadOnly("plugin.catalog") || !protocol.ReadOnly("plugin.instances") {
 		t.Fatal("plugin reads classified as effects")
+	}
+	for _, command := range []string{"inspect", "progress", "result"} {
+		help, err := exec.CommandContext(ctx, binary, "plugin", command, "--help").CombinedOutput()
+		if err != nil || !strings.Contains(string(help), command+" AGENT OPERATION") || !protocol.ReadOnly("plugin."+command) {
+			t.Fatal(command, string(help), err)
+		}
 	}
 }

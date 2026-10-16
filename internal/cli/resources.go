@@ -80,7 +80,7 @@ func (a *app) resourceCommands(root *cobra.Command) {
 	resultCmd.Flags().IntVar(&result.Limit, "limit", 64<<10, "Page size (4–262144 bytes); binary data is base64 in JSON")
 	mcp.AddCommand(resultCmd)
 	root.AddCommand(mcp)
-	plugins := &cobra.Command{Use: "plugin", Short: "Inspect plugin definitions and managed instances"}
+	plugins := &cobra.Command{Use: "plugin", Short: "Inspect plugin definitions, managed instances and retained calls"}
 	var catalog protocol.PluginCatalogQuery
 	catalogCmd := &cobra.Command{Use: "catalog AGENT RESOURCE", Short: "Read retained tools and commands; does not start or invoke a plugin", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		catalog.AgentID, catalog.ID = args[0], args[1]
@@ -91,6 +91,25 @@ func (a *app) resourceCommands(root *cobra.Command) {
 	plugins.AddCommand(&cobra.Command{Use: "instances AGENT RESOURCE", Short: "Read current and retiring instances with reference counts; does not start a process", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		return a.call(cmd, "plugin.instances", false, protocol.ResourceTarget{AgentID: args[0], ID: args[1]})
 	}})
+	plugins.AddCommand(&cobra.Command{Use: "inspect AGENT OPERATION", Short: "Read the original plugin receipt without executing again", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		return a.call(cmd, "plugin.inspect", false, protocol.PluginCallTarget{AgentID: args[0], OperationID: args[1]})
+	}})
+	var progress protocol.PluginProgressQuery
+	progressCmd := &cobra.Command{Use: "progress AGENT OPERATION", Short: "Read retained progress after a sequence; does not contact the plugin", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		progress.AgentID, progress.OperationID = args[0], args[1]
+		return a.call(cmd, "plugin.progress", false, progress)
+	}}
+	progressCmd.Flags().Int64Var(&progress.After, "after", 0, "Sequence from the previous next; default starts at the beginning")
+	progressCmd.Flags().IntVar(&progress.Limit, "limit", 16, "Maximum progress entries (1–32)")
+	plugins.AddCommand(progressCmd)
+	var pluginResult protocol.PluginResultRead
+	pluginResultCmd := &cobra.Command{Use: "result AGENT OPERATION", Short: "Read retained plugin result JSON as UTF-8 pages; does not contact the plugin", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		pluginResult.AgentID, pluginResult.OperationID = args[0], args[1]
+		return a.call(cmd, "plugin.result", false, pluginResult)
+	}}
+	pluginResultCmd.Flags().IntVar(&pluginResult.Offset, "offset", 0, "Byte offset from previous next; must be a UTF-8 boundary")
+	pluginResultCmd.Flags().IntVar(&pluginResult.Limit, "limit", 64<<10, "Page size (4–262144 bytes)")
+	plugins.AddCommand(pluginResultCmd)
 	root.AddCommand(plugins)
 }
 

@@ -89,7 +89,7 @@ func (f *pluginJournalFixture) prepare(t *testing.T, operation, kind string) (*p
 	}
 	req, _ := protocol.NewRequest("plugin."+kind+".call", operation, PluginCallInput{AgentID: f.agent, ResourceID: f.pkg.Info.ID, DefinitionRef: ref, Arguments: args})
 	inv := PluginInvocation{Request: req, Binding: call.Binding(), Scope: call.Scope(), Definition: call.Definition(), ResourceVersion: f.pkg.Info.Version, Generation: f.generation}
-	return call, inv, PluginCallTarget{f.agent, operation}
+	return call, inv, PluginCallTarget{AgentID: f.agent, OperationID: operation}
 }
 
 func beginPlugin(t *testing.T, f *pluginJournalFixture, inv PluginInvocation) {

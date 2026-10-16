@@ -128,7 +128,7 @@ func TestPluginJournalProgressValidationAndCursors(t *testing.T) {
 	}
 	_, err = f.s.PluginProgress(t.Context(), target, 3, 1)
 	wantPluginError(t, err, "cursor_gap")
-	_, err = f.s.PluginProgress(t.Context(), PluginCallTarget{"other", target.OperationID}, 0, 1)
+	_, err = f.s.PluginProgress(t.Context(), PluginCallTarget{AgentID: "other", OperationID: target.OperationID}, 0, 1)
 	wantPluginError(t, err, "not_found")
 	_, err = f.s.ReadPluginResult(t.Context(), target, 0, 0)
 	wantPluginError(t, err, "unavailable")

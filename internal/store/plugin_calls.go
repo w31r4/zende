@@ -67,10 +67,7 @@ type PluginInvocation struct {
 	Generation      int64              `json:"generation"`
 }
 
-type PluginCallTarget struct {
-	AgentID     string `json:"agent_id"`
-	OperationID string `json:"operation_id"`
-}
+type PluginCallTarget = protocol.PluginCallTarget
 
 // Receipts/events contain only identity and sizes. Plugin values and arbitrary
 // error text remain behind the explicit progress/result readers.
@@ -184,7 +181,7 @@ func (s *Store) PriorPluginCall(ctx context.Context, req protocol.Request) (*Plu
 	if err != nil || !found {
 		return nil, err
 	}
-	record, err := s.PluginCall(ctx, PluginCallTarget{p.AgentID, req.OperationID})
+	record, err := s.PluginCall(ctx, PluginCallTarget{AgentID: p.AgentID, OperationID: req.OperationID})
 	if err == nil && record == nil {
 		return nil, protocol.E("invalid_state", "accepted plugin call has no dispatch record")
 	}
@@ -264,7 +261,7 @@ func (s *Store) BeginPluginCall(ctx context.Context, i PluginInvocation, owner s
 		if _, err := tx.ExecContext(ctx, `INSERT INTO plugin_calls(operation_id,agent_id,task_id,owner,intent,intent_hash,state) VALUES(?,?,nullif(?,''),?,?,?,'dispatched')`, i.Request.OperationID, p.AgentID, p.TaskID, owner, string(raw), pluginDigest(raw)); err != nil {
 			return protocol.Accepted{}, err
 		}
-		record, err := pluginRecord(ctx, tx, PluginCallTarget{p.AgentID, i.Request.OperationID})
+		record, err := pluginRecord(ctx, tx, PluginCallTarget{AgentID: p.AgentID, OperationID: i.Request.OperationID})
 		if err != nil {
 			return protocol.Accepted{}, err
 		}
@@ -277,7 +274,7 @@ func (s *Store) BeginPluginCall(ctx context.Context, i PluginInvocation, owner s
 	if err != nil {
 		return nil, false, err
 	}
-	record, err := s.PluginCall(ctx, PluginCallTarget{p.AgentID, i.Request.OperationID})
+	record, err := s.PluginCall(ctx, PluginCallTarget{AgentID: p.AgentID, OperationID: i.Request.OperationID})
 	if err == nil && record == nil {
 		err = protocol.E("invalid_state", "accepted plugin call has no dispatch record")
 	}

@@ -453,7 +453,17 @@ zende --request-id refresh-plugin resource refresh AGENT RESOURCE
 
 `AppendPluginProgress` 按连续 sequence 保存进度和事件；相同内容重复提交去重，缺号或改写报错。单调用最多保存 1024 条、合计 8 MiB，超限保留已提交部分。`MarkPluginCancelling` 只记录取消处理中；`FinishPluginCall` 接受原实例的已确认终态或 unknown/not_dispatched，并按原发布版本的 schema 核对完成证据。结果和事件原子提交，终态及旧进度保持不可改写。
 
-公开事件只含身份、状态、大小和固定错误，参数、进度值、结果正文留在独立记录中。`PluginProgress` 默认每页 16 条、最多 32 条；`ReadPluginResult` 默认 64 KiB、允许 4–256 KiB，按 UTF-8 边界分页读取完整 CallResult JSON，附长度和 SHA-256。每页检查原内容哈希。当前这些是存储接口，CLI 查询入口仍待接入。
+公开事件只含身份、状态、大小和固定错误，参数、进度值、结果正文留在独立记录中。CLI 查询已接通原操作记录，插件离线后仍可读取：
+
+```sh
+zende plugin inspect AGENT OPERATION
+zende plugin progress AGENT OPERATION --after 0 --limit 16
+zende plugin result AGENT OPERATION --offset 0 --limit 65536
+```
+
+`inspect` 返回状态、原实例绑定、进度计数及结果长度/哈希；参数和原始错误正文不进入回执。`progress` 默认每页 16 条、最多 32 条，`next` 为最后一条 sequence。`result` 默认每页 64 KiB，允许 4 字节至 256 KiB，`next` 为字节位置；每页检查完整结果的哈希，并保持 UTF-8 边界。把各页 `text` 按序拼接可恢复完整 CallResult JSON，直到 `more=false`。
+
+查询不会启动或调用插件。结果尚未保存时报 unavailable；unknown 可能保留部分证据，也可能没有结果，均需核实原操作。跨 Agent 查询返回 not_found，进度游标超前返回 cursor_gap。参数错误退出 2，其余服务错误退出 1；状态为 failed/unknown 的已有回执仍是成功读取，调用结果由回执的 state 表示。
 
 Core 启动把旧 Core 尚未结束的插件调用记为 unknown，保留原操作 ID、进度和证据；读取与重试接受请求均不重新派发。已完成结果保持原样。存储结果含已校验 completion 和原响应证据，编码后限 8 MiB + 64 KiB；超限拒绝提交，原调用继续待核实。
 
@@ -464,7 +474,7 @@ go test -race ./internal/store ./internal/runtime -run 'Test(PluginJournal|Plugi
 go test -race ./internal/runtime ./internal/cli -run 'TestPlugin(Lease|Retirement|CatalogThroughBinaryCLI)' -count=3
 ```
 
-覆盖 tool/command、进度、已确认取消、异常退出、并发去重、事务回滚、分页完整性、进度限额及 schema 14→15。第二条验证 Core 的旧实例保持与回收，并通过真实 CLI 查询实例，检查 JSON 输出、只读行为和离线状态。
+覆盖 tool/command、进度、已确认取消、异常退出、并发去重、事务回滚、分页完整性、进度限额及 schema 14→15。第二条验证 Core 的旧实例保持与回收，以及真实 CLI 的实例/回执查询、退出码、进度分页和中文结果重组。调用由测试所有者发起并保存，CLI 只读；公开执行入口仍待接入。
 
 ## Responses 接入
 
