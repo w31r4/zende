@@ -379,7 +379,7 @@ Core 重启后，已保存结果可补入原工具结果位置，无须重连 MC
 
 ## 插件启动与协议协商
 
-Core 已接入插件注册、实例引用、CLI 命令执行与持久调用记录。原生模型工具、provider/resource/event 扩展仍由 OpenSpec 8.2–8.5 交付。
+Core 已接入插件注册、实例引用、原生模型工具、CLI 命令和持久调用记录。provider/resource/event 扩展及完整故障验收由 OpenSpec 8.3–8.5 交付。
 
 ```yaml
 schema_version: 1
@@ -432,7 +432,7 @@ zende --request-id refresh-plugin resource refresh AGENT RESOURCE
 
 ### CLI 命令执行
 
-从 `plugin catalog` 选择 kind 为 command 的定义，按 input_schema 准备 JSON。CLI 只接收命令引用；原生 tool 入口仍待实现。
+从 `plugin catalog` 选择 kind 为 command 的定义，按 input_schema 准备 JSON。CLI 只接收命令引用；kind 为 tool 的定义通过 `plugin_invoke` 调用。
 
 ```sh
 zende --request-id plugin-job-1 plugin command AGENT RESOURCE REF --file arguments.json
@@ -450,11 +450,19 @@ Runner 提供 `ZENDE_CALLER` 时，Core 核对原 `exec_command`，绑定 Agent/
 
 提示词参考 Pi `7bc154ad082e2f0029c19117a16d22a504439476` 的 `packages/coding-agent/src/core/system-prompt.ts` 和 `packages/coding-agent/src/core/tools/bash.ts`：保留短入口、结果语义和重试规则，参数细节通过 `--help` 查询。
 
+### 原生模型工具
+
+`plugin_invoke` 接收 `resource_id`、目录中的确切 `tool_ref` 和符合该定义 input_schema 的 `arguments`。先用 `resource list --kind plugin` 找资源，再用 `plugin catalog` 读 kind 为 tool 的定义。模型只获得这个稳定入口，插件定义按需读取；同一 Task 可发现并调用新发布的插件。
+
+Core 分配 Agent、Task、cwd 和操作 ID，调用时取得当前实例，沿用 CLI 的持久执行流程。旧引用报 stale_reference，模型须重新查询目录。结果包含原回执、output_bytes 和 more；编码后的 output 不超过 32 KiB 时直接返回，否则提供最多 4096 字节的 UTF-8 预览。错误说明也最多展示 4096 字节；任一部分截短时 more=true，完整结果从 `plugin result AGENT OPERATION` 分页读取。单条模型结果上限 64 KiB。自动回填只含经原 schema 和证据核对的 completion，原始协议证据留给显式读取。
+
+Task 取消先保存取消意图，再通知原调用并等待确认；cancelled 表示插件确认取消，已产生的外部效果仍保留。已确认失败作为工具错误回填，unknown、结果保存失败或校验失败则让 Task 等待核实。重启后，已保存结果可补回原工具位置，无须启动插件；缺少派发记录返回未执行，已派发但结果未知的操作保持待核实，禁止自动重发。
+
 ### 插件调用底层
 
 初始化后，`Instance.Discover` 通过 `plugin.describe` 读取已声明的 tools/commands，验证名称、描述和 input_schema/output_schema，再固定本实例的目录。定义引用包含插件身份、manifest 摘要、能力类别和完整定义；JSON 键顺序及新增无关定义不改变原引用。更新定义须准备新实例。
 
-`PrepareCall` 选择引用、校验参数并保存有效 Scope；`Binding/Definition/Scope/Arguments` 返回可记录的绑定。Core 的 `preparePluginCall` 先取得当前实例引用，核对请求类别及宿主分配的 Agent/Task，再返回调用与完整绑定。所有者先提交派发意图，再执行一次 `Invoke`，保存结果或放弃准备后释放引用；校验失败自动释放。CLI 已接入，原生模型工具仍待接入。
+`PrepareCall` 选择引用、校验参数并保存有效 Scope；`Binding/Definition/Scope/Arguments` 返回可记录的绑定。Core 的 `preparePluginCall` 先取得当前实例引用，核对请求类别及宿主分配的 Agent/Task，再返回调用与完整绑定。所有者先提交派发意图，再执行一次 `Invoke`，保存结果或放弃准备后释放引用；校验失败自动释放。CLI 与原生模型工具共用此流程。
 
 | 协议消息 | 内容 |
 | --- | --- |
@@ -504,6 +512,8 @@ go test -race ./internal/runtime -run '^TestPluginExecution' -count=3
 覆盖 tool/command、进度、已确认取消、异常退出、并发去重、事务回滚、分页完整性、进度限额及 schema 14→15。第二条验证旧实例回收，以及真实 CLI 的执行、查询、取消和重复提交；第三条验证 Core 后台执行、断开、取消回滚、结果保存失败、Task 结束条件与并发退出。CLI 测试预置 caller 事件，使用真实二进制、Unix socket 和插件子进程，不代表真实模型验收。
 
 `go test -race ./internal/runtime -run '^TestPluginCommand' -count=3` 验证来源绑定、原请求目录、停止后拒绝新调用、跨来源重试、旧记录兼容和派发提交前复核；树停止覆盖无 Task 的命令、取消回滚、未知结果和无关 Agent 保留。
+
+`go test -race ./internal/runtime -run '^TestPluginNative'` 验证模型调用与结果配对、输出限额、取消、换版、持久化失败、结果损坏，以及已完成/失败/未知调用的重启恢复。插件使用真实子进程，模型使用本地夹具。
 
 ## Responses 接入
 

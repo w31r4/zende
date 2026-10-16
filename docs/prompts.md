@@ -1,6 +1,6 @@
 # 提示词
 
-系统说明由 `internal/runtime/prompt.go` 组装，工具 descriptor 由各 executor 提供，MCP 说明位于 `internal/runtime/mcp_tools.go`；请求前保存为 `prompt.loaded`。CLI 说明覆盖提问、资源、插件命令、工作环境、选配和 Agent 协作；资源更新在后续请求追加发现通知。MCP 已接入搜索、调用和结果续读，外部目录监视待完成。
+系统说明由 `internal/runtime/prompt.go` 组装，工具 descriptor 由各 executor 提供；MCP 与插件工具说明分别位于 `internal/runtime/mcp_tools.go`、`internal/runtime/plugin_tools.go`，请求前保存为 `prompt.loaded`。CLI 说明覆盖提问、资源、插件命令、工作环境、选配和 Agent 协作；资源更新在后续请求追加发现通知。MCP 已接入搜索、调用和结果续读，外部目录监视待完成。
 
 ## Pi 参考
 
@@ -53,7 +53,9 @@ Zende 保持 exec、进程继续操作和 patch 的工具边界。Pi 的 read/ed
 
 版本 14 加入原生 `tool_search`、`tool_invoke` 和 CLI `mcp.result` 说明。descriptor 给出搜索引用、参数校验、结果分页及未知效果不得重发的规则；服务端描述和结果始终是数据。系统说明继续按 Pi 的能力条件组合短句，详细参数留给 schema 和帮助。完整 MCP 定义按需进入工具结果，旧 Task 的已存提示词不改。
 
-版本 15 加入 `plugin command` 和 `resource register --kind plugin`。说明包含目录发现、JSON 参数、接受与完成的区别、进度/结果查询、取消和原 ID 重试。沿用 Pi 的短入口与帮助分工，旧 Task 恢复继续使用已保存的提示词；原生插件模型工具仍待实现。
+版本 15 加入 `plugin command` 和 `resource register --kind plugin`。说明包含目录发现、JSON 参数、接受与完成的区别、进度/结果查询、取消和原 ID 重试。沿用 Pi 的短入口与帮助分工，旧 Task 恢复继续使用已保存的提示词。
+
+版本 16 加入 `plugin_invoke`。模型从目录读取 kind 为 tool 的定义与引用，调用时固定实例；大结果通过原操作 ID 续读，未知结果先核实。插件定义按需读取，原始协议证据通过显式查询获取。descriptor 沿用 Pi 的短说明、详细描述和共用规则分工，参数留给 schema；恢复旧 Task 保留原提示词。
 
 ## Skill/prompt 的请求级更新
 

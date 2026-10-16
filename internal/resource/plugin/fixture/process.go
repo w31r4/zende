@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"strings"
 	"time"
 
 	"zende.local/harness/internal/resource/plugin"
@@ -112,6 +113,8 @@ func RunFromEnv() {
 				continue
 			case "call-failed":
 				result = plugin.Completion{OperationID: p.OperationID, State: "failed", Error: &plugin.CallFailure{Kind: "fixture_failed", Message: "private-failure"}}
+			case "call-failed-large":
+				result = plugin.Completion{OperationID: p.OperationID, State: "failed", Output: p.Arguments, Error: &plugin.CallFailure{Kind: "fixture_failed", Message: strings.Repeat("<", 8192)}}
 			default:
 				result = plugin.Completion{OperationID: p.OperationID, State: "completed", Output: p.Arguments}
 			}
