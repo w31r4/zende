@@ -971,6 +971,21 @@ go test ./internal/resource/mcp \
 
 doc-coauthoring 独立读者检查补齐工具链、后台启动、取消等待/超时、分页参数和测试产物说明，复查七个使用问题均可回答。trim-cn-tech-doc 去掉旧待办，说明集中保留接入步骤、协议和失败后的行动；提示词及 TUI 未改。本轮只使用本地真实插件/CLI、隔离数据库与模型夹具，未访问外部模型或用户凭据，真实端点和本机部署仍待验收。
 
+## 2026-10-16：配置候选与发布前复查
+
+7.1、7.2 的配置准备层已接入原 `Load` 入口，累计仍为 48/68 项。单层限 1 MiB，合计输入、有效配置连同来源和完整候选快照各限 4 MiB；候选保存来源摘要，并可在发布前复查文件及环境覆盖。
+
+| 检查 | 测试入口 | 结果 |
+| --- | --- | --- |
+| 来源与不可变性 | `TestPreparedConfigProvenanceAndImmutableSnapshot` | 层级及来源保持，版本确定；并发修改导出副本不影响内部候选，凭据只保留引用，原始文件正文不导出 |
+| 文件变化与失败保留 | `TestPreparedConfigDetectsSourceCreationRemovalAndReplacement`、`TestPreparedConfigRejectsPartialUpdateAndKeepsCandidate` | 新建、删除、注释变化及 rename 使旧候选过期；空文件区别于缺失文件，非法更新不改变原候选 |
+| 环境、隔离与文件类型 | `TestPreparedConfigEnvironmentCancellationAndRoots`、`TestPreparedConfigProfileIsolationAndFileTypes` | 环境变化、取消和非法根路径被检查；配置档独立，目录/FIFO 拒绝，普通文件链接可用 |
+| 限额与 YAML | `TestConfigurationBudgetsAndYAMLStructure` | 单层边界、合计输入、JSON 转义和来源元数据计入预算；别名、锚点、自定义 tag、重复键、null、多文档及过深结构拒绝，错误不带源值 |
+
+最终 `go test ./...`、`go test -race ./...`、`go vet ./...`、OpenSpec strict 和 diff 检查通过，新增配置测试的 race 连续三轮通过。首轮限额校验放错函数导致编译失败，移到候选构造处后重跑通过。
+
+Core 发布、provider 就绪检查与目录监视尚待接入；暂时合法的中间文件无法仅靠读取判断是否还会续写，文档建议完成后 rename。trim-cn-tech-doc 将说明收敛为限制、观察结果和未完成边界。测试只使用临时配置与本地夹具，未访问外部模型或用户凭据，未执行部署验收。
+
 ## 进行中
 
 继续 7.1、7.2 的配置/provider 热发布与外部目录监视，会话复制还依赖第 9 组。Day1 整体与本机部署尚未完成。origin 已连接用户创建的 `w31r4/zende`，实现按原子提交推送。

@@ -2,6 +2,7 @@ package resource
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -78,6 +79,10 @@ func Compose(defaults Config, layers ...Layer) (Effective, error) {
 	if err != nil {
 		return Effective{}, err
 	}
+	if len(b) > MaxConfigBytes {
+		return Effective{}, protocol.E("resource_limit", "configuration exceeds total byte limit")
+	}
+	total := len(b)
 	var merged map[string]any
 	if err := yaml.Unmarshal(b, &merged); err != nil {
 		return Effective{}, err
@@ -85,29 +90,37 @@ func Compose(defaults Config, layers ...Layer) (Effective, error) {
 	sources := map[string]string{}
 	markSources(merged, "", "defaults", sources)
 	for _, layer := range layers {
+		total += len(layer.YAML)
+		if len(layer.YAML) > MaxConfigLayerBytes || total > MaxConfigBytes {
+			return Effective{}, protocol.E("resource_limit", "configuration exceeds layer or total byte limit")
+		}
 		if len(bytes.TrimSpace(layer.YAML)) == 0 {
 			continue
 		}
-		var value map[string]any
+		var document yaml.Node
 		d := yaml.NewDecoder(bytes.NewReader(layer.YAML))
-		if err := d.Decode(&value); err != nil {
+		if err := d.Decode(&document); err != nil {
 			return Effective{}, fmt.Errorf("%s: invalid YAML", layer.Name)
 		}
-		var extra any
+		var extra yaml.Node
 		if err := d.Decode(&extra); err != io.EOF {
 			return Effective{}, fmt.Errorf("%s: expected one YAML document", layer.Name)
 		}
-		if value == nil {
-			return Effective{}, fmt.Errorf("%s: expected a mapping", layer.Name)
+		if len(document.Content) != 1 || document.Content[0].Kind != yaml.MappingNode || !validConfigYAML(&document, 0) {
+			return Effective{}, fmt.Errorf("%s: expected a bounded mapping without aliases, duplicate keys or null values", layer.Name)
 		}
-		if hasNull(value) {
-			return Effective{}, fmt.Errorf("%s: null configuration values are not supported", layer.Name)
+		var value map[string]any
+		if document.Decode(&value) != nil {
+			return Effective{}, fmt.Errorf("%s: invalid configuration values", layer.Name)
 		}
 		merge(merged, value, "", layer.Name, sources)
 	}
 	b, err = json.Marshal(merged)
 	if err != nil {
 		return Effective{}, fmt.Errorf("configuration values must be JSON-compatible")
+	}
+	if len(b) > MaxConfigBytes {
+		return Effective{}, protocol.E("resource_limit", "configuration exceeds total byte limit")
 	}
 	var config Config
 	if err := protocol.StrictDecode(b, &config); err != nil {
@@ -116,28 +129,43 @@ func Compose(defaults Config, layers ...Layer) (Effective, error) {
 	if err := config.Validate(); err != nil {
 		return Effective{}, err
 	}
-	return Effective{Config: config, Sources: sources}, nil
+	effective := Effective{Config: config, Sources: sources}
+	b, err = json.Marshal(effective)
+	if err != nil || len(b) > MaxConfigBytes {
+		return Effective{}, protocol.E("resource_limit", "configuration and sources exceed total byte limit")
+	}
+	return effective, nil
 }
 
-func hasNull(value any) bool {
-	if value == nil {
-		return true
+func validConfigYAML(n *yaml.Node, depth int) bool {
+	if depth > 64 || n.Kind == yaml.AliasNode || n.Anchor != "" || n.Tag == "!!null" {
+		return false
 	}
-	switch v := value.(type) {
-	case map[string]any:
-		for _, child := range v {
-			if hasNull(child) {
-				return true
-			}
+	if n.Kind == yaml.MappingNode {
+		if n.Tag != "!!map" || len(n.Content)%2 != 0 {
+			return false
 		}
-	case []any:
-		for _, child := range v {
-			if hasNull(child) {
-				return true
+		seen := map[string]bool{}
+		for i := 0; i < len(n.Content); i += 2 {
+			key := n.Content[i]
+			if key.Kind != yaml.ScalarNode || key.Tag != "!!str" || seen[key.Value] {
+				return false
 			}
+			seen[key.Value] = true
 		}
 	}
-	return false
+	if n.Kind == yaml.SequenceNode && n.Tag != "!!seq" {
+		return false
+	}
+	if n.Kind == yaml.ScalarNode && n.Tag != "!!str" && n.Tag != "!!int" && n.Tag != "!!float" && n.Tag != "!!bool" {
+		return false
+	}
+	for _, child := range n.Content {
+		if !validConfigYAML(child, depth+1) {
+			return false
+		}
+	}
+	return true
 }
 
 func merge(dst, src map[string]any, prefix, name string, sources map[string]string) {
@@ -289,24 +317,9 @@ func ResolveCredential(ref string, env func(string) string) (string, error) {
 // Load follows defaults < user < project < local < environment < CLI < task.
 // It never resolves credentials or writes missing configuration files.
 func Load(paths Paths, cwd string, env func(string) string, cli, task []byte) (Effective, error) {
-	layers := []Layer{}
-	for _, f := range []string{filepath.Join(paths.Config, "config.yaml"), filepath.Join(cwd, ".zende", "config.yaml"), filepath.Join(cwd, ".zende", "config.local.yaml")} {
-		b, err := os.ReadFile(f)
-		if os.IsNotExist(err) {
-			continue
-		}
-		if err != nil {
-			return Effective{}, fmt.Errorf("cannot read configuration %s", f)
-		}
-		layers = append(layers, Layer{Name: f, YAML: b})
+	prepared, err := PrepareConfig(context.Background(), paths, cwd, env, cli, task)
+	if err != nil {
+		return Effective{}, err
 	}
-	e := map[string]any{}
-	for key, field := range map[string]string{"ZENDE_MODEL": "model", "ZENDE_EFFORT": "effort", "ZENDE_CWD": "cwd", "ZENDE_SHELL": "shell"} {
-		if value := env(key); value != "" {
-			e[field] = value
-		}
-	}
-	b, _ := json.Marshal(e)
-	layers = append(layers, Layer{"environment", b}, Layer{"cli", cli}, Layer{"task", task})
-	return Compose(Defaults(cwd), layers...)
+	return prepared.Snapshot().Effective, nil
 }
