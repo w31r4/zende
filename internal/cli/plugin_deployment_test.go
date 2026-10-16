@@ -129,6 +129,16 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	for range 2 {
+		var instances runtime.PluginInstances
+		if err := json.Unmarshal(run(true, "plugin", "instances", agent.AgentID, id), &instances); err != nil || instances.AgentID != agent.AgentID || instances.ResourceID != id || len(instances.Items) != 1 || instances.Current == "" || instances.MaxRetiring != runtime.MaxRetiringPluginInstances {
+			t.Fatal(instances, err)
+		}
+		item := instances.Items[0]
+		if item.Instance.InstanceID != instances.Current || item.Instance.State != "ready" || item.ResourceVersion != accepted.Resource.Version || item.Generation != accepted.ResourceGeneration || item.References != 0 || item.Retiring {
+			t.Fatal(instances)
+		}
+	}
 	if !bytes.Equal(first, run(true, register...)) {
 		t.Fatal("repeated registration changed receipt")
 	}
@@ -157,6 +167,10 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 		t.Fatal(status, err)
 	}
 	run(true, "plugin", "catalog", agent.AgentID, id)
+	var offline runtime.PluginInstances
+	if err := json.Unmarshal(run(true, "plugin", "instances", agent.AgentID, id), &offline); err != nil || len(offline.Items) != 0 || offline.Current != "" {
+		t.Fatal(offline, err)
+	}
 	after, _ = os.ReadFile(audit)
 	if !bytes.Equal(before, after) {
 		t.Fatal("offline read started a process")
@@ -165,7 +179,11 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	if err != nil || !strings.Contains(string(help), "--version") || !strings.Contains(string(help), "does not start or invoke") {
 		t.Fatal(string(help), err)
 	}
-	if !protocol.ReadOnly("plugin.catalog") {
-		t.Fatal("catalog reads classified as effects")
+	help, err = exec.CommandContext(ctx, binary, "plugin", "instances", "--help").CombinedOutput()
+	if err != nil || !strings.Contains(string(help), "does not start a process") {
+		t.Fatal(string(help), err)
+	}
+	if !protocol.ReadOnly("plugin.catalog") || !protocol.ReadOnly("plugin.instances") {
+		t.Fatal("plugin reads classified as effects")
 	}
 }

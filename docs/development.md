@@ -379,7 +379,7 @@ Core 重启后，已保存结果可补入原工具结果位置，无须重连 MC
 
 ## 插件启动与协议协商
 
-Core 已接入插件注册、目录持久化和状态查询，存储层已支持调用、进度和结果回执。模型工具与 CLI 执行入口、旧实例引用保持及其余能力仍由 OpenSpec 8.2–8.5 交付。
+Core 已接入插件注册、目录持久化、实例引用管理和状态查询，存储层保存调用、进度和结果回执。模型工具与 CLI 执行入口、provider/resource/event 扩展仍由 OpenSpec 8.2–8.5 交付。
 
 ```yaml
 schema_version: 1
@@ -411,6 +411,7 @@ Info 返回实例身份、manifest 摘要、协商版本、状态、PID、能力
 zende --request-id install-plugin resource register AGENT /path/to/plugin.yaml --kind plugin
 zende resource list AGENT --kind plugin
 zende resource status AGENT RESOURCE
+zende plugin instances AGENT RESOURCE
 zende plugin catalog AGENT RESOURCE
 zende plugin catalog AGENT RESOURCE --version VERSION
 zende resource read AGENT RESOURCE --version VERSION
@@ -423,13 +424,17 @@ zende --request-id refresh-plugin resource refresh AGENT RESOURCE
 
 `status` 区分进程可用性与最近更新状态。客户端退出后插件由 Core 持有；Core 关闭时回收进程。重启后保留目录，进程状态为 unavailable，显式 refresh 准备新实例。重复已接受请求只返回原回执；同版本 refresh 保留健康实例，离线时重新启动。修改可执行文件后应更新 manifest 的 version，因为摘要不覆盖二进制内容。
 
-当前发布只管理发现实例，尚未开放插件执行入口；新版发布后回收旧发现实例。执行接线将加入调用持有和旧实例退役，8.4 验收前不宣称运行中调用可热替换。
+`instances` 返回当前及退役实例的身份、发布版本、generation、引用数和进程状态，只读取 Core 已管理的实例。实例全部回收后返回空列表，查询不启动进程。
+
+新版发布后，新调用只能取得新实例；已取得引用的调用仍使用原定义、Scope 和进程，保存结果后释放引用，最后一个引用释放时关闭旧实例。准备失败保留当前实例；Core 退出会关闭全部新旧实例。每个 Agent/资源最多保留 32 个退役实例，达到上限时拒绝需要增加退役实例的刷新；原调用结束并回收实例后可重新刷新，同版本健康实例的刷新不占名额。
+
+真实子进程测试已验证调用期间换版、旧调用完成后回收、失败候选、保留上限和并发关闭。公开执行入口及 provider 模型流仍在实施，8.4 保持未完成。
 
 ### 插件调用底层
 
 初始化后，`Instance.Discover` 通过 `plugin.describe` 读取已声明的 tools/commands，验证名称、描述和 input_schema/output_schema，再固定本实例的目录。定义引用包含插件身份、manifest 摘要、能力类别和完整定义；JSON 键顺序及新增无关定义不改变原引用。更新定义须准备新实例。
 
-`PrepareCall` 选择引用、校验参数并保存有效 Scope；`Binding/Definition/Scope/Arguments` 返回可记录的绑定。所有者先用存储层提交派发意图，再执行一次 `Invoke`，并持有实例直至返回。模型工具和 CLI 执行入口仍需接入这条流程。
+`PrepareCall` 选择引用、校验参数并保存有效 Scope；`Binding/Definition/Scope/Arguments` 返回可记录的绑定。Core 的 `preparePluginCall` 先取得当前实例引用，核对请求类别及宿主分配的 Agent/Task，再返回调用与完整绑定。所有者先提交派发意图，再执行一次 `Invoke`，保存结果或放弃准备后释放引用；校验失败自动释放。模型工具和 CLI 执行入口仍需接入这条流程。
 
 | 协议消息 | 内容 |
 | --- | --- |
@@ -456,9 +461,10 @@ Core 启动把旧 Core 尚未结束的插件调用记为 unknown，保留原操�
 
 ```sh
 go test -race ./internal/store ./internal/runtime -run 'Test(PluginJournal|PluginSchema|CoreStartupHoldsUnfinishedPluginCall)' -count=3
+go test -race ./internal/runtime ./internal/cli -run 'TestPlugin(Lease|Retirement|CatalogThroughBinaryCLI)' -count=3
 ```
 
-覆盖 tool/command、进度、已确认取消、异常退出、并发去重、事务回滚、分页完整性、进度限额及 schema 14→15。测试所有者保留旧实例以验证旧 schema；Core 的运行中热替换仍由 8.4 验收。
+覆盖 tool/command、进度、已确认取消、异常退出、并发去重、事务回滚、分页完整性、进度限额及 schema 14→15。第二条验证 Core 的旧实例保持与回收，并通过真实 CLI 查询实例，检查 JSON 输出、只读行为和离线状态。
 
 ## Responses 接入
 

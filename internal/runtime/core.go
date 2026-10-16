@@ -33,7 +33,10 @@ type Core struct {
 	mcpSlots      map[protocol.ResourceTarget]*mcpSlot
 	mcpClosed     bool
 	pluginMu      sync.Mutex
-	pluginSlots   map[protocol.ResourceTarget]pluginSlot
+	pluginSlots   map[protocol.ResourceTarget]*pluginSlot
+	pluginOwned   map[*pluginSlot]protocol.ResourceTarget
+	pluginCleanup sync.WaitGroup
+	pluginClosed  chan struct{}
 	pluginsClosed bool
 }
 
@@ -143,6 +146,12 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 			return nil, err
 		}
 		return c.Store.PluginCatalog(ctx, p)
+	case "plugin.instances":
+		var p protocol.ResourceTarget
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.pluginInstances(ctx, p)
 	case "resource.list":
 		var p protocol.ResourceList
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

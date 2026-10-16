@@ -93,6 +93,18 @@ func RunFromEnv() {
 			}
 			progress(req.ID, p.OperationID, 1)
 			switch os.Getenv("ZENDE_TEST_PLUGIN_MODE") {
+			case "call-block":
+				deadline := time.Now().Add(15 * time.Second)
+				for {
+					if _, err := os.Stat(os.Getenv("ZENDE_TEST_PLUGIN_RELEASE")); err == nil {
+						break
+					}
+					if time.Now().After(deadline) {
+						os.Exit(9)
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+				result = plugin.Completion{OperationID: p.OperationID, State: "completed", Output: p.Arguments}
 			case "call-exit":
 				os.Exit(8)
 			case "call-cancel":

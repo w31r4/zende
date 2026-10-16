@@ -80,7 +80,7 @@ func (a *app) resourceCommands(root *cobra.Command) {
 	resultCmd.Flags().IntVar(&result.Limit, "limit", 64<<10, "Page size (4–262144 bytes); binary data is base64 in JSON")
 	mcp.AddCommand(resultCmd)
 	root.AddCommand(mcp)
-	plugins := &cobra.Command{Use: "plugin", Short: "Inspect published plugin definitions"}
+	plugins := &cobra.Command{Use: "plugin", Short: "Inspect plugin definitions and managed instances"}
 	var catalog protocol.PluginCatalogQuery
 	catalogCmd := &cobra.Command{Use: "catalog AGENT RESOURCE", Short: "Read retained tools and commands; does not start or invoke a plugin", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 		catalog.AgentID, catalog.ID = args[0], args[1]
@@ -88,6 +88,9 @@ func (a *app) resourceCommands(root *cobra.Command) {
 	}}
 	catalogCmd.Flags().StringVar(&catalog.Version, "version", "", "Exact published resource version; default is current; check resource status for readiness")
 	plugins.AddCommand(catalogCmd)
+	plugins.AddCommand(&cobra.Command{Use: "instances AGENT RESOURCE", Short: "Read current and retiring instances with reference counts; does not start a process", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		return a.call(cmd, "plugin.instances", false, protocol.ResourceTarget{AgentID: args[0], ID: args[1]})
+	}})
 	root.AddCommand(plugins)
 }
 
