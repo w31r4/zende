@@ -420,7 +420,13 @@ zende --request-id refresh-plugin resource refresh AGENT RESOURCE
 
 注册使用 Agent cwd 解析相对路径。初始化和目录发现共用 30 秒预算，完成后再复读 manifest；校验成功才事务保存 manifest 原文、目录、发布版本和回执。包中只有凭据引用，启动时解析的值留在进程边界。非法定义、源文件变化、取消或过期候选均关闭，更新失败保留旧版本与旧实例。
 
-`catalog` 返回已保存的完整 tools/commands 定义、schema、ref、manifest_version 和 catalog_version；`version` 是包含 manifest 原文及目录的资源版本。查询只读数据库，`--version` 指定历史资源版本，`read` 读取该版本 manifest。目录仍受 256 项/4 MiB 的发现限额约束，读取时重新核对 schema、引用和版本。
+`catalog` 返回已保存的 tools/commands 定义，以及分开的 providers、resources 目录。每项有绑定 manifest 与完整定义的 ref；`catalog_version` 覆盖整个目录，`version` 覆盖 manifest 原文与目录。查询只读数据库，`--version` 指定历史资源版本，`read` 读取该版本 manifest。目录合计最多 256 项/4 MiB，读取时重新核对定义、引用和版本。
+
+provider 声明名称、描述和型号列表，型号使用公共 `ModelInfo` 字段：model、label、context_window、max_output、efforts、images、native_categories。所有 provider 合计最多 256 个型号，单型号最多 16 项力度；同 provider 型号 ID 和力度不能重复，输出上限须小于上下文长度。凭据通过插件启动环境提供。
+
+resource 声明 skill/prompt 的名称、描述、entry、disable_model_invocation，以及文件路径、字节数、SHA-256 和执行位。skill 入口为 SKILL.md，prompt 只有一个入口文件；路径限定包内相对路径，文件限额沿用资源包。定义引用覆盖文件清单，后续读取须核对正文。仅 tools/commands 的旧目录保持原版本算法；同一 manifest 内增加无关定义保留已有条目的 ref。
+
+provider、resource 目录已可发布和读取；模型流、资源正文接入与双向事件订阅仍由 8.3 完成，目录声明不表示这些运行入口已经可用。
 
 `status` 区分进程可用性与最近更新状态。客户端退出后插件由 Core 持有；Core 关闭时回收进程。重启后保留目录，进程状态为 unavailable，显式 refresh 准备新实例。重复已接受请求只返回原回执；同版本 refresh 保留健康实例，离线时重新启动。修改可执行文件后应更新 manifest 的 version，因为摘要不覆盖二进制内容。
 
@@ -460,7 +466,7 @@ Task 取消先保存取消意图，再通知原调用并等待确认；cancelled
 
 ### 插件调用底层
 
-初始化后，`Instance.Discover` 通过 `plugin.describe` 读取已声明的 tools/commands，验证名称、描述和 input_schema/output_schema，再固定本实例的目录。定义引用包含插件身份、manifest 摘要、能力类别和完整定义；JSON 键顺序及新增无关定义不改变原引用。更新定义须准备新实例。
+初始化后，`Instance.Discover` 通过 `plugin.describe` 读取已声明的 tools/commands/providers/resources，校验各类定义后固定本实例的目录。定义引用包含插件身份、manifest 摘要、能力类别和完整定义；JSON 键顺序及同一 manifest 内新增无关定义不改变原引用。更新定义须准备新实例。
 
 `PrepareCall` 选择引用、校验参数并保存有效 Scope；`Binding/Definition/Scope/Arguments` 返回可记录的绑定。Core 的 `preparePluginCall` 先取得当前实例引用，核对请求类别及宿主分配的 Agent/Task，再返回调用与完整绑定。所有者先提交派发意图，再执行一次 `Invoke`，保存结果或放弃准备后释放引用；校验失败自动释放。CLI 与原生模型工具共用此流程。
 
@@ -514,6 +520,8 @@ go test -race ./internal/runtime -run '^TestPluginExecution' -count=3
 `go test -race ./internal/runtime -run '^TestPluginCommand' -count=3` 验证来源绑定、原请求目录、停止后拒绝新调用、跨来源重试、旧记录兼容和派发提交前复核；树停止覆盖无 Task 的命令、取消回滚、未知结果和无关 Agent 保留。
 
 `go test -race ./internal/runtime -run '^TestPluginNative'` 验证模型调用与结果配对、输出限额、取消、换版、持久化失败、结果损坏，以及已完成/失败/未知调用的重启恢复。插件使用真实子进程，模型使用本地夹具。
+
+`TestPluginCapabilityCatalog` 验证 provider/resource 定义、预算、引用和旧目录编码；`TestPluginPackageExtendedCatalog` 验证真实子进程的目录发现、失败候选与保存后重建。CLI 集成测试同时核对多类目录及历史版本读取。
 
 ## Responses 接入
 

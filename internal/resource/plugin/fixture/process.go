@@ -6,9 +6,11 @@ import (
 	"bufio"
 	"encoding/json"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
+	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/resource/plugin"
 )
 
@@ -63,6 +65,12 @@ func RunFromEnv() {
 			}
 			result = plugin.InitializeResult{ProtocolVersion: 1, Plugin: params.Plugin, Capabilities: params.Capabilities}
 		case "plugin.describe":
+			var query struct {
+				Kinds []string `json:"kinds"`
+			}
+			if json.Unmarshal(req.Params, &query) != nil {
+				os.Exit(4)
+			}
 			if path := os.Getenv("ZENDE_TEST_PLUGIN_REWRITE"); path != "" {
 				f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
 				if err != nil {
@@ -83,7 +91,27 @@ func RunFromEnv() {
 				input = json.RawMessage(`{"type":"array"}`)
 			}
 			callable := plugin.Callable{Name: "echo", Description: "Local fixture", InputSchema: input, OutputSchema: json.RawMessage(`{"type":"object","required":["text"],"properties":{"text":{"type":"string"}},"additionalProperties":false}`)}
-			result = map[string]any{"tools": []plugin.Callable{callable}, "commands": []plugin.Callable{callable}}
+			catalog := map[string]any{}
+			for _, kind := range []string{"tools", "commands"} {
+				if slices.Contains(query.Kinds, kind) {
+					catalog[kind] = []plugin.Callable{callable}
+				}
+			}
+			if slices.Contains(query.Kinds, "providers") {
+				model := protocol.ModelInfo{ID: "fixture-text", ContextWindow: 32000, MaxOutput: 4096, Efforts: []string{"low", "high"}, NativeCategories: true}
+				if mode == "invalid-provider" {
+					model.ContextWindow = 0
+				}
+				catalog["providers"] = []plugin.Provider{{Name: "fixture-models", Description: "Local model fixture", Models: []protocol.ModelInfo{model}}}
+			}
+			if slices.Contains(query.Kinds, "resources") {
+				files := []protocol.ResourceFileInfo{{Path: "instructions.md", Bytes: 100, SHA256: strings.Repeat("0", 64)}}
+				if mode == "invalid-resource" {
+					files[0].Path = "../outside"
+				}
+				catalog["resources"] = []plugin.Resource{{Name: "fixture-prompt", Description: "Local instruction fixture", Kind: "prompt", Entry: "instructions.md", Files: files}}
+			}
+			result = catalog
 		case "plugin.tool.call", "plugin.command.call":
 			var p struct {
 				OperationID string          `json:"operation_id"`

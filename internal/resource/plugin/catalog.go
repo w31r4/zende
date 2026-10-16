@@ -36,35 +36,45 @@ type Definition struct {
 }
 
 type Catalog struct {
-	version string
-	entries []callableEntry
+	version   string
+	entries   []callableEntry
+	providers []ProviderDefinition
+	resources []ResourceDefinition
 }
 
 // SavedCatalog is public, immutable discovery data. It contains neither process
 // handles nor resolved environment values. Restore verifies every reference.
 type SavedCatalog struct {
-	CatalogVersion string       `json:"catalog_version"`
-	Definitions    []Definition `json:"definitions"`
+	CatalogVersion string               `json:"catalog_version"`
+	Definitions    []Definition         `json:"definitions"`
+	Providers      []ProviderDefinition `json:"providers,omitempty"`
+	Resources      []ResourceDefinition `json:"resources,omitempty"`
 }
 
 func (c *Catalog) Export() SavedCatalog {
-	return SavedCatalog{CatalogVersion: c.Version(), Definitions: c.Definitions()}
+	return SavedCatalog{CatalogVersion: c.Version(), Definitions: c.Definitions(), Providers: c.Providers(), Resources: c.Resources()}
 }
 
 func RestoreCatalog(manifest Manifest, saved SavedCatalog) (*Catalog, error) {
-	if manifest.Validate() != nil || len(saved.Definitions) > MaxDefinitions {
+	if manifest.Validate() != nil || len(saved.Definitions)+len(saved.Providers)+len(saved.Resources) > MaxDefinitions {
 		return nil, invalidCatalog()
 	}
-	groups := map[string][]Callable{"tools": {}, "commands": {}}
+	groups := catalogReply{Tools: []Callable{}, Commands: []Callable{}}
 	for _, d := range saved.Definitions {
 		switch d.Kind {
 		case "tool":
-			groups["tools"] = append(groups["tools"], d.Callable)
+			groups.Tools = append(groups.Tools, d.Callable)
 		case "command":
-			groups["commands"] = append(groups["commands"], d.Callable)
+			groups.Commands = append(groups.Commands, d.Callable)
 		default:
 			return nil, invalidCatalog()
 		}
+	}
+	for _, d := range saved.Providers {
+		groups.Providers = append(groups.Providers, d.Provider)
+	}
+	for _, d := range saved.Resources {
+		groups.Resources = append(groups.Resources, d.Resource)
 	}
 	raw, err := json.Marshal(groups)
 	if err != nil {
@@ -77,7 +87,7 @@ func RestoreCatalog(manifest Manifest, saved SavedCatalog) (*Catalog, error) {
 	}
 	// Definition references bind the manifest and schema; version binds the
 	// complete sorted directory. Do not accept forged references or reordering.
-	if catalog.Version() != saved.CatalogVersion || digest(saved.Definitions) != saved.CatalogVersion {
+	if catalog.Version() != saved.CatalogVersion || digest(catalog.Export()) != digest(saved) {
 		return nil, invalidCatalog()
 	}
 	return catalog, nil
@@ -119,7 +129,7 @@ func (i *Instance) Discover(ctx context.Context) (*Catalog, error) {
 	defer cancel()
 	info := i.Info()
 	kinds := []string{}
-	for _, kind := range []string{"tools", "commands"} {
+	for _, kind := range []string{"tools", "commands", "providers", "resources"} {
 		if slices.Contains(info.Capabilities, kind) {
 			kinds = append(kinds, kind)
 		}
@@ -160,11 +170,8 @@ func compileCatalog(info Info, raw []byte) (*Catalog, error) {
 	if len(raw) > MaxCatalogBytes || !utf8.Valid(raw) {
 		return nil, invalidCatalog()
 	}
-	var catalog struct {
-		Tools    []Callable `json:"tools"`
-		Commands []Callable `json:"commands"`
-	}
-	if protocol.StrictDecode(raw, &catalog) != nil || !bytes.HasPrefix(bytes.TrimSpace(raw), []byte{'{'}) || len(catalog.Tools)+len(catalog.Commands) > MaxDefinitions {
+	var catalog catalogReply
+	if protocol.StrictDecode(raw, &catalog) != nil || !bytes.HasPrefix(bytes.TrimSpace(raw), []byte{'{'}) || len(catalog.Tools)+len(catalog.Commands)+len(catalog.Providers)+len(catalog.Resources) > MaxDefinitions {
 		return nil, invalidCatalog()
 	}
 	if len(catalog.Tools) > 0 && !slices.Contains(info.Capabilities, "tools") || len(catalog.Commands) > 0 && !slices.Contains(info.Capabilities, "commands") {
@@ -209,7 +216,10 @@ func compileCatalog(info Info, raw []byte) (*Catalog, error) {
 	slices.SortFunc(out.entries, func(a, b callableEntry) int {
 		return strings.Compare(a.definition.Kind+":"+a.definition.Name, b.definition.Kind+":"+b.definition.Name)
 	})
-	out.version = digest(out.Definitions())
+	if err := out.compileCapabilities(info, catalog); err != nil {
+		return nil, err
+	}
+	out.version = out.digest()
 	return out, nil
 }
 

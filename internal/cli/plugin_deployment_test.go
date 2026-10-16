@@ -102,7 +102,7 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest := plugin.Manifest{SchemaVersion: 1, ID: "fixture", Version: "1", ProtocolVersions: []int{1}, Command: exe, Args: []string{"-test.run=^TestCLIPluginProcessHelper$"}, Capabilities: []string{"tools", "commands"}}
+	manifest := plugin.Manifest{SchemaVersion: 1, ID: "fixture", Version: "1", ProtocolVersions: []int{1}, Command: exe, Args: []string{"-test.run=^TestCLIPluginProcessHelper$"}, Capabilities: []string{"tools", "commands", "providers", "resources"}}
 	source := filepath.Join(dir, "中文 plugin.json")
 	write := func() {
 		t.Helper()
@@ -129,6 +129,9 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	var catalog resource.PluginCatalog
 	if err := json.Unmarshal(run(true, "plugin", "catalog", agent.AgentID, id), &catalog); err != nil || catalog.Version != accepted.Resource.Version || len(catalog.Definitions) != 2 || catalog.Definitions[0].Kind != "command" || catalog.Definitions[1].Kind != "tool" {
 		t.Fatal(catalog, err)
+	}
+	if len(catalog.Providers) != 1 || len(catalog.Resources) != 1 || catalog.Providers[0].Models[0].ID != "fixture-text" || catalog.Resources[0].Kind != "prompt" {
+		t.Fatal("extended plugin definitions missing from retained CLI catalog", catalog)
 	}
 	var status protocol.ResourceStatus
 	if err := json.Unmarshal(run(true, "resource", "status", agent.AgentID, id), &status); err != nil || status.State != "ready" {

@@ -102,3 +102,46 @@ func TestPluginPackageDiscoveryFailureAndSourceChange(t *testing.T) {
 		})
 	}
 }
+
+func TestPluginPackageExtendedCatalog(t *testing.T) {
+	for _, mode := range []string{"", "invalid-provider", "invalid-resource"} {
+		t.Run(mode, func(t *testing.T) {
+			m, source := packagePluginFixture(t)
+			m.Capabilities = append(m.Capabilities, "providers", "resources")
+			t.Setenv("ZENDE_TEST_PLUGIN_MODE", mode)
+			writePluginFixture(t, source, m)
+			p, instance, err := PreparePluginPackage(t.Context(), source, nil)
+			if mode != "" {
+				if err == nil || instance != nil || p.Info.Version != "" {
+					t.Fatal("invalid extended catalog published", p, err)
+				}
+				requirePluginFailure(t, err, "plugin_protocol")
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer instance.Close()
+			if len(p.Plugin.Providers) != 1 || len(p.Plugin.Resources) != 1 || len(p.Plugin.Definitions) != 2 {
+				t.Fatal(p.Plugin)
+			}
+			if p.Plugin.Providers[0].Models[0].ID != "fixture-text" || p.Plugin.Resources[0].Entry != "instructions.md" {
+				t.Fatal(p.Plugin)
+			}
+			instance.Close()
+			raw, _ := json.Marshal(p)
+			var saved Package
+			if err := json.Unmarshal(raw, &saved); err != nil {
+				t.Fatal(err)
+			}
+			restored, err := BuildPluginPackage(source, saved.Files, *saved.Plugin)
+			if err != nil || !reflect.DeepEqual(restored, p) {
+				t.Fatal(restored, err)
+			}
+			saved.Plugin.Providers[0].Models[0].MaxOutput++
+			if _, err := BuildPluginPackage(source, saved.Files, *saved.Plugin); err == nil {
+				t.Fatal("altered provider metadata accepted")
+			}
+		})
+	}
+}
