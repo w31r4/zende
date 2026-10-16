@@ -1,0 +1,171 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"zende.local/harness/internal/protocol"
+	"zende.local/harness/internal/resource"
+	"zende.local/harness/internal/resource/plugin"
+	"zende.local/harness/internal/resource/plugin/fixture"
+	"zende.local/harness/internal/runtime"
+	"zende.local/harness/internal/store"
+)
+
+func TestCLIPluginProcessHelper(t *testing.T) { fixture.RunFromEnv() }
+
+func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
+	if testing.Short() {
+		t.Skip("real binary integration")
+	}
+	dir := t.TempDir()
+	binary := filepath.Join(dir, "zende")
+	if output, err := exec.Command("go", "build", "-o", binary, "../../cmd/zende").CombinedOutput(); err != nil {
+		t.Fatal(err, string(output))
+	}
+	runDir, err := os.MkdirTemp("/tmp", "zende-plugin-cli-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(runDir) })
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(dir, "config"))
+	t.Setenv("XDG_STATE_HOME", filepath.Join(dir, "state"))
+	t.Setenv("XDG_RUNTIME_DIR", runDir)
+	t.Setenv("ZENDE_TEST_PLUGIN", "1")
+	t.Setenv("ZENDE_TEST_PLUGIN_MODE", "")
+	t.Setenv("ZENDE_TEST_PLUGIN_REWRITE", "")
+	audit := filepath.Join(dir, "plugin-audit.jsonl")
+	t.Setenv("ZENDE_TEST_PLUGIN_AUDIT", audit)
+	paths, err := (&app{profile: "plugins"}).paths()
+	if err != nil {
+		t.Fatal(err)
+	}
+	s, err := store.Open(paths.Database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	c := runtime.New(s, resource.Effective{Config: resource.Defaults(dir)})
+	defer c.CloseResources()
+	server, err := protocol.Listen(paths.Socket, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(ctx) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	run := func(success bool, args ...string) []byte {
+		t.Helper()
+		cmd := exec.CommandContext(ctx, binary, append([]string{"--profile", "plugins"}, args...)...)
+		var out, diagnostic bytes.Buffer
+		cmd.Stdout, cmd.Stderr = &out, &diagnostic
+		err := cmd.Run()
+		if success {
+			if err != nil || diagnostic.Len() != 0 || bytes.Contains(out.Bytes(), []byte{27}) || !json.Valid(out.Bytes()) {
+				t.Fatal(args, err, out.String(), diagnostic.String())
+			}
+			return out.Bytes()
+		}
+		exit, ok := err.(*exec.ExitError)
+		if !ok || exit.ExitCode() != 2 || out.Len() != 0 || bytes.Contains(diagnostic.Bytes(), []byte{27}) || !json.Valid(diagnostic.Bytes()) {
+			t.Fatal(args, err, out.String(), diagnostic.String())
+		}
+		return diagnostic.Bytes()
+	}
+	var agent protocol.Accepted
+	if err := json.Unmarshal(run(true, "agent", "create", "--cwd", dir), &agent); err != nil {
+		t.Fatal(err)
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := plugin.Manifest{SchemaVersion: 1, ID: "fixture", Version: "1", ProtocolVersions: []int{1}, Command: exe, Args: []string{"-test.run=^TestCLIPluginProcessHelper$"}, Capabilities: []string{"tools", "commands"}}
+	source := filepath.Join(dir, "中文 plugin.json")
+	write := func() {
+		t.Helper()
+		raw, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(source, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write()
+	register := []string{"--request-id", "register-plugin", "resource", "register", agent.AgentID, filepath.Base(source), "--kind", "plugin"}
+	first := run(true, register...)
+	var accepted protocol.Accepted
+	if err := json.Unmarshal(first, &accepted); err != nil || accepted.Resource == nil {
+		t.Fatal(accepted, err)
+	}
+	id := accepted.Resource.ID
+	var page protocol.ResourcePage
+	if err := json.Unmarshal(run(true, "resource", "list", agent.AgentID, "--kind", "plugin"), &page); err != nil || len(page.Items) != 1 || page.Items[0].ID != id {
+		t.Fatal(page, err)
+	}
+	var catalog resource.PluginCatalog
+	if err := json.Unmarshal(run(true, "plugin", "catalog", agent.AgentID, id), &catalog); err != nil || catalog.Version != accepted.Resource.Version || len(catalog.Definitions) != 2 || catalog.Definitions[0].Kind != "command" || catalog.Definitions[1].Kind != "tool" {
+		t.Fatal(catalog, err)
+	}
+	var status protocol.ResourceStatus
+	if err := json.Unmarshal(run(true, "resource", "status", agent.AgentID, id), &status); err != nil || status.State != "ready" {
+		t.Fatal("CLI exit stopped plugin", status, err)
+	}
+	before, err := os.ReadFile(audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(first, run(true, register...)) {
+		t.Fatal("repeated registration changed receipt")
+	}
+	after, _ := os.ReadFile(audit)
+	if !bytes.Equal(before, after) {
+		t.Fatal("read/replay caused plugin RPC")
+	}
+	manifest.Version = "2"
+	write()
+	var updated protocol.Accepted
+	if err := json.Unmarshal(run(true, "--request-id", "refresh-plugin", "resource", "refresh", agent.AgentID, id), &updated); err != nil || updated.Resource.Version == accepted.Resource.Version {
+		t.Fatal(updated, err)
+	}
+	// Compare the full decoded retained definition, not only its display name.
+	raw, _ := json.Marshal(catalog)
+	if !bytes.Equal(bytes.TrimSpace(raw), bytes.TrimSpace(run(true, "plugin", "catalog", agent.AgentID, id, "--version", catalog.Version))) {
+		t.Fatal("historical catalog changed")
+	}
+	var failure protocol.Error
+	if err := json.Unmarshal(run(false, "plugin", "catalog", agent.AgentID, id, "--version", "latest"), &failure); err != nil || failure.Data.Kind != "invalid_params" {
+		t.Fatal(failure, err)
+	}
+	c.CloseResources()
+	before, _ = os.ReadFile(audit)
+	if err := json.Unmarshal(run(true, "resource", "status", agent.AgentID, id), &status); err != nil || status.State != "unavailable" {
+		t.Fatal(status, err)
+	}
+	run(true, "plugin", "catalog", agent.AgentID, id)
+	after, _ = os.ReadFile(audit)
+	if !bytes.Equal(before, after) {
+		t.Fatal("offline read started a process")
+	}
+	help, err := exec.CommandContext(ctx, binary, "plugin", "catalog", "--help").CombinedOutput()
+	if err != nil || !strings.Contains(string(help), "--version") || !strings.Contains(string(help), "does not start or invoke") {
+		t.Fatal(string(help), err)
+	}
+	if !protocol.ReadOnly("plugin.catalog") {
+		t.Fatal("catalog reads classified as effects")
+	}
+}

@@ -379,7 +379,7 @@ Core 重启后，已保存结果可补入原工具结果位置，无须重连 MC
 
 ## 插件启动与协议协商
 
-`resource.PreparePlugin` 读取 YAML/JSON manifest、解析环境引用、启动独立进程并完成协商。当前交付启动与调用底层；CLI 注册、五类能力接线和版本退役由 OpenSpec 8.2–8.5 完成。准备成功只返回候选实例，不向模型发布能力。
+Core 已接入插件注册、目录持久化和状态查询。调用底层已实现；模型工具接入、CLI 执行、持久调用回执和其余能力由 OpenSpec 8.2–8.5 完成。
 
 ```yaml
 schema_version: 1
@@ -404,6 +404,26 @@ stdin/stdout 使用 [JSON-RPC 2.0](https://www.jsonrpc.org/specification)，UTF-
 协议帧上限 8 MiB。stderr 持续读取，保存脱敏后的末尾 64 KiB，记录读取和淘汰字节数，展示时转义控制字符。显式环境引用值，以及继承环境中名称含 KEY/TOKEN/SECRET/PASSWORD/PASSWD/CREDENTIAL/AUTH 的值用于脱敏；单值最多 64 KiB、最多收集 256 项。跨读取边界的凭据仍脱敏，最多暂存最长凭据长度减一的尾部，关闭时冲刷。未知或编码后的敏感值需插件自行处理。
 
 Info 返回实例身份、manifest 摘要、协商版本、状态、PID、能力、限额和 trusted_execution。摘要覆盖启动配置，不是可执行文件哈希。插件按当前用户权限运行；进程分离用于生命周期管理，外部副作用不随关闭回滚。初始化错误返回的实例已关闭，仅供诊断，失败候选不影响其他实例。
+
+### 注册与目录查询
+
+```sh
+zende --request-id install-plugin resource register AGENT /path/to/plugin.yaml --kind plugin
+zende resource list AGENT --kind plugin
+zende resource status AGENT RESOURCE
+zende plugin catalog AGENT RESOURCE
+zende plugin catalog AGENT RESOURCE --version VERSION
+zende resource read AGENT RESOURCE --version VERSION
+zende --request-id refresh-plugin resource refresh AGENT RESOURCE
+```
+
+注册使用 Agent cwd 解析相对路径。初始化和目录发现共用 30 秒预算，完成后再复读 manifest；校验成功才事务保存 manifest 原文、目录、发布版本和回执。包中只有凭据引用，启动时解析的值留在进程边界。非法定义、源文件变化、取消或过期候选均关闭，更新失败保留旧版本与旧实例。
+
+`catalog` 返回已保存的完整 tools/commands 定义、schema、ref、manifest_version 和 catalog_version；`version` 是包含 manifest 原文及目录的资源版本。查询只读数据库，`--version` 指定历史资源版本，`read` 读取该版本 manifest。目录仍受 256 项/4 MiB 的发现限额约束，读取时重新核对 schema、引用和版本。
+
+`status` 区分进程可用性与最近更新状态。客户端退出后插件由 Core 持有；Core 关闭时回收进程。重启后保留目录，进程状态为 unavailable，显式 refresh 准备新实例。重复已接受请求只返回原回执；同版本 refresh 保留健康实例，离线时重新启动。修改可执行文件后应更新 manifest 的 version，因为摘要不覆盖二进制内容。
+
+当前发布只管理发现实例，尚未开放插件执行入口；新版发布后回收旧发现实例。执行接线将加入调用持有和旧实例退役，8.4 验收前不宣称运行中调用可热替换。
 
 ### 插件调用底层
 

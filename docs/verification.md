@@ -865,6 +865,21 @@ go test ./internal/resource/mcp \
 
 测试使用真实本地插件子进程和隔离目录；HTTP 测试确认 schema 编译器没有发出外部引用请求。未使用外部插件服务、模型或用户凭据。说明按 trim-cn-tech-doc 保留协议、限额和待核实边界，提示词与界面未改；这些测试不代表 Core/CLI 插件集成或部署验收完成。
 
+## 2026-10-16：插件资源发布与 CLI 目录
+
+8.2 部分交付，累计仍为 44/68 项。Core 已接入 `resource register --kind plugin`、refresh/status/list/read 和 `plugin catalog`；manifest 与完整目录保存为不可变版本，运行进程由 Core 持有。
+
+| 检查 | 测试 | 结果 |
+| --- | --- | --- |
+| 目录完整性 | `TestPluginCatalogRestoreVerifiesAllBindings` | 重建 schema 与引用，拒绝版本、引用、类别、定义、排序和 manifest 不匹配；导出数据独立复制 |
+| 准备与保存 | `TestPluginPackageRetainsVerifiedManifestAndCatalog`、`TestPluginPackageDiscoveryFailureAndSourceChange` | 凭据值不进入包；删除源文件后仍可重建；非法目录、发现期间改写和取消均拒绝候选 |
+| 发布与生命周期 | `TestPluginPublicationHistoryAndCoreLifetime`、`TestPluginPublicationSupersededAndClosedHost` | 客户端取消不关闭已发布进程；失败更新保留旧版，过期候选回收；旧目录跨 SQLite 重开保留，Core 重启后状态为离线，refresh 恢复；不同 Agent 的读取范围隔离 |
+| 真实 CLI | `TestPluginCatalogThroughBinaryCLI` | 二进制经 Unix socket 注册真实子进程，读取完整 JSON 目录及历史版本；重复请求和只读查询不发送插件 RPC，参数错误走 stderr/退出码 2，帮助可查 |
+
+`go test ./...`、`go test -race ./...`、新增资源/运行时测试的 race 三轮、相关包 `go vet` 和 OpenSpec strict 校验通过。测试使用隔离目录、本地子进程和真实 CLI，不连接外部模型或插件服务。
+
+说明按 trim-cn-tech-doc 收紧交付状态，保留协议、限额、失败边界和可运行命令。tui-design 用于核对 CLI 的 JSON、诊断和帮助，主界面及提示词未改。调用持久化、模型工具、CLI 执行和运行中实例保留继续按 8.2–8.5 实施。
+
 ## 进行中
 
-继续 8.2 的 Core 持久回执、模型工具注册与 CLI 接线。7.1、7.2 的配置/provider 热发布与外部目录监视尚未完成；目录安装完成的判定方式已提问，待用户选择。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。
+继续 8.2 的持久调用回执、模型工具注册与 CLI 执行。7.1、7.2 的配置/provider 热发布与外部目录监视尚未完成；目录安装完成的判定方式已提问，待用户选择。会话复制还依赖第 9 组。Day1 整体和本机部署尚未完成；推送需用户指定 remote。

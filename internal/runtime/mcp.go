@@ -58,6 +58,7 @@ func (c *Core) mcpSlot(target protocol.ResourceTarget) (*mcpSlot, error) {
 // CloseResources is owned by the Core lifetime, not client detach. It also
 // supports short-lived embedders/tests that use Handle without the scheduler.
 func (c *Core) CloseResources() {
+	c.closePlugins()
 	c.mcpMu.Lock()
 	c.mcpClosed = true
 	slots := make([]*mcpSlot, 0, len(c.mcpSlots))
@@ -84,6 +85,9 @@ func (c *Core) CloseResources() {
 
 func (c *Core) resourceStatus(ctx context.Context, target protocol.ResourceTarget) (protocol.ResourceStatus, error) {
 	status, err := c.Store.ResourceStatus(ctx, target)
+	if err == nil && status.Kind == "plugin" && status.Version != "" {
+		return c.pluginStatus(target, status), nil
+	}
 	if err != nil || status.Kind != "mcp" || status.Version == "" {
 		return status, err
 	}

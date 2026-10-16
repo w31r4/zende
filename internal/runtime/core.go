@@ -32,6 +32,9 @@ type Core struct {
 	mcpMu         sync.Mutex
 	mcpSlots      map[protocol.ResourceTarget]*mcpSlot
 	mcpClosed     bool
+	pluginMu      sync.Mutex
+	pluginSlots   map[protocol.ResourceTarget]pluginSlot
+	pluginsClosed bool
 }
 
 func New(s *store.Store, config resource.Effective) *Core {
@@ -134,6 +137,12 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 			return nil, err
 		}
 		return c.searchMCP(ctx, p)
+	case "plugin.catalog":
+		var p protocol.PluginCatalogQuery
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.Store.PluginCatalog(ctx, p)
 	case "resource.list":
 		var p protocol.ResourceList
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

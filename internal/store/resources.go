@@ -43,6 +43,9 @@ func validatedPackage(p resource.Package) (resource.Package, error) {
 	if p.Info.Kind == "mcp" && p.MCP != nil {
 		checked, err = resource.BuildMCPPackage(p.Info.Source, p.Files, *p.MCP)
 	}
+	if p.Info.Kind == "plugin" && p.Plugin != nil {
+		checked, err = resource.BuildPluginPackage(p.Info.Source, p.Files, *p.Plugin)
+	}
 	if err != nil || !reflect.DeepEqual(checked, p) {
 		return resource.Package{}, protocol.E("invalid_resource", "resource metadata or bytes do not match their version")
 	}
@@ -237,13 +240,21 @@ func (s *Store) ResourceStatus(ctx context.Context, target protocol.ResourceTarg
 }
 
 func (s *Store) ReadResource(ctx context.Context, target protocol.ResourceRead) (protocol.ResourceContent, error) {
+	p, err := s.readResourcePackage(ctx, target)
+	if err != nil {
+		return protocol.ResourceContent{}, err
+	}
+	return p.Content(target.Path)
+}
+
+func (s *Store) readResourcePackage(ctx context.Context, target protocol.ResourceRead) (resource.Package, error) {
 	if target.Version != "" {
 		hash, err := hex.DecodeString(target.Version)
 		if err != nil || len(hash) != 32 {
-			return protocol.ResourceContent{}, protocol.E("invalid_params", "resource version must be a SHA-256 digest")
+			return resource.Package{}, protocol.E("invalid_params", "resource version must be a SHA-256 digest")
 		}
 	}
-	var result protocol.ResourceContent
+	var result resource.Package
 	err := s.Transaction(ctx, func(tx *sql.Tx) error {
 		var raw string
 		var err error
@@ -265,15 +276,15 @@ func (s *Store) ReadResource(ctx context.Context, target protocol.ResourceRead) 
 		if p.Info.ID != target.ID || target.Version != "" && target.Version != p.Info.Version {
 			return protocol.E("invalid_state", "saved resource identity changed")
 		}
-		result, err = p.Content(target.Path)
-		return err
+		result = p
+		return nil
 	})
 	return result, err
 }
 
 func (s *Store) Resources(ctx context.Context, query protocol.ResourceList) (protocol.ResourcePage, error) {
-	if query.Limit < 0 || query.Limit > 100 || len(query.Query) > 256 || !utf8.ValidString(query.Query) || len(query.After) > 128 || query.Kind != "" && query.Kind != "skill" && query.Kind != "prompt" && query.Kind != "mcp" {
-		return protocol.ResourcePage{}, protocol.E("invalid_params", "resource list accepts kind skill/prompt/mcp, a 256-byte query and limit 1–100")
+	if query.Limit < 0 || query.Limit > 100 || len(query.Query) > 256 || !utf8.ValidString(query.Query) || len(query.After) > 128 || query.Kind != "" && query.Kind != "skill" && query.Kind != "prompt" && query.Kind != "mcp" && query.Kind != "plugin" {
+		return protocol.ResourcePage{}, protocol.E("invalid_params", "resource list accepts kind skill/prompt/mcp/plugin, a 256-byte query and limit 1–100")
 	}
 	if query.Limit == 0 {
 		query.Limit = 20

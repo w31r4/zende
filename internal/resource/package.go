@@ -20,6 +20,7 @@ import (
 	"go.yaml.in/yaml/v3"
 	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/resource/mcp"
+	"zende.local/harness/internal/resource/plugin"
 )
 
 // Package is prepared outside the database transaction, then validated and
@@ -29,7 +30,8 @@ type Package struct {
 	Instructions string
 	Entry        string
 	Files        []File
-	MCP          *mcp.Catalog `json:",omitempty"`
+	MCP          *mcp.Catalog         `json:",omitempty"`
+	Plugin       *plugin.SavedCatalog `json:",omitempty"`
 }
 type File struct {
 	Path       string
@@ -42,8 +44,8 @@ var skillName = regexp.MustCompile("^[a-z0-9]+(-[a-z0-9]+)*$")
 // Identity is available before files are readable, so failed installations can
 // still be inspected and retried. It performs no filesystem I/O.
 func Identity(kind, source string) (protocol.ResourceInfo, error) {
-	if (kind != "skill" && kind != "prompt" && kind != "mcp") || !filepath.IsAbs(source) || len(source) > 4096 || strings.ContainsRune(source, 0) || !utf8.ValidString(source) {
-		return protocol.ResourceInfo{}, protocol.E("invalid_params", "resource kind must be skill, prompt or mcp and source must be an absolute path of at most 4096 bytes")
+	if (kind != "skill" && kind != "prompt" && kind != "mcp" && kind != "plugin") || !filepath.IsAbs(source) || len(source) > 4096 || strings.ContainsRune(source, 0) || !utf8.ValidString(source) {
+		return protocol.ResourceInfo{}, protocol.E("invalid_params", "resource kind must be skill, prompt, mcp or plugin and source must be an absolute path of at most 4096 bytes")
 	}
 	source = filepath.Clean(source)
 	if kind == "skill" && filepath.Base(source) != "SKILL.md" {
@@ -138,8 +140,8 @@ func parseInstructions(data []byte) (name, description, body string, disabled bo
 // This catches writes during preparation, not a writer's unstated future edits;
 // publishers should finish files before register, preferably by atomic rename.
 func Prepare(ctx context.Context, kind, source string) (Package, error) {
-	if kind == "mcp" {
-		return Package{}, protocol.E("invalid_params", "MCP preparation requires a managed connection")
+	if kind == "mcp" || kind == "plugin" {
+		return Package{}, protocol.E("invalid_params", "MCP and plugin preparation require a managed connection")
 	}
 	identity, err := Identity(kind, source)
 	if err != nil {

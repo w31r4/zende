@@ -40,6 +40,49 @@ type Catalog struct {
 	entries []callableEntry
 }
 
+// SavedCatalog is public, immutable discovery data. It contains neither process
+// handles nor resolved environment values. Restore verifies every reference.
+type SavedCatalog struct {
+	CatalogVersion string       `json:"catalog_version"`
+	Definitions    []Definition `json:"definitions"`
+}
+
+func (c *Catalog) Export() SavedCatalog {
+	return SavedCatalog{CatalogVersion: c.Version(), Definitions: c.Definitions()}
+}
+
+func RestoreCatalog(manifest Manifest, saved SavedCatalog) (*Catalog, error) {
+	if manifest.Validate() != nil || len(saved.Definitions) > MaxDefinitions {
+		return nil, invalidCatalog()
+	}
+	groups := map[string][]Callable{"tools": {}, "commands": {}}
+	for _, d := range saved.Definitions {
+		switch d.Kind {
+		case "tool":
+			groups["tools"] = append(groups["tools"], d.Callable)
+		case "command":
+			groups["commands"] = append(groups["commands"], d.Callable)
+		default:
+			return nil, invalidCatalog()
+		}
+	}
+	raw, err := json.Marshal(groups)
+	if err != nil {
+		return nil, invalidCatalog()
+	}
+	info := Info{Identity: Identity{ID: manifest.ID, Version: manifest.Version}, ManifestVersion: manifest.Digest(), Capabilities: manifest.Capabilities}
+	catalog, err := compileCatalog(info, raw)
+	if err != nil {
+		return nil, err
+	}
+	// Definition references bind the manifest and schema; version binds the
+	// complete sorted directory. Do not accept forged references or reordering.
+	if catalog.Version() != saved.CatalogVersion || digest(saved.Definitions) != saved.CatalogVersion {
+		return nil, invalidCatalog()
+	}
+	return catalog, nil
+}
+
 type callableEntry struct {
 	definition    Definition
 	input, output *jsonschema.Schema

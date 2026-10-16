@@ -101,3 +101,41 @@ func TestPluginJSONBudgetsAndNumericPrecision(t *testing.T) {
 		}
 	}
 }
+
+func TestPluginCatalogRestoreVerifiesAllBindings(t *testing.T) {
+	manifest := Manifest{SchemaVersion: 1, ID: "fixture", Version: "1", Command: "/does-not-run", ProtocolVersions: []int{1}, Capabilities: []string{"tools", "commands"}}
+	info := Info{Identity: Identity{ID: manifest.ID, Version: manifest.Version}, ManifestVersion: manifest.Digest(), Capabilities: manifest.Capabilities}
+	original, err := compileCatalog(info, []byte(`{"tools":[{"name":"echo","description":"Echo","input_schema":{"type":"object"}}],"commands":[{"name":"echo","description":"Echo command","input_schema":{"type":"object"}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored, err := RestoreCatalog(manifest, original.Export())
+	if err != nil || restored.Version() != original.Version() {
+		t.Fatal(restored, err)
+	}
+	for name, change := range map[string]func(*SavedCatalog){
+		"version":     func(c *SavedCatalog) { c.CatalogVersion = "wrong" },
+		"ref":         func(c *SavedCatalog) { c.Definitions[0].Ref = "wrong" },
+		"kind":        func(c *SavedCatalog) { c.Definitions[0].Kind = "provider" },
+		"description": func(c *SavedCatalog) { c.Definitions[0].Description = "altered" },
+		"missing":     func(c *SavedCatalog) { c.Definitions = c.Definitions[:1] },
+		"order":       func(c *SavedCatalog) { c.Definitions[0], c.Definitions[1] = c.Definitions[1], c.Definitions[0] },
+	} {
+		t.Run(name, func(t *testing.T) {
+			saved := original.Export()
+			change(&saved)
+			_, err := RestoreCatalog(manifest, saved)
+			requireFailure(t, err, "plugin_protocol")
+		})
+	}
+	manifest.Version = "2"
+	_, err = RestoreCatalog(manifest, original.Export())
+	requireFailure(t, err, "plugin_protocol")
+	// Exported byte slices cannot mutate the live catalog.
+	saved := original.Export()
+	saved.Definitions[0].InputSchema[0] = '['
+	manifest.Version = "1"
+	if _, err := RestoreCatalog(manifest, original.Export()); err != nil {
+		t.Fatal(err)
+	}
+}

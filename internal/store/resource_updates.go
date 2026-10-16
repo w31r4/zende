@@ -163,14 +163,18 @@ func finishResourcePreparation(ctx context.Context, tx *sql.Tx, agent string, at
 // persists arbitrary parser errors, resource bodies or external service output.
 func (s *Store) FailResourceUpdate(ctx context.Context, agent string, attempt ResourcePreparation, reason string) error {
 	messages := map[string]string{
-		"invalid_resource": "Resource validation failed; finish the files and retry refresh.",
-		"resource_changed": "Source or publication changed during preparation; retry refresh.",
-		"resource_limit":   "Resource exceeds file, byte or catalog limits.",
-		"cancelled":        "Resource preparation was cancelled; retry refresh.",
-		"timeout":          "Resource connection or preparation timed out; retry refresh.",
-		"unavailable":      "Resource connection or credential reference unavailable; retry refresh.",
-		"interrupted":      "Core stopped during resource preparation; retry refresh.",
-		"internal":         "Resource publication failed; retry refresh after checking core state.",
+		"invalid_resource":      "Resource validation failed; finish the files and retry refresh.",
+		"resource_changed":      "Source or publication changed during preparation; retry refresh.",
+		"resource_limit":        "Resource exceeds file, byte or catalog limits.",
+		"cancelled":             "Resource preparation was cancelled; retry refresh.",
+		"timeout":               "Resource connection or preparation timed out; retry refresh.",
+		"unavailable":           "Resource connection or credential reference unavailable; retry refresh.",
+		"interrupted":           "Core stopped during resource preparation; retry refresh.",
+		"internal":              "Resource publication failed; retry refresh after checking core state.",
+		"plugin_protocol":       "Plugin returned an invalid protocol frame or definition; check the plugin and refresh.",
+		"plugin_initialization": "Plugin rejected initialization or discovery; check the plugin and refresh.",
+		"version_mismatch":      "Plugin protocol version is incompatible with this host.",
+		"plugin_exited":         "Plugin exited during preparation; check the plugin and refresh.",
 	}
 	message, ok := messages[reason]
 	if !ok {
