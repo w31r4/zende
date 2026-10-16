@@ -231,12 +231,43 @@ func (c *Call) Invoke(ctx context.Context, emit func(Progress) error) (CallResul
 }
 
 func (c *Call) validateCompletion(raw []byte) (Completion, error) {
+	return validateCompletion(c.entry, c.binding.OperationID, raw)
+}
+
+// ValidateCompletion checks retained evidence with the original definition,
+// without a live process. A successful check does not authorize re-execution.
+func (c *Catalog) ValidateCompletion(ref, operation string, raw []byte) (Completion, error) {
+	for _, entry := range c.entries {
+		if entry.definition.Ref == ref {
+			return validateCompletion(entry, operation, raw)
+		}
+	}
+	return Completion{}, protocol.E("stale_reference", "plugin definition is absent from the saved catalog")
+}
+
+func (c *Catalog) ValidateArguments(ref string, raw []byte) error {
+	value, err := decodeValue(raw, MaxArgumentBytes)
+	if err != nil {
+		return err
+	}
+	for _, entry := range c.entries {
+		if entry.definition.Ref == ref {
+			if entry.input.Validate(value) != nil {
+				return protocol.E("invalid_arguments", "plugin arguments do not match the selected schema")
+			}
+			return nil
+		}
+	}
+	return protocol.E("stale_reference", "plugin definition is absent from the saved catalog")
+}
+
+func validateCompletion(entry callableEntry, operation string, raw []byte) (Completion, error) {
 	var out Completion
 	invalid := protocol.E("plugin_protocol", "invalid plugin completion")
 	if _, err := decodeValue(raw, MaxResultBytes); err != nil {
 		return out, invalid
 	}
-	if protocol.StrictDecode(raw, &out) != nil || out.OperationID != c.binding.OperationID {
+	if protocol.StrictDecode(raw, &out) != nil || out.OperationID != operation {
 		return out, invalid
 	}
 	switch out.State {
@@ -255,9 +286,9 @@ func (c *Call) validateCompletion(raw []byte) (Completion, error) {
 	default:
 		return out, invalid
 	}
-	if out.State == "completed" && c.entry.output != nil {
+	if out.State == "completed" && entry.output != nil {
 		v, err := decodeValue(out.Output, MaxResultBytes)
-		if err != nil || c.entry.output.Validate(v) != nil {
+		if err != nil || entry.output.Validate(v) != nil {
 			return out, invalid
 		}
 	}

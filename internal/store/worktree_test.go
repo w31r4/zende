@@ -184,7 +184,7 @@ func TestWorktreeSchemaEightMigrationPreservesContextView(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ = s.ContextSnapshot(ctx, parent.AgentID)
-	if _, err := s.db.Exec("DROP TABLE mcp_calls; DROP TABLE resource_updates; DROP TABLE wait_receipts; DROP TABLE mailbox; DROP TABLE workspace_operations; PRAGMA user_version=8"); err != nil {
+	if _, err := s.db.Exec("DROP TABLE plugin_progress; DROP TABLE plugin_calls; DROP TABLE mcp_calls; DROP TABLE resource_updates; DROP TABLE wait_receipts; DROP TABLE mailbox; DROP TABLE workspace_operations; PRAGMA user_version=8"); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

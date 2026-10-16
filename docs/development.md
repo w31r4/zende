@@ -116,7 +116,7 @@ Git 查询使用 [porcelain v2](https://git-scm.com/docs/git-status#_porcelain_f
 
 ## 数据与恢复边界
 
-SQLite schema 为 14，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。版本 8 加入上下文视图事件，9 保存 worktree 准备，10 加入 mailbox，11 保存结果投递回执，12 加入整树停止事件与调度保护，13 保存资源准备状态，14 保存 MCP 调用与结果回执。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答、资源版本与已完成的 MCP 回执；更高版本拒绝打开。
+SQLite schema 为 15，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。版本 8 加入上下文视图事件，9 保存 worktree 准备，10 加入 mailbox，11 保存结果投递回执，12 加入整树停止事件与调度保护，13 保存资源准备状态，14 保存 MCP 调用与结果回执，15 保存插件调用、进度与结果。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答、资源版本，以及插件调用意图、进度和已完成的 MCP/插件回执；更高版本拒绝打开。
 
 core 启动先将中断任务置为待核实，再按原身份恢复。取消中的任务保留 cancelling 和暂停选择；核实完成后结束取消，不恢复执行。历史、已接受输入和原 Task ID 保留。
 
@@ -379,7 +379,7 @@ Core 重启后，已保存结果可补入原工具结果位置，无须重连 MC
 
 ## 插件启动与协议协商
 
-Core 已接入插件注册、目录持久化和状态查询。调用底层已实现；模型工具接入、CLI 执行、持久调用回执和其余能力由 OpenSpec 8.2–8.5 完成。
+Core 已接入插件注册、目录持久化和状态查询，存储层已支持调用、进度和结果回执。模型工具与 CLI 执行入口、旧实例引用保持及其余能力仍由 OpenSpec 8.2–8.5 交付。
 
 ```yaml
 schema_version: 1
@@ -429,7 +429,7 @@ zende --request-id refresh-plugin resource refresh AGENT RESOURCE
 
 初始化后，`Instance.Discover` 通过 `plugin.describe` 读取已声明的 tools/commands，验证名称、描述和 input_schema/output_schema，再固定本实例的目录。定义引用包含插件身份、manifest 摘要、能力类别和完整定义；JSON 键顺序及新增无关定义不改变原引用。更新定义须准备新实例。
 
-`PrepareCall` 选择引用、校验参数并保存有效 Scope；`Binding/Definition/Scope/Arguments` 返回可记录的绑定。所有者须先持久保存派发意图，再执行一次 `Invoke`，并持有实例直至返回。目前尚未接入 Core 持久回执、模型工具目录和 CLI 命令；跨重启去重也由这些入口负责，底层不重试调用。
+`PrepareCall` 选择引用、校验参数并保存有效 Scope；`Binding/Definition/Scope/Arguments` 返回可记录的绑定。所有者先用存储层提交派发意图，再执行一次 `Invoke`，并持有实例直至返回。模型工具和 CLI 执行入口仍需接入这条流程。
 
 | 协议消息 | 内容 |
 | --- | --- |
@@ -441,6 +441,24 @@ zende --request-id refresh-plugin resource refresh AGENT RESOURCE
 `Invoke` 按线序交给进度观察者，观察者应保存成功后再返回。取消后最多等 5 秒确认终态；插件仍可返回已完成结果，完整结果优先于随后断线。没有可验证响应、输出 schema 不符或进度保存失败时返回 operation_unknown，并保留收到的有界响应作证据；终态不承诺撤销外部副作用。
 
 每实例最多 8 个请求，写帧最多等 2 秒；进度每条 16 KiB、每请求最多排队 32 条，越界关闭实例并让相关未完成调用待核实。目录最多 256 项/4 MiB，单定义 256 KiB，参数 1 MiB、结果 4 MiB。JSON 深度最多 64，数字最多 1024 字符、指数绝对值最多 1024；schema 支持 draft-07/2020-12，关闭外部文件和网络加载。目录、大小、并发和等待限额随初始化及 Info 返回。调用证据可能含业务数据，不能直接混入普通诊断或模型上下文。
+
+### 持久调用记录
+
+存储接口供后续工具与 CLI 执行入口共用。`PriorPluginCall` 在连接或派发前查询原请求；`BeginPluginCall` 核对该 Agent 发布过的确切版本、定义、参数与 Scope，将操作接受、调用意图和 `plugin.dispatched` 事件同事务提交。并发重试只有一次获得派发资格，换传输 ID 仍返回原记录，换参数报冲突。Task 身份由入口核实并填入；存储层要求它正在运行且未被暂停或取消。
+
+`AppendPluginProgress` 按连续 sequence 保存进度和事件；相同内容重复提交去重，缺号或改写报错。单调用最多保存 1024 条、合计 8 MiB，超限保留已提交部分。`MarkPluginCancelling` 只记录取消处理中；`FinishPluginCall` 接受原实例的已确认终态或 unknown/not_dispatched，并按原发布版本的 schema 核对完成证据。结果和事件原子提交，终态及旧进度保持不可改写。
+
+公开事件只含身份、状态、大小和固定错误，参数、进度值、结果正文留在独立记录中。`PluginProgress` 默认每页 16 条、最多 32 条；`ReadPluginResult` 默认 64 KiB、允许 4–256 KiB，按 UTF-8 边界分页读取完整 CallResult JSON，附长度和 SHA-256。每页检查原内容哈希。当前这些是存储接口，CLI 查询入口仍待接入。
+
+Core 启动把旧 Core 尚未结束的插件调用记为 unknown，保留原操作 ID、进度和证据；读取与重试接受请求均不重新派发。已完成结果保持原样。存储结果含已校验 completion 和原响应证据，编码后限 8 MiB + 64 KiB；超限拒绝提交，原调用继续待核实。
+
+本地子进程与存储故障测试入口：
+
+```sh
+go test -race ./internal/store ./internal/runtime -run 'Test(PluginJournal|PluginSchema|CoreStartupHoldsUnfinishedPluginCall)' -count=3
+```
+
+覆盖 tool/command、进度、已确认取消、异常退出、并发去重、事务回滚、分页完整性、进度限额及 schema 14→15。测试所有者保留旧实例以验证旧 schema；Core 的运行中热替换仍由 8.4 验收。
 
 ## Responses 接入
 

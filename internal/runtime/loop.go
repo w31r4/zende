@@ -53,6 +53,12 @@ func (c *Core) Run(ctx context.Context) error {
 		}
 		return err
 	}
+	if err := c.Store.InterruptPluginCalls(ctx, c.InstanceID); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return err
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	var workers sync.WaitGroup
 	defer workers.Wait()

@@ -570,7 +570,7 @@ func TestTreeStopSchemaElevenMigrationPreservesFacts(t *testing.T) {
 	s, path := newStore(t)
 	_, root := controlWork(t, s)
 	before, _ := s.Snapshot(ctx, root.AgentID)
-	if _, err := s.db.Exec("DROP TABLE mcp_calls; DROP TABLE resource_updates; DROP INDEX tree_stop_events; PRAGMA user_version=11;"); err != nil {
+	if _, err := s.db.Exec("DROP TABLE plugin_progress; DROP TABLE plugin_calls; DROP TABLE mcp_calls; DROP TABLE resource_updates; DROP INDEX tree_stop_events; PRAGMA user_version=11;"); err != nil {
 		t.Fatal(err)
 	}
 	s.Close()

@@ -18,6 +18,61 @@ import (
 
 func TestRuntimePluginProcessHelper(t *testing.T) { fixture.RunFromEnv() }
 
+func TestCoreStartupHoldsUnfinishedPluginCall(t *testing.T) {
+	c, agent, manifest, source := runtimePluginFixture(t)
+	saveRuntimePlugin(t, source, manifest)
+	p := protocol.RegisterResource{AgentID: agent, Kind: "plugin", Path: source}
+	req, _ := protocol.NewRequest("resource.register", "register", p)
+	value, err := c.Handle(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := value.(protocol.Accepted)
+	instance := c.pluginSlots[protocol.ResourceTarget{AgentID: agent, ID: a.Resource.ID}].instance
+	catalog, err := c.Store.PluginCatalog(t.Context(), protocol.PluginCatalogQuery{AgentID: agent, ID: a.Resource.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	d := catalog.Definitions[0]
+	args := json.RawMessage(`{"text":"never dispatched"}`)
+	call, err := instance.PrepareCall(d.Ref, "interrupted", plugin.Scope{AgentID: agent, Cwd: filepath.Dir(source)}, args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ = protocol.NewRequest("plugin."+d.Kind+".call", "interrupted", store.PluginCallInput{AgentID: agent, ResourceID: a.Resource.ID, DefinitionRef: d.Ref, Arguments: args})
+	inv := store.PluginInvocation{Request: req, Binding: call.Binding(), Scope: call.Scope(), Definition: d, ResourceVersion: a.Resource.Version, Generation: a.ResourceGeneration}
+	if _, fresh, err := c.Store.BeginPluginCall(t.Context(), inv, "previous-core"); err != nil || !fresh {
+		t.Fatal(fresh, err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- c.Run(ctx) }()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	for {
+		r, err := c.Store.PriorPluginCall(t.Context(), req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if r.Receipt.State == "unknown" {
+			if r.Receipt.ResultBytes != 0 || r.Receipt.Error.Data.Kind != "operation_unknown" {
+				t.Fatal("startup invented a result", r)
+			}
+			break
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal("startup did not hold original plugin call")
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
 func runtimePluginFixture(t *testing.T) (*Core, string, plugin.Manifest, string) {
 	t.Helper()
 	dir := t.TempDir()
