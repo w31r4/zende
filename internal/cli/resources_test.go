@@ -204,7 +204,7 @@ func TestResourcePromptHintsMatchRegisteredCLI(t *testing.T) {
 	for _, hint := range resourceHints("/binary path/zende", "current-profile") {
 		parts := strings.Split(hint.Name, ".")
 		cmd, remaining, err := root.Find(parts)
-		if err != nil || len(remaining) != 0 || cmd.Name() != parts[1] || cmd.RunE == nil {
+		if err != nil || len(remaining) != 0 || cmd.Name() != parts[len(parts)-1] || cmd.RunE == nil {
 			t.Fatal(hint.Name, err)
 		}
 		if !strings.Contains(hint.Usage, "'/binary path/zende' --profile 'current-profile'") {
@@ -217,6 +217,18 @@ func TestResourcePromptHintsMatchRegisteredCLI(t *testing.T) {
 			for _, text := range []string{"command refs", "not its completion", "inspect/progress/result", "cancel", "request ID", "unknown effect"} {
 				if !strings.Contains(hint.Guidance, text) {
 					t.Fatal("plugin hint missing", text)
+				}
+			}
+		}
+		if hint.Name == "plugin.events.subscribe" {
+			for _, name := range []string{"after", "kind"} {
+				if cmd.Flags().Lookup(name) == nil {
+					t.Fatal("missing subscription flag", name)
+				}
+			}
+			for _, text := range []string{"core", "plugin", "subscription ID", "ordinary Task stop", "list/inspect/read/close", "unknown"} {
+				if !strings.Contains(hint.Guidance, text) {
+					t.Fatal("event hint missing", text)
 				}
 			}
 		}

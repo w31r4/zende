@@ -59,6 +59,7 @@ func (c *Core) mcpSlot(target protocol.ResourceTarget) (*mcpSlot, error) {
 // supports short-lived embedders/tests that use Handle without the scheduler.
 func (c *Core) CloseResources() {
 	c.closePluginCalls()
+	c.closePluginSubscriptions()
 	c.closePlugins()
 	c.mcpMu.Lock()
 	c.mcpClosed = true

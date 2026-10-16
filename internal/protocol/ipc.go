@@ -357,6 +357,8 @@ func (c Client) Retry(ctx context.Context, req Request, result any, attempts int
 
 func ReadOnly(method string) bool {
 	switch method {
+	case "plugin.events.list", "plugin.events.inspect", "plugin.events.read":
+		return true
 	case "agent.wait", "agent.result", "mailbox.list", "mailbox.inspect", "question.inspect", "question.list", "resource.list", "resource.status", "resource.read", "mcp.search", "mcp.inspect", "mcp.result", "plugin.catalog", "plugin.instances", "plugin.inspect", "plugin.progress", "plugin.result":
 		return true
 	case "core.status", "config.inspect", "agent.list", "agent.inspect", "agent.activity", "agent.history", "agent.recovery", "operation.inspect", "events.watch", "runner.status", "process.list", "process.inspect", "process.output", "process.wait", "process.control.inspect", "process.output.retention", "process.output.rotation.plan", "process.output.rotation.inspect", "attachment.inspect", "attachment.read", "attachment.list":

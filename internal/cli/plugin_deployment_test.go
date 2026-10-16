@@ -59,7 +59,9 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	// The full suite now starts real CLI processes for five capability types,
+	// retained/offline reads and help. Individual RPCs keep their own deadlines.
+	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
 	done := make(chan error, 1)
 	go func() { done <- server.Serve(ctx) }()
 	defer func() {
@@ -102,7 +104,7 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest := plugin.Manifest{SchemaVersion: 1, ID: "fixture", Version: "1", ProtocolVersions: []int{1}, Command: exe, Args: []string{"-test.run=^TestCLIPluginProcessHelper$"}, Capabilities: []string{"tools", "commands", "providers", "resources"}}
+	manifest := plugin.Manifest{SchemaVersion: 1, ID: "fixture", Version: "1", ProtocolVersions: []int{1}, Command: exe, Args: []string{"-test.run=^TestCLIPluginProcessHelper$"}, Capabilities: []string{"tools", "commands", "providers", "resources", "events"}}
 	source := filepath.Join(dir, "中文 plugin.json")
 	write := func() {
 		t.Helper()
@@ -192,6 +194,7 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 		t.Fatal(failure, err)
 	}
 	checkPluginCLICommands(t, ctx, s, binary, source, run)
+	checkPluginCLIEvents(t, ctx, s, source, run)
 	retainedCalls := seedPluginCLIReads(t, ctx, s, source, updated, run)
 	c.CloseResources()
 	before, _ = os.ReadFile(audit)

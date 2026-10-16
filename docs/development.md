@@ -116,7 +116,7 @@ Git 查询使用 [porcelain v2](https://git-scm.com/docs/git-status#_porcelain_f
 
 ## 数据与恢复边界
 
-SQLite schema 为 15，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。版本 8 加入上下文视图事件，9 保存 worktree 准备，10 加入 mailbox，11 保存结果投递回执，12 加入整树停止事件与调度保护，13 保存资源准备状态，14 保存 MCP 调用与结果回执，15 保存插件调用、进度与结果。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答、资源版本，以及插件调用意图、进度和已完成的 MCP/插件回执；更高版本拒绝打开。
+SQLite schema 为 16，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。版本 8 加入上下文视图事件，9 保存 worktree 准备，10 加入 mailbox，11 保存结果投递回执，12 加入整树停止事件与调度保护，13 保存资源准备状态，14 保存 MCP 调用与结果回执，15 保存插件调用、进度与结果，16 追加插件订阅状态、投递身份和事件数据。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答、资源版本，以及插件调用意图、进度、订阅记录和已完成的 MCP/插件回执；更高版本拒绝打开。
 
 core 启动先将中断任务置为待核实，再按原身份恢复。取消中的任务保留 cancelling 和暂停选择；核实完成后结束取消，不恢复执行。历史、已接受输入和原 Task ID 保留。
 
@@ -379,7 +379,7 @@ Core 重启后，已保存结果可补入原工具结果位置，无须重连 MC
 
 ## 插件启动与协议协商
 
-Core 已接入插件工具、CLI 命令、provider 模型流和 skill/prompt 资源，按请求保留实例和版本。双向事件订阅及完整故障验收继续由 OpenSpec 8.3、8.5 交付。
+Core 已接入插件工具、CLI 命令、provider 模型流、skill/prompt 资源和双向事件订阅，按调用或订阅保留实例与版本。完整故障验收及最小示例由 OpenSpec 8.5 交付。
 
 ```yaml
 schema_version: 1
@@ -425,8 +425,6 @@ zende --request-id refresh-plugin resource refresh AGENT RESOURCE
 provider 声明名称、描述和型号列表，型号使用公共 `ModelInfo` 字段：model、label、context_window、max_output、efforts、images、native_categories。所有 provider 合计最多 256 个型号，单型号最多 16 项力度；同 provider 型号 ID 和力度不能重复，输出上限须小于上下文长度。凭据通过插件启动环境提供。
 
 resource 声明 skill/prompt 的名称、描述、entry、disable_model_invocation，以及文件路径、字节数、SHA-256 和执行位。skill 入口为 SKILL.md，prompt 只有一个入口文件；路径限定包内相对路径，文件限额沿用资源包。定义引用覆盖文件清单，后续读取须核对正文。仅 tools/commands 的旧目录保持原版本算法；同一 manifest 内增加无关定义保留已有条目的 ref。
-
-模型选择、资源读取已接入 Core；双向事件的目录与传输已实现，持久订阅及 CLI 尚待接通。
 
 `status` 区分进程可用性与最近更新状态。客户端退出后插件由 Core 持有；Core 关闭时回收进程。重启后保留目录，进程状态为 unavailable，显式 refresh 准备新实例。重复已接受请求只返回原回执；同版本 refresh 保留健康实例，离线时重新启动。修改可执行文件后应更新 manifest 的 version，因为摘要不覆盖二进制内容。
 
@@ -538,7 +536,27 @@ Core 来源保留原 schema_version、agent_id、seq、kind、task_id 和 payloa
 
 调用方取消后，已发出的交换仍在原预算内收尾。读取缺口保留游标；关闭确认后拒绝继续读取或投递。错误关联、乱序、越限、schema 不符或无法确认的修改操作关闭故障实例，状态为 unknown，不自动重发。实例退出时，尚未确认关闭的订阅也显示 unknown；已有关闭确认保留。其他实例保持独立。
 
-这些接口目前是传输层。Core 持久订阅、事件查询、重启处理及 CLI 尚待接通；插件 value 将作为带来源的数据保存，不进入用户指令或驱动 Core 状态。测试入口：`go test -race ./internal/resource/plugin -run TestPluginEvent`。
+Core/Agent 通过 CLI 创建后台订阅，REF 取自 `plugin catalog` 的 events 目录：
+
+```sh
+zende --request-id sub-1 plugin events subscribe AGENT RESOURCE REF
+zende plugin events inspect AGENT sub-1
+zende plugin events list AGENT --resource RESOURCE --limit 20
+zende plugin events read AGENT sub-1 --after 0 --limit 16
+zende --request-id close-1 plugin events close AGENT sub-1
+```
+
+subscribe 返回 opening，表示接受记录已保存；inspect 查询 open、closing、closed、unknown 或 not_dispatched。请求 ID 同时是订阅 ID，已接受重试返回原绑定。模型来源沿用 `ZENDE_CALLER` 的原 exec、Task 和请求 cwd，同一次执行自动生成稳定 ID；跨调用重试显式使用原 ID。人工订阅使用 Agent cwd。
+
+Core 来源允许 `--after SEQ` 和最多 32 个重复 `--kind KIND` 参数，默认从头接收全部类型；插件来源从零开始，不接受 Core 类型筛选。read 只读已保存的插件数据，默认 16 条、最多 64 条，并按实际 JSON 字节分页；list 默认 20 项、最多 100 项，两者均按 next 继续。返回保留插件、实例、资源版本、来源和订阅身份，跨 Agent 查询拒绝。
+
+订阅属于 Core，关闭 TUI 或普通停止 Task 后继续。显式整树停止先原子记录全部所属订阅的关闭意图，确认关闭后才结束停止；范围外 Agent 保持运行。Core 正常退出先关闭订阅再回收实例。热更新保留旧订阅的实例，新订阅取得当前版本。
+
+schema 16 将接受意图、状态变化和插件数据分别追加保存；收到整页数据与推进游标同事务提交。插件 value 只供显式查询，不进入用户指令或 Core 状态事件。Core 投递先保存批次范围与哈希，确认后推进游标；确认记录不再广播为 Core 事件，避免自反馈。只有已证实未发出的容量/取消拒绝可以重新准备投递。
+
+重启将旧 Core 未结束的订阅置为 unknown，保留游标、未确认批次和已收数据，不自动重开或重投。unknown 阻止该 Agent 的新插件调用和订阅；保存状态失败时 inspect 报 persistence_failed，Core 保留故障记录，刷新实例也不能绕过。已保存查询不依赖插件在线。
+
+Core 最多持有 64 个活动或未落盘的订阅；单订阅最多保留 4096 条/32 MiB 插件数据、16384 条状态记录，另留 3 条用于在途结果和关闭。到限提前请求关闭，已有数据继续可读；按最大单条预算预留空间，可能在字节上限前关闭。限额可通过 `plugin instances` 查询。测试入口：`go test -race ./internal/resource/plugin ./internal/runtime ./internal/store -run 'TestPluginEvent|TestPluginSubscription'`。
 
 ### 插件调用底层
 

@@ -931,6 +931,27 @@ go test ./internal/resource/mcp \
 
 测试使用真实本地插件子进程和隔离目录，覆盖传输及目录；未使用外部模型、服务或用户凭据，也未完成持久事件和部署验收。文档按 trim-cn-tech-doc 保留协议字段、游标、预算和未知结果边界；提示词及 TUI 未改。
 
+## 2026-10-16：持久插件订阅、Core 与 CLI
+
+8.3 完成，累计 47/68 项。双向订阅由 Core 后台管理，CLI 提供 subscribe/list/inspect/read/close；schema 16 以追加记录保存来源、状态、数据和投递身份。
+
+| 检查 | 测试 | 结果 |
+| --- | --- | --- |
+| 事务与去重 | `TestPluginSubscriptionAcceptanceIsAtomicAndDeduplicated`、`TestPluginSubscriptionPageAndClosureTransactions` | 接受、数据、状态和回执故障完整回滚；八路并发只获得一次派发资格，旧记录禁止改删 |
+| 双向与隔离 | `TestPluginSubscriptionsBothDirectionsRetainSourceAndClose`、`TestPluginEventsCoreFilteringAndNoFeedback` | 原 Core 事件身份保持，类型筛选可跨游标；插件值独立保存，投递确认不产生自反馈 |
+| 生命周期与来源 | `TestPluginEventsDetachRetryRefreshAndOfflineReads`、`TestPluginEventsCallerSurvivesTaskStopAndRetry` | 客户端断开及普通 Task 停止保留订阅；原 exec/cwd 来源不变，热更新保留旧实例，关闭后离线读取原版本 |
+| 树停止 | `TestPluginEventsTreeStopIsAtomicAndAgentScoped`、`TestPluginEventsUnknownBlocksTreeCompletion` | 停止事务失败不发关闭；根/子订阅确认后才结束，范围外 Agent 保留，未知关闭阻止虚报完成 |
+| 故障与恢复 | `TestPluginEventsSourceCloseAndUnknownOutcomes`、`TestPluginEventsPersistenceFaultBlocksOtherPluginEntrypoints`、`TestPluginEventsStartupDoesNotReopenUnfinishedSubscription` | 源关闭与异常退出分开；未落盘结果阻止该 Agent 新插件调用/订阅，重启保留原身份和游标，不重开或重投 |
+| 投递与预算 | `TestPluginSubscriptionRecoveryRetainsUnknownDelivery`、`TestPluginSubscriptionDeliveryPreDispatchRejection`、`TestPluginSubscriptionReadBoundsEscapedWireBytes`、`TestPluginEventsOversizedCoreEventClosesAtConfirmedCursor` | 未确认批次不重放；仅派发前拒绝可重新准备；JSON 转义计入分页字节，过大 Core 事件保留原文并确认关闭 |
+| 保留量与迁移 | `TestPluginSubscriptionRetainedLimitsAndTerminalReserve`、`TestPluginSubscriptionListingAndSchemaFifteenMigration`、`TestPluginSubscriptionMigrationRollback` | 条数/字节/状态上限及关闭预留通过；15→16 保留旧数据，迁移故障完整回滚 |
+| 实际 CLI | `TestPluginCatalogThroughBinaryCLI`、`TestPluginEventsHelpAndReadOnlyClassification`、`TestResourcePromptHintsMatchRegisteredCLI` | 二进制经 UDS 驱动真实插件，两方向订阅/关闭各一次；caller 自动去重、跨调用重试、分页、错误通道和帮助通过 |
+
+最终 `go test ./...`、`go test -race ./...`、`go vet ./...`、CLI 帮助、OpenSpec strict 和 diff 检查通过。事件传输、存储及 Core 定向 race 连续三轮通过，最后补充的预算关闭用例也通过三轮。
+
+首次 CLI 整组测试在最后的帮助检查达到原 60 秒总预算。新增五类能力检查后，将测试总预算改为 120 秒，单次 RPC 超时保持；重跑通过，失败轮不计通过。存储迁移夹具同步移除测试构造的 schema 16 表，修正后全部旧版本迁移用例通过。
+
+使用隔离数据库、本地插件子进程和真实 CLI；caller 由测试预置的 exec 事件验证，未访问外部模型或凭据。提示词版本 19 参考 Pi 的短能力入口；tui-design 保持 JSON/诊断分流，主界面未增文字。trim-cn-tech-doc 去掉过时待办和重复说明，保留协议、预算、恢复边界及原验证记录。
+
 ## 进行中
 
-继续 8.3 的 Core 持久订阅、查询及 CLI，随后完成 8.5 故障验收。7.1、7.2 的配置/provider 热发布与外部目录监视尚未完成，会话复制还依赖第 9 组。Day1 整体与本机部署尚未完成。origin 已连接用户创建的 `w31r4/zende`，实现按原子提交推送。
+继续 8.5 的最小插件示例与完整故障验收。7.1、7.2 的配置/provider 热发布与外部目录监视尚未完成，会话复制还依赖第 9 组。Day1 整体与本机部署尚未完成。origin 已连接用户创建的 `w31r4/zende`，实现按原子提交推送。

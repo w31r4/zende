@@ -178,16 +178,21 @@ type PluginInstanceStatus struct {
 }
 
 type PluginInstances struct {
-	AgentID        string                 `json:"agent_id"`
-	ResourceID     string                 `json:"resource_id"`
-	Current        string                 `json:"current_instance_id,omitempty"`
-	Items          []PluginInstanceStatus `json:"items"`
-	MaxRetiring    int                    `json:"max_retiring_instances"`
-	MaxActiveCalls int                    `json:"max_active_calls"`
+	AgentID                string                 `json:"agent_id"`
+	ResourceID             string                 `json:"resource_id"`
+	Current                string                 `json:"current_instance_id,omitempty"`
+	Items                  []PluginInstanceStatus `json:"items"`
+	MaxRetiring            int                    `json:"max_retiring_instances"`
+	MaxActiveCalls         int                    `json:"max_active_calls"`
+	MaxActiveSubscriptions int                    `json:"max_active_subscriptions"`
+	MaxSubscriptionEvents  int                    `json:"max_subscription_events"`
+	MaxSubscriptionBytes   int                    `json:"max_subscription_bytes"`
+	MaxSubscriptionChanges int                    `json:"max_subscription_changes"`
 }
 
 func (c *Core) pluginInstances(ctx context.Context, target protocol.ResourceTarget) (PluginInstances, error) {
-	out := PluginInstances{AgentID: target.AgentID, ResourceID: target.ID, Items: []PluginInstanceStatus{}, MaxRetiring: MaxRetiringPluginInstances, MaxActiveCalls: MaxActivePluginCalls}
+	out := PluginInstances{AgentID: target.AgentID, ResourceID: target.ID, Items: []PluginInstanceStatus{}, MaxRetiring: MaxRetiringPluginInstances, MaxActiveCalls: MaxActivePluginCalls,
+		MaxActiveSubscriptions: MaxActivePluginSubscriptions, MaxSubscriptionEvents: store.MaxPluginSubscriptionEvents, MaxSubscriptionBytes: store.MaxPluginSubscriptionBytes, MaxSubscriptionChanges: store.MaxPluginSubscriptionChanges}
 	status, err := c.Store.ResourceStatus(ctx, target)
 	if err != nil {
 		return out, err

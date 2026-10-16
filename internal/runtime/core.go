@@ -22,28 +22,33 @@ type Core struct {
 	InstanceID string
 	Runner     process.Runner
 	// Configure before Run; publication of hot resources is added separately.
-	Models            model.Resolver
-	RestoreModels     model.Restorer
-	Catalog           ModelCatalog
-	Tools             *tool.Registry
-	Commands          []CommandHint
-	loopMu            sync.Mutex
-	loopRunning       bool
-	workers           map[string]context.CancelFunc // task ID, never just Agent ID
-	mcpMu             sync.Mutex
-	mcpSlots          map[protocol.ResourceTarget]*mcpSlot
-	mcpClosed         bool
-	pluginMu          sync.Mutex
-	pluginSlots       map[protocol.ResourceTarget]*pluginSlot
-	pluginOwned       map[*pluginSlot]protocol.ResourceTarget
-	pluginCleanup     sync.WaitGroup
-	pluginClosed      chan struct{}
-	pluginsClosed     bool
-	pluginCallMu      sync.Mutex
-	pluginCalls       map[protocol.PluginCallTarget]*pluginExecution
-	pluginCallWorkers sync.WaitGroup
-	pluginCallsClosed bool
-	pluginCallsDone   chan struct{}
+	Models             model.Resolver
+	RestoreModels      model.Restorer
+	Catalog            ModelCatalog
+	Tools              *tool.Registry
+	Commands           []CommandHint
+	loopMu             sync.Mutex
+	loopRunning        bool
+	workers            map[string]context.CancelFunc // task ID, never just Agent ID
+	mcpMu              sync.Mutex
+	mcpSlots           map[protocol.ResourceTarget]*mcpSlot
+	mcpClosed          bool
+	pluginMu           sync.Mutex
+	pluginSlots        map[protocol.ResourceTarget]*pluginSlot
+	pluginOwned        map[*pluginSlot]protocol.ResourceTarget
+	pluginCleanup      sync.WaitGroup
+	pluginClosed       chan struct{}
+	pluginsClosed      bool
+	pluginCallMu       sync.Mutex
+	pluginCalls        map[protocol.PluginCallTarget]*pluginExecution
+	pluginCallWorkers  sync.WaitGroup
+	pluginCallsClosed  bool
+	pluginCallsDone    chan struct{}
+	pluginEventMu      sync.Mutex
+	pluginEvents       map[protocol.PluginSubscriptionTarget]*pluginEventWorker
+	pluginEventWorkers sync.WaitGroup
+	pluginEventsClosed bool
+	pluginEventsDone   chan struct{}
 }
 
 func New(s *store.Store, config resource.Effective) *Core {
@@ -146,6 +151,28 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 			return nil, err
 		}
 		return c.Store.PluginCatalog(ctx, p)
+	case "plugin.events.subscribe":
+		return c.startPluginSubscription(ctx, req)
+	case "plugin.events.close":
+		return c.Store.ClosePluginSubscription(ctx, req)
+	case "plugin.events.inspect":
+		var p protocol.PluginSubscriptionTarget
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.pluginSubscription(ctx, p)
+	case "plugin.events.list":
+		var p protocol.PluginSubscriptionQuery
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.Store.PluginSubscriptions(ctx, p)
+	case "plugin.events.read":
+		var p protocol.PluginEventsRead
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.Store.ReadPluginEvents(ctx, p)
 	case "plugin.instances":
 		var p protocol.ResourceTarget
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

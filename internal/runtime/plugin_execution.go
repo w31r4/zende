@@ -41,6 +41,9 @@ func (c *Core) startPluginCall(ctx context.Context, req protocol.Request, scope 
 			return store.PluginReceipt{}, err
 		}
 	}
+	if err := c.pluginEventFailure(scope.AgentID); err != nil {
+		return store.PluginReceipt{}, err
+	}
 	for target, worker := range c.pluginCalls {
 		if target.AgentID == scope.AgentID && worker.failure != nil {
 			return store.PluginReceipt{}, protocol.E("persistence_failed", "an earlier plugin outcome could not be saved; inspect the original operation before new work")
