@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "id": "example-echo",
+  "version": "1.0.0",
+  "protocol_versions": [1],
+  "command": "/absolute/path/to/zende-plugin-echo",
+  "capabilities": ["tools", "commands"]
+}

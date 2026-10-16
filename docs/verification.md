@@ -952,6 +952,25 @@ go test ./internal/resource/mcp \
 
 使用隔离数据库、本地插件子进程和真实 CLI；caller 由测试预置的 exec 事件验证，未访问外部模型或凭据。提示词版本 19 参考 Pi 的短能力入口；tui-design 保持 JSON/诊断分流，主界面未增文字。trim-cn-tech-doc 去掉过时待办和重复说明，保留协议、预算、恢复边界及原验证记录。
 
+## 2026-10-16：插件示例与 V16 故障验收
+
+8.5 完成，累计 48/68 项。独立示例见 [plugin-echo](../examples/plugin-echo/main.go)，接入与 wire 约定见 [编写插件](./plugin-authoring.md)。V16 本地证据按能力与故障对应如下；前几轮的详细记录保留。
+
+| 检查 | 测试入口 | 证据 |
+| --- | --- | --- |
+| 初始化与协议错误 | `TestPluginInitializationLifetimeAndIsolation`、`TestPluginInitializationRejectsProtocolFailures` | 版本/身份/能力不符及 stdout 污染拒绝发布，失败实例回收，其他实例保持 ready |
+| 工具、命令与独立示例 | `TestExamplePluginThroughHost`、`TestPluginCatalogThroughBinaryCLI` | main.go 复制到临时目录，关闭 module/workspace 后构建；宿主验证两类调用、进度、并发、取消和关闭，真实 CLI 经 UDS 注册、执行、读取及重试 |
+| provider | `TestPluginModelRunsTwoToolRoundsWithoutConfiguredProvider`、`TestPluginModelThroughBinaryCLI` | 公共模型循环、两轮工具与 final，以及真实 CLI 的发现/选择/执行；本地确定性模型 |
+| skill/prompt | `TestPluginResourcesPublishRefreshAndReadOffline`、`TestPluginResourceParentRefreshDuringReadRejectsMixedVersion` | 正文与来源可读，原版本离线保留，换版期间拒绝混合内容 |
+| 双向事件 | `TestPluginEventsCoreFilteringAndNoFeedback`、`TestPluginEventsSourceCloseAndUnknownOutcomes` | 保持 Core 身份，独立保存插件数据，关闭/退出区分，未确认投递不重放 |
+| 热替换 | `TestPluginLeasePreservesRunningCallAcrossRefresh`、`TestPluginModelLeaseRefreshAndExactRestore` | 旧调用与模型流保留实例；失败候选不替换旧版，引用归零后回收 |
+| 真实副作用与隔离 | `TestPluginEffectSurvivesExitWithoutReplay` | tool/command 各在 fsync 产物后、响应前退出；原进度保留且无已确认结果，其他 Agent 的插件调用和模型任务仍完成；数据库重开、显式刷新及新 ID 均不重做，产物与 RPC 计数证明效果一次 |
+| 信任与限额 | `TestExamplePluginThroughHost`、`TestPluginInitializationLifetimeAndIsolation`、已有并发/事件/退役限额测试 | Info 提供 trusted_execution 与真实限额；文档说明当前用户权限、进程组回收范围和未知结果处理 |
+
+最终全量 `go test ./...`、`go test -race ./...`、`go vet ./...`、OpenSpec strict 与 diff 检查通过，新增示例和产物故障测试的 race 三轮通过。示例改为仓库外构建后也已重跑全量。新增故障测试首轮有两处测试 API 编译错误（回执字段和进度查询参数），按存储接口修正后重跑通过。
+
+doc-coauthoring 独立读者检查补齐工具链、后台启动、取消等待/超时、分页参数和测试产物说明，复查七个使用问题均可回答。trim-cn-tech-doc 去掉旧待办，说明集中保留接入步骤、协议和失败后的行动；提示词及 TUI 未改。本轮只使用本地真实插件/CLI、隔离数据库与模型夹具，未访问外部模型或用户凭据，真实端点和本机部署仍待验收。
+
 ## 进行中
 
-继续 8.5 的最小插件示例与完整故障验收。7.1、7.2 的配置/provider 热发布与外部目录监视尚未完成，会话复制还依赖第 9 组。Day1 整体与本机部署尚未完成。origin 已连接用户创建的 `w31r4/zende`，实现按原子提交推送。
+继续 7.1、7.2 的配置/provider 热发布与外部目录监视，会话复制还依赖第 9 组。Day1 整体与本机部署尚未完成。origin 已连接用户创建的 `w31r4/zende`，实现按原子提交推送。

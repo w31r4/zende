@@ -379,7 +379,7 @@ Core 重启后，已保存结果可补入原工具结果位置，无须重连 MC
 
 ## 插件启动与协议协商
 
-Core 已接入插件工具、CLI 命令、provider 模型流、skill/prompt 资源和双向事件订阅，按调用或订阅保留实例与版本。完整故障验收及最小示例由 OpenSpec 8.5 交付。
+Core 已接入插件工具、CLI 命令、provider 模型流、skill/prompt 资源和双向事件订阅，按调用或订阅保留实例与版本。[编写插件](./plugin-authoring.md)提供独立 Go 示例、最小协议、取消与故障处理步骤。
 
 ```yaml
 schema_version: 1

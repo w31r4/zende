@@ -195,6 +195,7 @@ func TestPluginCatalogThroughBinaryCLI(t *testing.T) {
 	}
 	checkPluginCLICommands(t, ctx, s, binary, source, run)
 	checkPluginCLIEvents(t, ctx, s, source, run)
+	checkExamplePluginCLI(t, run)
 	retainedCalls := seedPluginCLIReads(t, ctx, s, source, updated, run)
 	c.CloseResources()
 	before, _ = os.ReadFile(audit)
