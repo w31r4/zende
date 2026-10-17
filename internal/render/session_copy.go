@@ -274,6 +274,9 @@ func (m *Shell) updateCopy(msg tea.Msg) (bool, tea.Cmd) {
 			m.issues.raise("copy", msg.err)
 			return true, m.pollCopy(2 * time.Second)
 		}
+		if m.sessionOpening != nil {
+			return true, m.pollCopy(500 * time.Millisecond) // An explicit session navigation wins over auto-follow.
+		}
 		_, fingerprint, err := m.copyDrafts()
 		if err != nil {
 			m.issues.raise("copy", err)
@@ -492,21 +495,10 @@ func (m *Shell) openCopy(msg copyPreparedMsg) (tea.Cmd, error) {
 	if !m.matchCopy(msg.info) || msg.info.State != "completed" {
 		return nil, protocol.E("invalid_state", "copy is not published; current editor retained")
 	}
-	root := m.rootCtx
-	if root == nil {
-		root = m.ctx
-	}
 	switching := m.agent != msg.info.AgentID
 	next := *m
 	if switching {
-		next = New(root, m.client, msg.info.AgentID, m.emit)
-		next.width, next.height, next.theme = m.width, m.height, m.theme
-		next.foldCommentary = m.foldCommentary
-		// A cancelled command may already have enqueued its old response.
-		next.generation, next.selectionGeneration = m.generation+1, m.selectionGeneration+1
-		next.processGeneration, next.imagesGeneration = m.processGeneration+1, m.imagesGeneration+1
-		next.gitGeneration, next.activityGeneration = m.gitGeneration+1, m.activityGeneration+1
-		next.skillsRequest = m.skillsRequest + 1
+		next = m.newSession(msg.info.AgentID)
 	}
 	// Build every editor before replacing anything in the current Shell.
 	discard := func() {
@@ -563,17 +555,22 @@ func (m *Shell) openCopy(msg copyPreparedMsg) (tea.Cmd, error) {
 	if msg.replaced {
 		next.issues.raise("copy-drafts", protocol.E("drafts_retained", "newer local drafts kept; originals remain in agent copy-drafts "+msg.info.OperationID))
 	}
+	if switching {
+		merged, err := next.mergeCachedSessionDrafts()
+		if err != nil {
+			discard()
+			return nil, err
+		}
+		if merged {
+			next.issues.raise("copy-drafts", protocol.E("drafts_retained", "cached local drafts kept; originals remain in agent copy-drafts "+msg.info.OperationID))
+		}
+	}
 	if !switching {
 		next.issues.resolve("copy")
 		*m = next
 		return nil, nil
 	}
-	if m.watchCancel != nil {
-		m.watchCancel()
-	}
-	if m.sessionCancel != nil {
-		m.sessionCancel() // Client work only; the core and copied Agent keep running.
-	}
+	m.releaseSession() // Client work only; the core and copied Agent keep running.
 	*m = next
 	return m.Init(), nil
 }

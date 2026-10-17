@@ -498,6 +498,12 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 			return nil, err
 		}
 		return c.Store.ListAgents(ctx)
+	case "agent.page":
+		var p protocol.AgentPageQuery
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.Store.AgentPage(ctx, p)
 	case "agent.history", "events.watch":
 		var p protocol.Cursor
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

@@ -24,6 +24,8 @@ type command struct {
 var commands = []command{
 	{name: "help", description: "Commands"},
 	{name: "background", description: "Background work"},
+	{name: "sessions", usage: "[AFTER]", description: "Browse saved sessions", maxArgs: 1},
+	{name: "session", usage: "[AGENT]", description: "Open a saved session", maxArgs: 1},
 	{name: "model", usage: "[CONNECTION] [MODEL]", description: "Choose configured model", maxArgs: 2},
 	{name: "effort", usage: "[VALUE]", description: "Choose reasoning effort", maxArgs: 1},
 	{name: "select", usage: "[strict|public]", description: "Confirm current selection", maxArgs: 1},
@@ -134,6 +136,8 @@ func (m *Shell) invoke(call invocation) (tea.Cmd, error) {
 		m.closePanel()
 		m.showActivity = true
 		return m.startActivity(), nil
+	case "sessions", "session":
+		return m.sessionCommand(c.name, call.args)
 	case "issues":
 		m.issues.open = !m.issues.open
 		m.issues.manual = m.issues.open
@@ -228,6 +232,9 @@ func (m *Shell) closePanel() {
 	m.imagesGeneration++
 	m.processGeneration++
 	m.issues.resolve("process")
+	m.sessionOpening = nil
+	m.sessionGeneration++
+	m.issues.resolve("session")
 }
 
 func (m *Shell) mutate(method string, params any, sentText string) (tea.Cmd, error) {

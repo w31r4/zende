@@ -32,7 +32,7 @@ zende --request-id first-session agent create
 zende tui AGENT
 ```
 
-输入框支持 `/` 命令和 `$` skill 候选。用 `/detach` 关闭界面；再次运行同一命令接回，后台工作不因关闭 TUI 而结束。模型只列有效配置中的连接、型号和思考力度。
+输入框支持 `/` 命令和 `$` skill 候选。`/sessions` 浏览会话，`/session AGENT` 直接切换；用 `/detach` 关闭界面，再次运行同一命令接回。后台工作不因切换或关闭 TUI 而结束。模型只列有效配置中的连接、型号和思考力度。
 
 已有 Core 时，用 `zende config refresh` 发布文件配置；环境变量须在 Core 启动前提供，在其他终端 export 不会改变已有 Core 的环境。配置档使用 `--profile NAME` 隔离。
 

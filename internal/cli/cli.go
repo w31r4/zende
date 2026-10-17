@@ -150,7 +150,20 @@ func (a *app) command() *cobra.Command {
 		}
 		agent.AddCommand(control)
 	}
-	agent.AddCommand(&cobra.Command{Use: "list", Short: "List saved sessions", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return a.call(cmd, "agent.list", false, struct{}{}) }})
+	var sessionsAfter string
+	var sessionsLimit int
+	sessions := &cobra.Command{Use: "list", Short: "List saved sessions; explicit pagination returns compact items and next", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if cmd.Flags().Changed("after") || cmd.Flags().Changed("limit") {
+			if sessionsLimit < 1 || sessionsLimit > 100 {
+				return protocol.E("invalid_params", "session page limit must be between 1 and 100")
+			}
+			return a.call(cmd, "agent.page", false, protocol.AgentPageQuery{After: sessionsAfter, Limit: sessionsLimit})
+		}
+		return a.call(cmd, "agent.list", false, struct{}{})
+	}}
+	sessions.Flags().StringVar(&sessionsAfter, "after", "", "Continue an older-session page after this Agent ID")
+	sessions.Flags().IntVar(&sessionsLimit, "limit", 40, "Compact session page size (1–100); returns items/next")
+	agent.AddCommand(sessions)
 	agent.AddCommand(&cobra.Command{Use: "activity AGENT", Short: "List active Agent-tree work; mark unavailable sources and truncation", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return a.call(cmd, "agent.activity", false, protocol.Target{AgentID: args[0]})
 	}})

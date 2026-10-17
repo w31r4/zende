@@ -21,6 +21,8 @@ type selectionPanel struct {
 	connections               protocol.ConnectionPage
 	models                    protocol.ModelPage
 	directory                 protocol.DirectoryPage
+	sessions                  protocol.AgentPage
+	sessionAfter              string
 	connection, model, effort string
 	version                   string
 	copy                      bool
@@ -32,6 +34,7 @@ type selectionMsg struct {
 	connections protocol.ConnectionPage
 	models      protocol.ModelPage
 	directory   protocol.DirectoryPage
+	sessions    protocol.AgentPage
 	err         error
 }
 
@@ -51,6 +54,9 @@ func queryUI(ctx context.Context, client Client, method string, params, result a
 func (m *Shell) selectionQuery(kind, path, after string, initial bool) tea.Cmd {
 	p := *m.selection
 	p.kind, p.waiting, p.ready, p.index = kind, true, false, 0
+	if kind == "sessions" {
+		p.sessionAfter = after
+	}
 	m.selection = &p
 	m.selectionGeneration++
 	generation, ctx, client, agent := m.selectionGeneration, m.ctx, m.client, m.agent
@@ -73,6 +79,8 @@ func (m *Shell) selectionQuery(kind, path, after string, initial bool) tea.Cmd {
 			p.base = base
 		}
 		switch kind {
+		case "sessions":
+			result.err = queryUI(ctx, client, "agent.page", protocol.AgentPageQuery{After: after, Limit: 40}, &result.sessions)
 		case "connections":
 			result.err = queryUI(ctx, client, "model.connections", protocol.ConnectionQuery{AgentID: agent, After: after, Limit: 40, Version: p.version}, &result.connections)
 		case "models":
@@ -100,6 +108,10 @@ func (m *Shell) updateSelection(msg tea.Msg) (bool, tea.Cmd) {
 		p.waiting = false
 		if msg.err == nil {
 			switch p.kind {
+			case "sessions":
+				if !validSessionPage(msg.sessions, p.sessionAfter) {
+					msg.err = protocol.E("invalid_state", "session page has invalid identities or cursor")
+				}
 			case "connections":
 				if msg.connections.Version == "" || p.version != "" && p.version != msg.connections.Version {
 					msg.err = protocol.E("catalog_changed", "model catalog changed; reopen /model")
@@ -123,6 +135,8 @@ func (m *Shell) updateSelection(msg tea.Msg) (bool, tea.Cmd) {
 		}
 		p.ready = true
 		switch p.kind {
+		case "sessions":
+			p.sessions = msg.sessions
 		case "connections":
 			p.connections, p.version = msg.connections, msg.connections.Version
 		case "models":
@@ -270,6 +284,8 @@ func (m *Shell) selectionNext() (tea.Cmd, error) {
 		return nil, protocol.E("not_found", "no next page")
 	}
 	switch {
+	case p.kind == "sessions" && p.sessions.Next != "":
+		return m.selectionQuery(p.kind, "", p.sessions.Next, false), nil
 	case p.kind == "connections" && p.connections.Next != "":
 		return m.selectionQuery(p.kind, "", p.connections.Next, false), nil
 	case p.kind == "models" && p.models.Next != "":
@@ -284,6 +300,8 @@ func (m Shell) selectionChoices() (string, []selectionRow) {
 	p, sep := m.selection, m.theme.separator()
 	title := "Model"
 	switch p.kind {
+	case "sessions", "session-opening":
+		title = "Sessions"
 	case "models":
 		title = p.connection
 	case "efforts", "confirm":
@@ -308,6 +326,19 @@ func (m Shell) selectionChoices() (string, []selectionRow) {
 	var rows []selectionRow
 	next := ""
 	switch p.kind {
+	case "sessions":
+		for _, agent := range p.sessions.Items {
+			id := ansi.Truncate(agent.ID, 14, "")
+			label := id + sep + agent.State + sep + agent.Cwd
+			if agent.ID == m.agent {
+				label = "* " + label
+			}
+			rows = append(rows, selectionRow{label, invocation{"session", []string{agent.ID}}})
+		}
+		if len(rows) == 0 {
+			rows = append(rows, selectionRow{text: "No saved sessions"})
+		}
+		next = p.sessions.Next
 	case "connections":
 		for _, c := range p.connections.Items {
 			label := c.ID

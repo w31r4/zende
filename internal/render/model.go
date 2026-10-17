@@ -78,6 +78,9 @@ type Shell struct {
 	copyAction                                   bool
 	copyGeneration                               uint64
 	restoredCopy                                 string
+	sessionEditors                               map[string]sessionDrafts
+	sessionOpening                               *sessionOpening
+	sessionGeneration                            uint64
 }
 
 func New(ctx context.Context, client Client, agent string, emit func(tea.Msg)) Shell {
@@ -90,6 +93,9 @@ func New(ctx context.Context, client Client, agent string, emit func(tea.Msg)) S
 func (m Shell) Init() tea.Cmd { return snapshotCmd(m.ctx, m.client, m.agent) }
 
 func (m Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if handled, cmd := m.updateSessions(msg); handled {
+		return m, cmd
+	}
 	if handled, cmd := m.updateCopy(msg); handled {
 		return m, cmd
 	}

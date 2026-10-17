@@ -354,6 +354,14 @@ go test ./internal/cli -run 'TestConfiguredResponsesBinaryExecutesPatch|TestBina
 
 已有 Agent 可用 `zende --profile dev tui AGENT` 打开 alt screen。core/runner 沿用前面的独立服务；Ctrl+C 或 `/detach` 只退出客户端。Enter 提交输入，Alt+Enter 换行，`/help` 按需显示命令。`/stop`、`/resume`、`/recover`、`/compact` 调用同一 core 接口；接收状态不明时 `/retry` 复用原请求 ID 和参数，新输入保留。
 
+`/sessions` 打开当前 profile 的单页会话列表，按新建顺序倒序，每页 40 项；`/next` 取较旧一页，`/sessions` 回到首页。方向键或 j/k 选择，Enter 或点击打开同一 `/session AGENT` 入口，也可直接输入完整 Agent ID。列表只在打开时占用输出区，沿用绿色主题和单元格裁切，主界面不加会话按钮或标签栏。
+
+目标快照加载成功后才切换订阅；失败或 Esc 取消时留在原会话。切换保存当前编辑，并重新读取目标的状态和历史；原 Task、子 Agent、pipe 和 tmux 继续运行，迟到的原会话结果不覆盖新界面。主输入、回答、图片和 skill 草稿按 Agent 分开保存在当前 TUI 进程中，返回时恢复；待确认的发送、图片或 resize 保留原请求，先通过对应重试入口确认。复制未完成时先处理原复制；完成后可普通切换，显式会话导航优先于复制自动跟随。
+
+暂存最多 16 个非当前会话、合计 32 MiB 草稿正文和元数据；达到上限拒绝切换并保留输入，空草稿不占名额。复制恢复与目标已有缓存冲突时，非空本地草稿优先；合并超过 16 份回答草稿则保留两边，返回错误供用户处理。Task 与已提交上下文仍由 Core 持久保存，普通切换的草稿缓存属于当前 TUI 进程。
+
+CLI `agent list --limit N [--after AGENT]` 调用只读 `agent.page`，返回紧凑 `items/next`；N 为 1–100，游标是上页最后的 Agent ID。摘要只含身份、父身份、cwd、状态与暂停标记。旧 `agent list` 不带分页参数时仍返回原完整数组。分页、切换及草稿接线未测试。
+
 输入、事件、窗口尺寸只更新本地状态，网络操作通过 Bubble Tea Cmd 执行。终端清理由框架负责；关闭客户端取消订阅和请求等待，已接受工作继续运行。`tui --plain AGENT`、`--json` 或 stdout 重定向时只输出 JSON 快照；持续线性输出用 `events watch`，提交用 `agent submit`。
 
 主界面零边框，常驻输入两行、底部状态一行；空闲时不占用后台或警告入口。80×24、60 列、48×16 按单元格裁切，长路径保留末尾，更小窗口显示尺寸提示。底部显示模型、cwd 和 Git 分支，工作树有改动时附 `*`；默认模型从已保存请求的公开型号补齐，端点快照保持私有。
