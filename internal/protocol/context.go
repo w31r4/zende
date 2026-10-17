@@ -42,6 +42,8 @@ type ContextRequestInfo struct {
 	Model             string               `json:"model"`
 	Protocol          string               `json:"protocol"`
 	ToolSearch        string               `json:"tool_search,omitempty"`
+	ContextMode       string               `json:"context_mode,omitempty"`
+	Projection        *ContextProjection   `json:"context_projection,omitempty"`
 	Selection         string               `json:"selection,omitempty"`
 	Cwd               string               `json:"cwd,omitempty"`
 	Effort            string               `json:"effort,omitempty"`

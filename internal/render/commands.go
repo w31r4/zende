@@ -26,7 +26,7 @@ var commands = []command{
 	{name: "background", description: "Background work"},
 	{name: "model", usage: "[CONNECTION] [MODEL]", description: "Choose configured model", maxArgs: 2},
 	{name: "effort", usage: "[VALUE]", description: "Choose reasoning effort", maxArgs: 1},
-	{name: "select", description: "Confirm current selection"},
+	{name: "select", usage: "[strict|public]", description: "Confirm current selection", maxArgs: 1},
 	{name: "cd", usage: "[PATH]", description: "Browse working directory", maxArgs: 1},
 	{name: "git", description: "Working tree status"},
 	{name: "terminal", usage: "[PROCESS]", description: "Select terminal", maxArgs: 1},

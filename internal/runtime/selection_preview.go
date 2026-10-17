@@ -13,8 +13,18 @@ import (
 // preview never stores a selection, takes a process lease, or sends a request.
 func (c *Core) prepareSelection(ctx context.Context, p protocol.SelectAgent) (store.Selection, store.Selection, *model.Binding, error) {
 	var current, next store.Selection
-	if p.Cwd == nil && p.Model == nil || p.Effort != nil && p.Model == nil || p.CatalogVersion != "" && p.Model == nil {
-		return current, next, nil, protocol.E("invalid_params", "select cwd or model; effort and catalog_version require model")
+	if p.Cwd == nil && p.Model == nil || p.Effort != nil && p.Model == nil || p.ContextMode != nil && p.Model == nil || p.CatalogVersion != "" && p.Model == nil {
+		return current, next, nil, protocol.E("invalid_params", "select cwd or model; effort, context_mode and catalog_version require model")
+	}
+	mode := ""
+	if p.ContextMode != nil {
+		switch *p.ContextMode {
+		case "strict":
+		case model.PublicContext:
+			mode = model.PublicContext
+		default:
+			return current, next, nil, protocol.E("invalid_params", "context_mode must be strict or public")
+		}
 	}
 	current, err := c.Store.Selection(ctx, p.AgentID)
 	if err != nil {
@@ -44,14 +54,19 @@ func (c *Core) prepareSelection(ctx context.Context, p protocol.SelectAgent) (st
 	if b.Adapter == nil || b.Model == "" || b.Protocol == "" || len(b.Snapshot) == 0 {
 		return current, next, nil, protocol.E("model_unavailable", "selected model has no restorable binding")
 	}
+	b, err = model.WithContextMode(b, mode)
+	if err != nil {
+		return current, next, nil, err
+	}
 	next.Choice.Model, next.Choice.Effort, next.Binding = *p.Model, effort, b.Snapshot
+	next.Choice.ContextMode = model.ContextModeName(b.ContextMode)
 	return current, next, &b, nil
 }
 
-func (c *Core) selectionCompatibility(ctx context.Context, agent string, b model.Binding) ([]*protocol.Error, int64, error) {
+func (c *Core) selectionCompatibility(ctx context.Context, agent string, b model.Binding) ([]*protocol.Error, int64, *protocol.ContextProjection, error) {
 	messages, cursor, err := c.Store.ModelContext(ctx, agent)
 	if err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
 	issues := []*protocol.Error{}
 	add := func(err error) {
@@ -66,9 +81,12 @@ func (c *Core) selectionCompatibility(ctx context.Context, agent string, b model
 		}
 		issues = append(issues, issue)
 	}
-	images, imageErr := c.resolveImages(ctx, agent, messages, b.Images)
+	req := model.Request{Model: b.Model, Messages: messages, MaxOutputTokens: b.MaxOutputTokens}
+	projection, projectionErr := projectRequestContext(b, &req)
+	add(projectionErr)
+	images, imageErr := c.resolveImages(ctx, agent, req.Messages, b.Images)
 	add(imageErr)
-	req := model.Request{Model: b.Model, Messages: messages, Images: images, MaxOutputTokens: b.MaxOutputTokens}
+	req.Images = images
 	if c.Tools != nil {
 		descriptors, err := c.searchDescriptors(c.Tools.Descriptors(), b.ToolSearch)
 		add(err)
@@ -79,7 +97,7 @@ func (c *Core) selectionCompatibility(ctx context.Context, agent string, b model
 		add(protocol.E("unsupported_capability", "native search requires the registered MCP discovery executor"))
 	}
 	if b.ToolSearch != "" {
-		discovered, err := discoverMCPHistory(messages)
+		discovered, err := discoverMCPHistory(req.Messages)
 		add(err)
 		for _, d := range discovered {
 			if c.Tools != nil {
@@ -91,16 +109,16 @@ func (c *Core) selectionCompatibility(ctx context.Context, agent string, b model
 		}
 	}
 	if validator, ok := b.Adapter.(model.ContextValidator); ok {
-		if imageErr == nil {
+		if imageErr == nil && projectionErr == nil {
 			add(validator.ValidateContext(req))
 		}
 	} else {
 		add(protocol.E("unsupported_capability", "selected adapter cannot inspect context compatibility without a request"))
 	}
 	if err := ctx.Err(); err != nil {
-		return nil, 0, err
+		return nil, 0, nil, err
 	}
-	return issues, cursor, nil
+	return issues, cursor, projection, nil
 }
 
 // The caller holds pluginMu; commit keeps this fence until Store.Select ends.
@@ -123,7 +141,7 @@ func (c *Core) previewSelection(ctx context.Context, p protocol.SelectAgent) (pr
 	result = protocol.SelectionPreview{AgentID: p.AgentID, Revision: current.Choice.Revision,
 		CurrentCwd: current.Choice.Cwd, Cwd: next.Choice.Cwd, Changes: []string{},
 		Candidate: selectionModel(next.Choice.Model, next.Choice.Effort, *candidate)}
-	result.Issues, result.Cursor, err = c.selectionCompatibility(ctx, p.AgentID, *candidate)
+	result.Issues, result.Cursor, result.Projection, err = c.selectionCompatibility(ctx, p.AgentID, *candidate)
 	if err != nil {
 		return result, err
 	}
@@ -164,7 +182,7 @@ func selectionModel(selection, effort string, b model.Binding) protocol.Selectio
 		search = "host"
 	}
 	return protocol.SelectionModel{Selection: selection, Model: b.Model, Protocol: b.Protocol, Effort: effort,
-		ContextWindow: b.ContextWindow, MaxOutput: b.MaxOutputTokens, Images: b.Images, NativeCategories: b.NativeCategories, ToolSearch: search}
+		ContextWindow: b.ContextWindow, MaxOutput: b.MaxOutputTokens, Images: b.Images, NativeCategories: b.NativeCategories, ToolSearch: search, ContextMode: model.ContextModeName(b.ContextMode)}
 }
 
 func selectionChanges(a, b protocol.SelectionModel) []string {
@@ -176,6 +194,7 @@ func selectionChanges(a, b protocol.SelectionModel) []string {
 		{"selection", a.Selection != b.Selection}, {"model", a.Model != b.Model}, {"protocol", a.Protocol != b.Protocol},
 		{"effort", a.Effort != b.Effort}, {"context_window", a.ContextWindow != b.ContextWindow}, {"max_output", a.MaxOutput != b.MaxOutput},
 		{"images", a.Images != b.Images}, {"native_categories", a.NativeCategories != b.NativeCategories}, {"tool_search", a.ToolSearch != b.ToolSearch},
+		{"context_mode", a.ContextMode != b.ContextMode},
 	} {
 		if field.changed {
 			changes = append(changes, field.name)

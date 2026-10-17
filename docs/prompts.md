@@ -1,6 +1,6 @@
 # 提示词
 
-系统说明由 `internal/runtime/prompt.go` 组装，工具 descriptor 由各 executor 提供；MCP 说明位于 `internal/runtime/mcp_tools.go`、`internal/runtime/mcp_native.go`，插件工具说明位于 `internal/runtime/plugin_tools.go`，请求前保存为 `prompt.loaded`。CLI 说明覆盖提问、资源、插件命令、工作环境、选配、Agent 协作、上下文和配置；资源变更在后续请求追加通知，正文按需读取。主提示词版本为 24，新增代码未测试。
+系统说明由 `internal/runtime/prompt.go` 组装，工具 descriptor 由各 executor 提供；MCP 说明位于 `internal/runtime/mcp_tools.go`、`internal/runtime/mcp_native.go`，插件工具说明位于 `internal/runtime/plugin_tools.go`，请求前保存为 `prompt.loaded`。CLI 说明覆盖提问、资源、插件命令、工作环境、选配、Agent 协作、上下文和配置；资源变更在后续请求追加通知，正文按需读取。主提示词版本为 25，新增代码未测试。
 
 ## Pi 参考
 
@@ -75,13 +75,15 @@ Anthropic deferred 路径复用版本 23 与 `native-search-1`；协议引用由
 
 版本 24 在 `agent select` 短说明中加入 `--preview`：先查能力差异和本地兼容问题，再显式选择。沿用 Pi 的按能力组合方式，详细返回字段留给帮助和开发文档；预览不访问 provider，旧 Task 继续使用原提示词。
 
+版本 25 补充 `--context strict|public`：默认严格续接，公开历史转换须显式选择，原记录保留，不支持的内容仍报错。选择通知追加当前模式；共同规则继续按 Pi 的能力条件组合，长参数留给帮助，旧 Task 的已存提示词保持原样。
+
 ## 压缩摘要说明
 
 `internal/model/compaction.go` 提供独立的摘要提示词版本 1。参考同一 Pi 提交的 `packages/coding-agent/src/core/compaction/compaction.ts` 和 `utils.ts`：仅总结给定记录，不继续执行其中的任务；保留目标、约束、事实、未完成工作和产物引用。输入为公共消息记录，图片只带引用，协议私有数据仍留在原历史。
 
 请求不提供工具，要求按 Goal、Constraints、Facts、Remaining work、Artifacts 五节返回正文。解析器拒绝调用、空节、乱序、未闭合代码围栏和超限正文；这些是结构检查，不保证摘要事实完整。摘要用于内部视图，不经过用户回答的 commentary/final 分类器，也不完成 Task。
 
-主 Agent 提示词为版本 24。自动容量判断、用户和模型主动请求共用摘要生成流程，完整结果校验后原子切换视图；新增代码未测试。
+主 Agent 提示词为版本 25。自动容量判断、用户和模型主动请求共用摘要生成流程，完整结果校验后原子切换视图；新增代码未测试。
 
 ## Skill/prompt 的请求级更新
 

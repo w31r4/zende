@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"strings"
 
+	"zende.local/harness/internal/model"
 	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/resource"
 )
@@ -47,7 +48,8 @@ func validateSpawnDependency(ctx context.Context, tx *sql.Tx, parent string, set
 	if err != nil {
 		return err
 	}
-	if json.Unmarshal(settings.Binding, &snapshot) != nil || snapshot.Kind != "plugin-provider" || snapshot.Version != 1 || snapshot.Selection != settings.Choice.Model || p.Info.Kind != "plugin" || p.Plugin == nil || snapshot.Resource != (protocol.ResourceRef{ID: p.Info.ID, Version: p.Info.Version}) {
+	inner, _, splitErr := model.SplitContextBinding(settings.Binding)
+	if splitErr != nil || json.Unmarshal(inner, &snapshot) != nil || snapshot.Kind != "plugin-provider" || snapshot.Version != 1 || snapshot.Selection != settings.Choice.Model || p.Info.Kind != "plugin" || p.Plugin == nil || snapshot.Resource != (protocol.ResourceRef{ID: p.Info.ID, Version: p.Info.Version}) {
 		return protocol.E("model_snapshot_invalid", "spawn dependency does not match the selected plugin model")
 	}
 	var raw string

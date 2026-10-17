@@ -334,6 +334,7 @@ type requestRecord struct {
 	PluginBinding   *pluginModelRequestBinding  `json:"plugin_binding,omitempty"`
 	ContextBudget   *protocol.ContextBudget     `json:"context_budget,omitempty"`
 	DiscoveredMCP   []discoveredMCP             `json:"discovered_mcp,omitempty"`
+	Projection      *protocol.ContextProjection `json:"context_projection,omitempty"`
 }
 type invocation struct {
 	SchemaVersion int            `json:"schema_version,omitempty"`
@@ -361,6 +362,7 @@ type taskSettings struct {
 	Protocol          string                        `json:"protocol"`
 	NativeCategories  bool                          `json:"native_categories"`
 	ToolSearch        string                        `json:"tool_search,omitempty"`
+	ContextMode       string                        `json:"context_mode,omitempty"`
 	Images            bool                          `json:"images,omitempty"`
 	MaxOutputTokens   int                           `json:"max_output_tokens"`
 	FormatRepairs     int                           `json:"format_repairs"`
@@ -434,6 +436,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 	settings := taskSettings{Version: 2, Selection: selection, Cwd: w.Agent.Cwd, Model: binding.Model, Protocol: binding.Protocol, NativeCategories: binding.NativeCategories, Images: binding.Images, MaxOutputTokens: binding.MaxOutputTokens, FormatRepairs: limit, Binding: binding.Snapshot, SelectionRevision: choice.Choice.Revision, ModelRevision: choice.Choice.ModelRevision, Effort: choice.Choice.Effort, ContextWindow: binding.ContextWindow, ContextPolicy: &policy}
 	settings.Configuration = configuration.publication
 	settings.ToolSearch = binding.ToolSearch
+	settings.ContextMode = binding.ContextMode
 	if choice.Choice.ModelRevision == 0 && selection == config.Model {
 		settings.Effort = config.Effort
 	}
@@ -441,7 +444,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if err := appendEvent("task.config", settings); err != nil {
 			return "", err
 		}
-		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "24", Body: system}); err != nil {
+		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "25", Body: system}); err != nil {
 			return "", err
 		}
 	} else {
@@ -452,7 +455,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if resume.Journal.Prompt.Body != "" {
 			system = resume.Journal.Prompt.Body
 		} else {
-			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "24", Body: system}); err != nil {
+			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "25", Body: system}); err != nil {
 				return "", err
 			}
 		}
@@ -599,6 +602,11 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 			messages = append(messages, item.Message)
 		}
 		req := model.Request{ID: protocol.NewID("request"), Model: nextBinding.Model, System: system, Messages: messages, MaxOutputTokens: nextBinding.MaxOutputTokens}
+		projection, err := projectRequestContext(nextBinding, &req)
+		if err != nil {
+			return "", err
+		}
+		messages = req.Messages
 		requestDescriptors, err := c.searchDescriptors(c.Tools.Descriptors(), nextBinding.ToolSearch)
 		if err != nil {
 			return "", err
@@ -679,10 +687,10 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if err != nil {
 			return "", modelDependencyFailure(nextBinding, err)
 		}
-		record := requestRecord{ID: req.ID, Model: nextBinding.Model, Protocol: nextBinding.Protocol, ViewID: contextSnapshot.View.ID, Tools: requestDescriptors, MaxOutputTokens: req.MaxOutputTokens, FormatRepair: repairOnly, RepairAttempt: repairs, RepairLimit: limit, Settings: &nextSettings, ResourceCatalog: &contextSnapshot.Resources.Catalog, PluginBinding: pluginBinding, ContextBudget: budget, Configuration: publication, DiscoveredMCP: discovered}
-		if !validDiscoveredMCPRecord(record) {
+		record := requestRecord{ID: req.ID, Model: nextBinding.Model, Protocol: nextBinding.Protocol, ViewID: contextSnapshot.View.ID, Tools: requestDescriptors, MaxOutputTokens: req.MaxOutputTokens, FormatRepair: repairOnly, RepairAttempt: repairs, RepairLimit: limit, Settings: &nextSettings, ResourceCatalog: &contextSnapshot.Resources.Catalog, PluginBinding: pluginBinding, ContextBudget: budget, Configuration: publication, DiscoveredMCP: discovered, Projection: projection}
+		if !validDiscoveredMCPRecord(record) || !validContextProjectionRecord(record) {
 			releaseModel()
-			return "", protocol.E("request_binding_invalid", "native MCP request bindings cannot be retained for recovery")
+			return "", protocol.E("request_binding_invalid", "request bindings or context projection cannot be retained for recovery")
 		}
 		err = c.Store.BeginModelRequest(persist, w.Agent.ID, w.Task.ID, nextSettings.SelectionRevision, cursor, notices, func(cursor int64) any {
 			record.Cursor = cursor

@@ -122,15 +122,17 @@ Git 查询使用 [porcelain v2](https://git-scm.com/docs/git-status#_porcelain_f
 
 ## 持久选配
 
-`zende agent selection AGENT` 查询已接受的 cwd、模型、力度及 revision；`agent select AGENT --cwd PATH` 切换工作目录，`--model CONNECTION/MODEL --effort VALUE` 选择配置中的型号和力度。可在一条命令中同时设置。省略 model 保留模型设置；选择模型时，空或省略 effort 使用供应商默认力度。
+`zende agent selection AGENT` 查询已接受的 cwd、模型、力度、上下文模式及 revision；`agent select AGENT --cwd PATH` 切换工作目录，`--model CONNECTION/MODEL --effort VALUE` 选择配置中的型号和力度。可在一条命令中同时设置。省略 model 保留模型设置；选择模型时，空或省略 effort 使用供应商默认力度。
+
+每次选择模型默认 `--context strict`，检查原协议续接。显式 `--context public` 使用公开历史转换，保留原记录；模式与绑定一起保存，后续请求、子 Agent 继承和恢复继续使用。切换目录保留该模式，再选模型时须重新声明 public。TUI 在模型确认页输入 `/select public`，普通 Enter 或 `/select` 仍为 strict。
 
 `--expected-revision` 防止覆盖其他客户端的新选择，`--catalog-version` 核对模型目录版本。两者冲突均拒绝保存，重新查询后再选。切换使用稳定 `--request-id` 去重；已接受重试返回原回执，不重新检查相对路径、目录版本或模型能力。公开回执只含选择，端点与凭据引用保存在运行快照中。
 
 接受选择与 `agent.selection` 事件一起提交。当前响应及其工具仍用原设置；下一请求前追加 developer 变更说明，并与 `model.started.settings` 原子保存。旧提示词、消息和工具结果保留。并发选择、上下文变化或 stop 通过事务核对；准备冲突最多重试 8 次，持续变化时报错。
 
-预检检查图片、工具定义、原生搜索映射和协议私有数据，允许工具尚未返回；实际请求须等调用落定。认证与网络在发送时检查。不兼容返回明确错误并保留历史；跨模型私有数据转换仍待 10.6 实现。选择不解除暂停或待核实状态。未配置默认模型时，可显式选配后处理原来 accepted 的任务。
+预检检查图片、工具定义、原生搜索映射和协议数据；public 模式先构造请求副本，再交给目标协议检查。预检允许工具尚未返回，实际请求须等调用落定。认证与网络在发送时检查；不兼容报错并保留历史。选择不解除暂停或待核实状态。未配置默认模型时，可显式选配后处理原来 accepted 的任务。
 
-`zende agent select AGENT --model CONNECTION/MODEL --preview` 调用只读 `agent.select.preview`。返回当前选择与候选的协议、型号、力度、窗口、输出额度、图片、原生类别和工具搜索路径，`changes` 列出不同字段。`revision` 是选配版本，`cursor` 是检查时的上下文边界；可同时预览 `--cwd`，确认时仍须去掉 `--preview`。
+`zende agent select AGENT --model CONNECTION/MODEL --preview` 调用只读 `agent.select.preview`。返回当前与候选的协议、型号、力度、容量、图片、类别、搜索路径及上下文模式，`changes` 列出不同字段。加 `--context public` 可预览转换，`context_projection` 返回版本、来源协议、转换消息数、省略私有块数、类别标记数和原生搜索导入数。`revision` 是选配版本，`cursor` 是检查边界；可同时预览 `--cwd`，确认时去掉 `--preview`。
 
 `compatible` 只表示当前本地内容可以由候选 adapter 接受，`issues` 保留具体错误。原模型无法恢复时，`current` 为 null 并附 `current_error`，仍检查候选；`current` 描述已选绑定或当前默认配置，正在执行的请求以其持久快照为准。能力值来自配置，零容量表示未知，预览不读取密钥、不启动插件、不访问模型端点或写入事件。
 
@@ -204,7 +206,7 @@ compaction:
 
 ## 数据与恢复边界
 
-SQLite schema 为 21，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。版本 8 加入上下文视图事件，9 保存 worktree 准备，10 加入 mailbox，11 保存结果投递回执，12 加入整树停止事件与调度保护，13 保存资源准备状态，14 保存 MCP 调用与结果回执，15 保存插件调用、进度与结果，16 追加插件订阅状态、投递身份和事件数据，17 保存压缩操作状态，18 追加配置版本与发布记录，19 在资源准备及事件中保存自动发现来源，20 保存原生搜索选路和请求级 MCP 函数绑定，21 加入 Anthropic deferred 选路及搜索私有记录版本 2。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答、资源和配置版本，以及插件调用意图、进度、订阅记录和已完成的 MCP/插件回执；更高版本拒绝打开。
+SQLite schema 为 22，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。版本 8 加入上下文视图事件，9 保存 worktree 准备，10 加入 mailbox，11 保存结果投递回执，12 加入整树停止事件与调度保护，13 保存资源准备状态，14 保存 MCP 调用与结果回执，15 保存插件调用、进度与结果，16 追加插件订阅状态、投递身份和事件数据，17 保存压缩操作状态，18 追加配置版本与发布记录，19 在资源准备及事件中保存自动发现来源，20 保存原生搜索选路和请求级 MCP 函数绑定，21 加入 Anthropic deferred 选路及搜索私有记录版本 2，22 加入显式公开历史转换绑定与请求记录。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答、资源和配置版本，以及插件调用意图、进度、订阅记录和已完成的 MCP/插件回执；更高版本拒绝打开。
 
 core 启动先将中断任务置为待核实，再按原身份恢复。取消中的任务保留 cancelling 和暂停选择；核实完成后结束取消，不恢复执行。历史、已接受输入和原 Task ID 保留。
 
@@ -281,7 +283,7 @@ go test ./internal/cli -run 'TestConfiguredResponsesBinaryExecutesPatch|TestBina
 
 命令、候选和点击共用 registry，`/help` 从中生成。输入 `/` 后，最多四行候选在输入框下方展开，状态栏仍在底部；方向键选择，Tab 补全，Enter 执行，Esc 收起。草稿末尾留空格再输入命令，可临时操作并返回原草稿；带参数命令用 Tab 补全后继续填写，校验失败时保留命令，Esc 返回草稿。参数支持单/双引号和反斜杠转义，仅作分词。粘贴保留为文本，提交需显式 Enter。
 
-点击模型或 `/model` 依次选择连接、型号、思考力度，最后 Enter 确认；同名连接显示各自 ID。目录来自 core 配置，空配置显示空列表，尚未实现的协议标 unavailable；default 力度表示供应商默认值。`/effort [VALUE]` 与 `/select` 对应力度和确认项。整个选择携带初始 revision 与目录版本，冲突时重新打开选择页；接受未知时 `/retry` 复用原请求。
+点击模型或 `/model` 依次选择连接、型号、思考力度，最后 Enter 确认；同名连接显示各自 ID。目录来自 core 配置，空配置显示空列表，尚未实现的协议标 unavailable；default 力度表示供应商默认值。`/effort [VALUE]` 与 `/select [strict|public]` 对应力度和确认项，默认 strict，public 显式转换公开历史。整个选择携带初始 revision 与目录版本，冲突时重新打开选择页；接受未知时 `/retry` 复用原请求。
 
 点击 cwd 或 `/cd [PATH]` 打开单页目录。上下键或 j/k 选择，右键或 l 进入，左键或 h 返回父目录；`.` 行用 Enter 确认当前位置，`..` 行进入父目录。`/cd 'PATH'` 支持含空格的路径，页内相对路径按浏览位置解析；`/next` 翻页。浏览保持运行设置，Esc 取消并返回原输入或回答，文字、图片和 skill 保留。选择页内 `/` 与 `$` 临时打开组合输入框；粘贴返回原输入、保留为文本。路径和元数据中的控制字符只在显示时转义。
 
@@ -761,19 +763,21 @@ go test -race ./internal/runtime -run '^TestPluginExecution' -count=3
 | Anthropic | 原始 block、thinking/signature/redacted_thinking、搜索身份；固定端点、型号与搜索语义 |
 | Gemini | 原始 part、thoughtSignature 与调用关联；固定端点、型号 |
 
-私有续接数据留在原记录中；当前选择预览仍按原协议检查兼容性，显式转换的运行时接线待完成。用量缺失保持未知，配置容量与本地估算不等于供应商计量。认证、网络及字段支持须另做真实端点验证。
+私有续接数据留在原记录中；选择预览按指定的 strict/public 模式检查兼容性。用量缺失保持未知，配置容量与本地估算不等于供应商计量。认证、网络及字段支持须另做真实端点验证。
 
 原生字段依据分别见下方 Responses、Anthropic 章节。2026-10-17 查阅 [GenerateContent Tool / FunctionDeclaration](https://ai.google.dev/api/generate-content#Tool)，未确认适用于本地 client search 的原生 deferred 字段，因此当前 Gemini adapter 使用 host；文档中的远端 `mcpServers` 不等于本地 MCP 搜索与调用记录。Chat adapter 也只声明已实现的 host 路径。
 
 当前没有完成真实端点验收的端点/型号/配置组合。Responses、Chat 的历史局部测试记录见 [验证记录](./verification.md)；本轮及后续改动未运行测试或构建，Anthropic、Gemini、两条原生搜索路径、跨协议迁移与 V14/V15 均未验收。10.5、10.7 保持未完成。
 
-### 公开历史转换基础，未接入运行时
+### 显式公开历史转换，未测试
 
 `provider.ProjectPublicHistory` 构造独立的请求消息副本，原记录保持不变。目标仍能使用的私有数据保留；其他数据交给来源协议检查公开内容与私有记录是否对应，再导出公开文本和调用。只有私有状态的 reasoning、thinking 或 signature 块从该请求副本省略，继续留在存储中。目标不支持原生输出类别时，commentary/final 转成约定文本标签。
 
 Responses 与 Anthropic 的原生搜索调用由来源记录确认身份，通过 `Request.NativeSearchCalls` 交给目标编码器，配对结果沿用原生工具定义编码。仅凭函数名或同形结果 JSON 不改变旧 host 调用。重复、缺失或不匹配的导入 ID 报错；未启用原生路径的接入和插件拒绝该导入字段。插件私有数据只在原来源、定义版本和型号匹配时保留，跨插件格式转换报不支持。
 
-转换还需目标编码器检查完整消息顺序、调用配对、图片和工具定义。当前已加入四协议导出器与转换接口；选择预览、提交、任务快照及恢复尚未使用它们，默认选择行为未变。新代码未测试，10.6 保持未完成。
+选择预览、提交与实际请求共用转换策略，目标编码器继续检查消息顺序、调用配对、图片和工具定义。每次请求转换当前有效视图，再计算预算；原生搜索导入到 host 目标会明确报错。可先选择支持的原生路径；主动压缩覆盖旧发现记录后，也可重新预览 host 目标，覆盖范围由实际视图决定。
+
+策略保存为 `public-context` 版本 1 绑定，provider 原绑定放在内部；插件的来源与实例租约沿用原机制。`task.config` 和 `model.started.settings` 保存 `context_mode`，请求另记 `context_projection`，可通过 `context inspect AGENT --request REQUEST` 查询。恢复核对模式、绑定和转换记录，子 Agent 继承完整绑定。schema 22 阻止旧二进制误读，旧历史保持原样。新代码未测试，10.6 保持未完成。
 
 ## Responses 接入
 

@@ -215,7 +215,8 @@ func validPluginModelRecord(r requestRecord) bool {
 		return false
 	}
 	var snapshot pluginModelSnapshot
-	if protocol.StrictDecode(r.Settings.Binding, &snapshot) != nil || snapshot.Kind != "plugin-provider" || snapshot.Version != 1 || snapshot.Resource != p.Resource || snapshot.DefinitionRef != p.DefinitionRef || snapshot.Model != r.Model || snapshot.Selection != r.Settings.Selection || snapshot.Effort != r.Settings.Effort {
+	inner, mode, err := model.SplitContextBinding(r.Settings.Binding)
+	if err != nil || mode != r.Settings.ContextMode || protocol.StrictDecode(inner, &snapshot) != nil || snapshot.Kind != "plugin-provider" || snapshot.Version != 1 || snapshot.Resource != p.Resource || snapshot.DefinitionRef != p.DefinitionRef || snapshot.Model != r.Model || snapshot.Selection != r.Settings.Selection || snapshot.Effort != r.Settings.Effort {
 		return false
 	}
 	for _, ref := range r.ResourceCatalog.Entries {

@@ -42,6 +42,18 @@ func (c *Core) modelResolver() model.Resolver {
 }
 
 func (c *Core) restoreBinding(ctx context.Context, agent string, raw json.RawMessage) (model.Binding, error) {
+	inner, mode, err := model.SplitContextBinding(raw)
+	if err != nil {
+		return model.Binding{}, err
+	}
+	if mode != "" {
+		binding, err := c.restoreBinding(ctx, agent, inner)
+		if err != nil {
+			return model.Binding{}, err
+		}
+		binding.ContextMode, binding.Snapshot = mode, append(json.RawMessage(nil), raw...)
+		return binding, nil
+	}
 	var header struct {
 		Kind string `json:"kind"`
 	}
@@ -72,7 +84,7 @@ func (c *Core) selectAgent(ctx context.Context, req protocol.Request, p protocol
 		return protocol.Accepted{}, err
 	}
 	if binding != nil {
-		issues, _, err := c.selectionCompatibility(ctx, p.AgentID, *binding)
+		issues, _, _, err := c.selectionCompatibility(ctx, p.AgentID, *binding)
 		if err != nil {
 			return protocol.Accepted{}, err
 		}
@@ -96,10 +108,14 @@ func selectionNotice(s taskSettings) string {
 	// JSON quoting keeps paths/model IDs from forging metadata lines. This is
 	// host metadata, not project-file instructions or resolved credentials.
 	value, _ := json.Marshal(struct {
-		Cwd    string `json:"cwd"`
-		Model  string `json:"model"`
-		Effort string `json:"effort"`
-	}{s.Cwd, s.Selection, s.Effort})
+		Cwd         string `json:"cwd"`
+		Model       string `json:"model"`
+		Effort      string `json:"effort"`
+		ContextMode string `json:"context_mode"`
+	}{s.Cwd, s.Selection, s.Effort, model.ContextModeName(s.ContextMode)})
+	if s.ContextMode == model.PublicContext {
+		mode += " Incompatible provider-private state stays in storage; requests use validated public history, not cross-provider hidden-reasoning continuation."
+	}
 	return fmt.Sprintf("Runtime selection for subsequent requests: %s. These settings supersede earlier run metadata and output-category instructions. %s Existing processes and completed tool effects remain in their original working directories; do not rerun them to move them.", value, mode)
 }
 
@@ -125,6 +141,7 @@ func (c *Core) requestSelection(ctx context.Context, agent string, current taskS
 		current.Selection, current.Effort = next.Choice.Model, next.Choice.Effort
 		current.Model, current.Protocol, current.NativeCategories, current.Images = binding.Model, binding.Protocol, binding.NativeCategories, binding.Images
 		current.ToolSearch = binding.ToolSearch
+		current.ContextMode = binding.ContextMode
 		current.MaxOutputTokens, current.Binding = binding.MaxOutputTokens, binding.Snapshot
 		current.ContextWindow = binding.ContextWindow
 	}

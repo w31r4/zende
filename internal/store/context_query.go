@@ -87,12 +87,14 @@ func contextRequest(ctx context.Context, tx *sql.Tx, agent, id string) (*protoco
 		FormatRepair    bool                          `json:"format_repair"`
 		Catalog         *protocol.ResourceCatalog     `json:"resource_catalog"`
 		ContextBudget   *protocol.ContextBudget       `json:"context_budget"`
+		Projection      *protocol.ContextProjection   `json:"context_projection"`
 		Settings        *struct {
 			Configuration     *protocol.ConfigPublication `json:"configuration"`
 			Selection         string                      `json:"selection"`
 			Cwd               string                      `json:"cwd"`
 			Effort            string                      `json:"effort"`
 			ToolSearch        string                      `json:"tool_search"`
+			ContextMode       string                      `json:"context_mode"`
 			SelectionRevision int64                       `json:"selection_revision"`
 		} `json:"settings"`
 	}
@@ -117,6 +119,10 @@ func contextRequest(ctx context.Context, tx *sql.Tx, agent, id string) (*protoco
 	}
 	out.ID, out.Model, out.Protocol = saved.ID, saved.Model, saved.Protocol
 	out.ContextBudget = saved.ContextBudget
+	if saved.Projection != nil && (!saved.Projection.Valid() || saved.Settings == nil || saved.Settings.ContextMode != model.PublicContext) || saved.Settings != nil && saved.Settings.ContextMode == model.PublicContext && saved.Projection == nil {
+		return nil, nil, 0, "", protocol.E("context_invalid", "saved request context projection is invalid")
+	}
+	out.Projection = saved.Projection
 	if err := checkConfigPublication(ctx, tx, saved.Configuration); err != nil {
 		return nil, nil, 0, "", err
 	}
@@ -126,6 +132,9 @@ func contextRequest(ctx context.Context, tx *sql.Tx, agent, id string) (*protoco
 		out.Tools = []protocol.ContextToolVersion{}
 	}
 	if s := saved.Settings; s != nil {
+		if s.ContextMode != "" && s.ContextMode != model.PublicContext {
+			return nil, nil, 0, "", protocol.E("context_invalid", "saved request context mode is unsupported")
+		}
 		if err := checkConfigPublication(ctx, tx, s.Configuration); err != nil {
 			return nil, nil, 0, "", err
 		}
@@ -134,6 +143,7 @@ func contextRequest(ctx context.Context, tx *sql.Tx, agent, id string) (*protoco
 		}
 		out.TaskConfiguration = s.Configuration
 		out.ToolSearch = s.ToolSearch
+		out.ContextMode = model.ContextModeName(s.ContextMode)
 		out.Selection, out.Cwd, out.Effort, out.SelectionRevision = s.Selection, s.Cwd, s.Effort, s.SelectionRevision
 	}
 	err = tx.QueryRowContext(ctx, `SELECT seq FROM events WHERE agent_id=? AND task_id=? AND kind='prompt.loaded' AND seq<? ORDER BY seq DESC LIMIT 1`, agent, out.TaskID, out.Started).Scan(&out.PromptSeq)

@@ -206,6 +206,9 @@ func (m *Shell) selectionCommand(name string, args []string) (tea.Cmd, error) {
 		if p == nil || !p.ready || p.waiting || p.kind != "directory" && p.kind != "confirm" {
 			return nil, protocol.E("invalid_params", "choose a directory or model before confirming")
 		}
+		if len(args) != 0 && (p.kind != "confirm" || args[0] != "strict" && args[0] != "public") {
+			return nil, protocol.E("invalid_params", "use /select strict or /select public when confirming a model")
+		}
 		revision := p.base.Revision
 		choice := protocol.SelectAgent{AgentID: m.agent, ExpectedRevision: &revision}
 		if p.kind == "directory" {
@@ -214,6 +217,9 @@ func (m *Shell) selectionCommand(name string, args []string) (tea.Cmd, error) {
 		} else {
 			model, effort := p.connection+"/"+p.model, p.effort
 			choice.Model, choice.Effort, choice.CatalogVersion = &model, &effort, p.version
+			if len(args) != 0 {
+				choice.ContextMode = &args[0]
+			}
 		}
 		cmd, err := m.mutate("agent.select", choice, "")
 		if err == nil {

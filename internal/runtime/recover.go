@@ -165,7 +165,7 @@ func (c *Core) prepareResume(ctx context.Context, j *recoveryJournal) (*resumedT
 		return nil, err
 	}
 	s := j.Settings
-	if b.Adapter == nil || b.Model != s.Model || b.Protocol != s.Protocol || b.NativeCategories != s.NativeCategories || b.ToolSearch != s.ToolSearch || b.MaxOutputTokens != s.MaxOutputTokens || s.Images && !b.Images || s.ContextWindow > 0 && b.ContextWindow != s.ContextWindow {
+	if b.Adapter == nil || b.Model != s.Model || b.Protocol != s.Protocol || b.NativeCategories != s.NativeCategories || b.ToolSearch != s.ToolSearch || b.ContextMode != s.ContextMode || b.MaxOutputTokens != s.MaxOutputTokens || s.Images && !b.Images || s.ContextWindow > 0 && b.ContextWindow != s.ContextWindow {
 		return nil, protocol.E("model_snapshot_invalid", "restored provider differs from the original task")
 	}
 	if j.Request != nil {

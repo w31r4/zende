@@ -40,6 +40,12 @@ func selection(ctx context.Context, q rowQuerier, id string) (Selection, error) 
 		return Selection{}, protocol.E("not_found", "agent not found")
 	}
 	s.Binding = json.RawMessage(raw)
+	_, mode, modeErr := model.SplitContextBinding(s.Binding)
+	s.Choice.ContextMode = model.ContextModeName(mode)
+	if modeErr != nil {
+		// Keep a broken old binding inspectable and replaceable by selection.
+		s.Choice.ContextMode = "unknown"
+	}
 	return s, err
 }
 
@@ -77,6 +83,15 @@ func (s *Store) Select(ctx context.Context, req protocol.Request, next Selection
 			next.Choice.ModelRevision = next.Choice.Revision
 		} else {
 			next.Choice.Model, next.Choice.Effort, next.Choice.ModelRevision, next.Binding = old.Choice.Model, old.Choice.Effort, old.Choice.ModelRevision, old.Binding
+		}
+		if modelChanged {
+			_, mode, err := model.SplitContextBinding(next.Binding)
+			if err != nil {
+				return protocol.Accepted{}, err
+			}
+			next.Choice.ContextMode = model.ContextModeName(mode)
+		} else {
+			next.Choice.ContextMode = old.Choice.ContextMode
 		}
 		if _, err := tx.ExecContext(ctx, "UPDATE agents SET cwd=?,model=? WHERE id=?", next.Choice.Cwd, next.Choice.Model, next.Choice.AgentID); err != nil {
 			return protocol.Accepted{}, err

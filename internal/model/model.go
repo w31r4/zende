@@ -94,6 +94,7 @@ type Binding struct {
 	Model, Protocol  string
 	NativeCategories bool
 	ToolSearch       string // Empty uses host search; native routes are explicitly configured.
+	ContextMode      string // Empty is strict continuation; public is an explicit saved conversion policy.
 	Images           bool
 	MaxOutputTokens  int
 	ContextWindow    int // Zero means unknown; never infer capacity from the model name.
