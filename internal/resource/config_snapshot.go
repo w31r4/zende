@@ -36,6 +36,46 @@ type ConfigSnapshot struct {
 	Documents []ConfigDocument `json:"documents"`
 }
 
+// Validate checks retained bytes without rereading mutable files or resolving
+// credentials. The digest includes sources and absence, not just merged values.
+func (s ConfigSnapshot) Validate() error {
+	if s.Effective.Config.Validate() != nil || len(s.Documents) != 3 || s.Effective.Sources == nil {
+		return protocol.E("invalid_config", "configuration snapshot is incomplete or invalid")
+	}
+	for _, d := range s.Documents {
+		if !filepath.IsAbs(d.Source) || filepath.Clean(d.Source) != d.Source || len(d.Source) > 4096 || !utf8.ValidString(d.Source) || strings.ContainsRune(d.Source, 0) {
+			return protocol.E("invalid_config", "configuration snapshot source is invalid")
+		}
+		if !d.Present {
+			if d.Bytes != 0 || d.SHA256 != "" {
+				return protocol.E("invalid_config", "absent configuration source has content metadata")
+			}
+		} else if d.Bytes < 0 || d.Bytes > MaxConfigLayerBytes || !configDigest(d.SHA256) {
+			return protocol.E("invalid_config", "configuration source metadata is invalid")
+		}
+	}
+	version := s.Version
+	if !configDigest(version) {
+		return protocol.E("invalid_config", "configuration snapshot version is invalid")
+	}
+	raw, err := json.Marshal(s)
+	if err != nil || len(raw) > MaxConfigBytes {
+		return protocol.E("resource_limit", "configuration snapshot exceeds the total byte limit")
+	}
+	s.Version = ""
+	raw, _ = json.Marshal(s)
+	digest := sha256.Sum256(raw)
+	if version != hex.EncodeToString(digest[:]) {
+		return protocol.E("invalid_config", "configuration snapshot differs from its version")
+	}
+	return nil
+}
+
+func configDigest(value string) bool {
+	digest, err := hex.DecodeString(value)
+	return err == nil && len(digest) == sha256.Size && value == hex.EncodeToString(digest)
+}
+
 // PreparedConfig is immutable. The publisher owns publication/rollback and
 // provider readiness; this layer only prepares and rechecks configuration.
 type PreparedConfig struct {
@@ -121,6 +161,9 @@ func PrepareConfig(ctx context.Context, paths Paths, cwd string, env func(string
 	}
 	hash := sha256.Sum256(raw)
 	p.snapshot.Version = hex.EncodeToString(hash[:])
+	if err := p.snapshot.Validate(); err != nil {
+		return nil, err
+	}
 	if err := p.Verify(ctx); err != nil {
 		return nil, err
 	}
