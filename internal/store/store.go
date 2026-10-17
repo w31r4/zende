@@ -18,11 +18,21 @@ import (
 const SchemaVersion = 25
 
 type Store struct {
-	db   *sql.DB
-	path string
+	db              *sql.DB
+	path            string
+	migrationBackup string
 }
 
 func Open(path string) (*Store, error) {
+	return OpenContext(context.Background(), path)
+}
+
+// OpenContext keeps startup backup/migration cancellable. The service owner
+// must hold its profile lock before opening an existing database for migration.
+func OpenContext(ctx context.Context, path string) (*Store, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("database path must be absolute")
 	}
@@ -49,7 +59,7 @@ func Open(path string) (*Store, error) {
 	}
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db, path: path}
-	if err := s.initialize(); err != nil {
+	if err := s.initializeContext(ctx); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -57,126 +67,162 @@ func Open(path string) (*Store, error) {
 }
 
 func (s *Store) initialize() error {
+	return s.initializeContext(context.Background())
+}
+
+func (s *Store) initializeContext(ctx context.Context) error {
 	var version int
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+	if err := s.db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
 		return err
 	}
 	if version < 0 || version > SchemaVersion {
 		return fmt.Errorf("unsupported database schema %d", version)
 	}
-	if _, err := s.db.Exec("PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;"); err != nil {
+	if version == 0 {
+		var occupied bool
+		if err := s.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*')").Scan(&occupied); err != nil {
+			return err
+		}
+		if occupied {
+			return fmt.Errorf("unversioned database contains existing objects; initialization was not started")
+		}
+	}
+	if version > 0 && version < SchemaVersion {
+		backup, err := s.preserveSchema(ctx, version)
+		if err != nil {
+			return fmt.Errorf("cannot preserve database schema %d before migration; original schema retained: %w", version, err)
+		}
+		s.migrationBackup = backup
+	}
+	if _, err := s.db.ExecContext(ctx, "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;"); err != nil {
+		if s.migrationBackup != "" {
+			return fmt.Errorf("database setup did not complete; backup retained at %s: %w", s.migrationBackup, err)
+		}
 		return err
 	}
 	if version == SchemaVersion {
 		return nil
 	}
-	return s.Transaction(context.Background(), func(tx *sql.Tx) error {
+	err := s.Transaction(ctx, func(tx *sql.Tx) error {
+		var current int
+		if err := tx.QueryRowContext(ctx, "PRAGMA user_version").Scan(&current); err != nil {
+			return err
+		}
+		if current != version {
+			return fmt.Errorf("database schema changed before migration; reopen after inspecting its current owner")
+		}
 		if version == 0 {
-			if _, err := tx.Exec(schema); err != nil {
+			if _, err := tx.ExecContext(ctx, schema); err != nil {
 				return err
 			}
 		}
 		if version < 2 {
-			if _, err := tx.Exec(`ALTER TABLE agents ADD COLUMN paused INTEGER NOT NULL DEFAULT 0;
+			if _, err := tx.ExecContext(ctx, `ALTER TABLE agents ADD COLUMN paused INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE tasks ADD COLUMN priority INTEGER NOT NULL DEFAULT 0;
 PRAGMA user_version=2;`); err != nil {
 				return err
 			}
 		}
 		if version < 3 {
-			if _, err := tx.Exec(attachmentSchema); err != nil {
+			if _, err := tx.ExecContext(ctx, attachmentSchema); err != nil {
 				return err
 			}
 		}
 		if version < 4 {
-			if _, err := tx.Exec(questionSchema); err != nil {
+			if _, err := tx.ExecContext(ctx, questionSchema); err != nil {
 				return err
 			}
 		}
 		if version < 5 {
-			if _, err := tx.Exec(resourceSchema); err != nil {
+			if _, err := tx.ExecContext(ctx, resourceSchema); err != nil {
 				return err
 			}
 		}
 		if version < 6 {
-			if _, err := tx.Exec(skillInputSchema); err != nil {
+			if _, err := tx.ExecContext(ctx, skillInputSchema); err != nil {
 				return err
 			}
 		}
 		if version < 7 {
-			if _, err := tx.Exec(selectionSchema); err != nil {
+			if _, err := tx.ExecContext(ctx, selectionSchema); err != nil {
 				return err
 			}
 		}
 		// v8 adds context.view events; v9 records external worktree preparation.
 		if version < 9 {
-			if _, err := tx.Exec(worktreeSchema); err != nil {
+			if _, err := tx.ExecContext(ctx, worktreeSchema); err != nil {
 				return err
 			}
 		}
 		if version < 10 {
-			if _, err := tx.Exec(mailboxSchema); err != nil {
+			if _, err := tx.ExecContext(ctx, mailboxSchema); err != nil {
 				return err
 			}
 		}
 		if version < 11 {
-			if _, err := tx.Exec(taskResultSchema); err != nil {
+			if _, err := tx.ExecContext(ctx, taskResultSchema); err != nil {
 				return err
 			}
 		}
 		// v12 adds durable tree-stop events. Older binaries must not schedule
 		// work without honoring their admission fence.
 		if version < 12 {
-			if _, err := tx.Exec(treeStopSchema); err != nil {
+			if _, err := tx.ExecContext(ctx, treeStopSchema); err != nil {
 				return err
 			}
 		}
 		if version < 13 {
-			if _, err := tx.Exec(resourceUpdateSchema); err != nil {
+			if _, err := tx.ExecContext(ctx, resourceUpdateSchema); err != nil {
 				return err
 			}
 		}
 		if version < 14 {
-			if _, err := tx.Exec(mcpCallSchema); err != nil {
+			if _, err := tx.ExecContext(ctx, mcpCallSchema); err != nil {
 				return err
 			}
 		}
 		if version < 15 {
-			if _, err := tx.Exec(pluginCallSchema); err != nil {
+			if _, err := tx.ExecContext(ctx, pluginCallSchema); err != nil {
 				return err
 			}
 		}
 		if version < 16 {
-			if _, err := tx.Exec(pluginSubscriptionSchema); err != nil {
+			if _, err := tx.ExecContext(ctx, pluginSubscriptionSchema); err != nil {
 				return err
 			}
 		}
 		if version < 17 {
-			if _, err := tx.Exec(compactionSchema); err != nil {
+			if _, err := tx.ExecContext(ctx, compactionSchema); err != nil {
 				return err
 			}
 		}
 		if version < 18 {
-			if _, err := tx.Exec(configSchema); err != nil {
+			if _, err := tx.ExecContext(ctx, configSchema); err != nil {
 				return err
 			}
 		}
 		if version < 19 {
-			if _, err := tx.Exec(resourceDiscoverySchema); err != nil {
+			if _, err := tx.ExecContext(ctx, resourceDiscoverySchema); err != nil {
 				return err
 			}
 		}
 		if version < 23 {
-			if _, err := tx.Exec(sessionCopySchema); err != nil {
+			if _, err := tx.ExecContext(ctx, sessionCopySchema); err != nil {
 				return err
 			}
 		}
 		// v24 preserves copied mail attribution; v25 understands inherited
 		// question owners in retained copy drafts. Older strict readers must stop.
-		_, err := tx.Exec("PRAGMA user_version=25;")
+		_, err := tx.ExecContext(ctx, "PRAGMA user_version=25;")
 		return err
 	})
+	if err != nil && s.migrationBackup != "" {
+		return fmt.Errorf("database migration did not complete; backup retained at %s: %w", s.migrationBackup, err)
+	}
+	return err
 }
+
+func (s *Store) MigrationBackup() string { return s.migrationBackup }
 
 func (s *Store) Close() error { return s.db.Close() }
 

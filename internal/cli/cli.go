@@ -326,7 +326,7 @@ func (a *app) serve(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	s, err := store.Open(p.Database)
+	s, err := store.OpenContext(cmd.Context(), p.Database)
 	if err != nil {
 		ctx, cancel := context.WithCancel(cmd.Context())
 		cancel()
@@ -334,6 +334,9 @@ func (a *app) serve(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer s.Close()
+	if backup := s.MigrationBackup(); backup != "" {
+		fmt.Fprintln(cmd.ErrOrStderr(), "Retained database before migration:", backup)
+	}
 	core := runtime.New(s, resource.Effective{Config: resource.Defaults(cwd)})
 	if err := core.InitializeConfiguration(cmd.Context(), p, cwd, os.Getenv); err != nil {
 		_ = s.Close()
