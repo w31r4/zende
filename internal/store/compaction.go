@@ -293,7 +293,7 @@ func compactionFailure(reason string) *protocol.Error {
 		"summary_not_smaller":     "Summary did not reduce the selected prefix; the previous view is preserved.",
 		"context_capacity":        "Summary cannot fit the declared capacity; change capacity or retention settings and retry.",
 		"context_not_compactable": "No complete prefix can be summarized with the configured retained tail.",
-		"context_conflict":        "Another context view was published during summary generation.",
+		"context_conflict":        "Context or selection changed during summary preparation or publication; inspect and retry.",
 		"model_unavailable":       "Summary model or its saved binding is unavailable.",
 		"model_failed":            "Summary request failed; the previous view and received fragments are preserved.",
 		"interrupted":             "Core stopped during summary generation; the consumed attempt remains counted.",
@@ -386,7 +386,7 @@ func (s *Store) InterruptTaskCompaction(ctx context.Context, agent, task string)
 			return err
 		}
 		var id string
-		err := tx.QueryRowContext(ctx, `SELECT id FROM compactions WHERE agent_id=? AND json_extract(record,'$.task_id')=? AND json_extract(record,'$.state')='running'`, agent, task).Scan(&id)
+		err := tx.QueryRowContext(ctx, `SELECT id FROM compactions WHERE agent_id=? AND json_extract(record,'$.state')='running'`, agent).Scan(&id)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
@@ -396,6 +396,13 @@ func (s *Store) InterruptTaskCompaction(ctx context.Context, agent, task string)
 		r, err := compactionRecord(ctx, tx, id)
 		if err != nil {
 			return err
+		}
+		attempt, err := loadCompactionAttempt(ctx, tx, r)
+		if err != nil {
+			return err
+		}
+		if attempt.TaskID != task {
+			return protocol.E("compaction_conflict", "running summary belongs to another worker")
 		}
 		return finishCompactionFailure(ctx, tx, r, "interrupted", true)
 	})

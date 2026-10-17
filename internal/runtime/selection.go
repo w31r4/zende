@@ -4,11 +4,37 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"zende.local/harness/internal/model"
 	"zende.local/harness/internal/protocol"
+	"zende.local/harness/internal/store"
 	"zende.local/harness/internal/workspace"
 )
+
+// Tasks and idle summaries resolve the same explicit selection and defaults.
+// A plugin selection pins its published definition, not a process lease.
+func (c *Core) initialModelSelection(ctx context.Context, agent string, choice store.Selection) (string, model.Binding, error) {
+	selection := choice.Choice.Model
+	if selection == "" {
+		selection = c.Config.Config.Model
+	}
+	var binding model.Binding
+	var err error
+	if strings.HasPrefix(selection, "plugin:") && len(choice.Binding) > 0 {
+		binding, err = c.restoreBinding(ctx, agent, choice.Binding)
+	} else if choice.Choice.ModelRevision > 0 || strings.HasPrefix(selection, "plugin:") {
+		binding, err = c.resolveModelSelection(ctx, agent, selection, choice.Choice.Effort, "")
+	} else if c.modelResolver() != nil {
+		binding, err = c.modelResolver().Resolve(ctx, selection)
+	} else {
+		err = protocol.E("model_unavailable", "model selection is unavailable")
+	}
+	if err == nil && (binding.Adapter == nil || binding.Model == "" || binding.Protocol == "") {
+		err = protocol.E("model_unavailable", "selected model has no adapter")
+	}
+	return selection, binding, err
+}
 
 func (c *Core) modelResolver() model.Resolver {
 	if c.Models != nil {

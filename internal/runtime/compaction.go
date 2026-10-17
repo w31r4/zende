@@ -38,6 +38,9 @@ func (c *Core) automaticCompaction(ctx, persist context.Context, w store.Work, p
 			return false, err
 		}
 		if _, err := c.Store.QueueCompaction(persist, req, w.Agent.ID, w.Task.ID, "automatic", *settings.ContextPolicy); err != nil {
+			if isFailure(err, "compaction_busy") {
+				return false, protocol.E("request_conflict", "another compaction was accepted; rebuild at its boundary")
+			}
 			return false, compactionStoreFailure(err)
 		}
 		changed = true
@@ -79,6 +82,12 @@ func (c *Core) runCompaction(ctx, persist context.Context, w store.Work, id stri
 		}
 		a, err := c.Store.BeginCompactionAttempt(persist, id, c.InstanceID, w.Task.ID, snapshot.Cursor, settings.SelectionRevision, binding)
 		if err != nil {
+			if isFailure(err, "compaction_conflict") {
+				current, readErr := c.Store.Compaction(persist, id)
+				if readErr == nil && current.State == "cancelled" {
+					return changed, protocol.E("task_cancelled", "summary was cancelled with its Agent")
+				}
+			}
 			if isFailure(err, "request_conflict") || isFailure(err, "context_busy") || isFailure(err, "task_cancelled") || isFailure(err, "tree_stopping") {
 				return changed, err
 			}
@@ -97,7 +106,7 @@ func (c *Core) runCompaction(ctx, persist context.Context, w store.Work, id stri
 				return changed, compactionStoreFailure(err)
 			}
 			if err := c.Store.FailPendingCompaction(persist, id, reason); err != nil {
-				return changed, compactionStoreFailure(err)
+				return changed, c.compactionTransitionFailure(persist, id, err)
 			}
 			return true, nil
 		}
@@ -137,12 +146,22 @@ func (c *Core) runCompaction(ctx, persist context.Context, w store.Work, id stri
 			return true, compactionStoreFailure(err)
 		}
 		if failed := c.Store.FailCompactionAttempt(persist, id, c.InstanceID, a.Request.ID, reason, retry); failed != nil {
-			return true, compactionStoreFailure(failed)
+			return true, c.compactionTransitionFailure(persist, id, failed)
 		}
 		if isFailure(err, "request_conflict") {
 			return true, err
 		}
 	}
+}
+
+func (c *Core) compactionTransitionFailure(ctx context.Context, id string, err error) error {
+	if isFailure(err, "compaction_conflict") {
+		r, readErr := c.Store.Compaction(ctx, id)
+		if readErr == nil && r.State == "cancelled" {
+			return protocol.E("task_cancelled", "summary was cancelled with its Agent")
+		}
+	}
+	return compactionStoreFailure(err)
 }
 
 func compactionStoreFailure(err error) error {

@@ -93,6 +93,8 @@ func (p *Transcript) viewRows(width, rows, scroll int, fold bool, overrides map[
 			}
 		case "notice":
 			prefix = "! "
+		case "compaction":
+			prefix = "~ "
 		}
 		if entry.Truncated && !(folded && entry.Category == "commentary") {
 			text = "[earlier text omitted; retained in history]\n" + text

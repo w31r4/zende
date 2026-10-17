@@ -28,7 +28,14 @@ func contextTargetFlags(cmd *cobra.Command, target *protocol.ContextTarget) func
 }
 
 func (a *app) contextCommands(root *cobra.Command) {
-	group := &cobra.Command{Use: "context", Short: "Read retained context, summaries and exact request versions"}
+	group := &cobra.Command{Use: "context", Short: "Inspect retained context or request a durable summary"}
+	group.AddCommand(&cobra.Command{Use: "compact AGENT", Short: "Queue compaction at the next safe boundary; return its operation ID", Long: "Accepts a bounded summary operation without waiting for the model. Busy Agents handle it after their current tools and pending answers; idle or paused Agents summarize without starting a Task or resuming. Inspect the returned operation_id with operation inspect. Reuse --request-id on retry; stop cancels the pending summary. Original history is retained.", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
+		caller, err := callerFromEnvironment()
+		if err != nil {
+			return err
+		}
+		return a.call(cmd, "context.compact", true, protocol.CompactContext{AgentID: args[0], Caller: caller})
+	}})
 	var target protocol.ContextTarget
 	inspect := &cobra.Command{Use: "inspect AGENT", Short: "Inspect a fixed context boundary and resource versions", Args: cobra.ExactArgs(1)}
 	prepareInspect := contextTargetFlags(inspect, &target)
@@ -79,6 +86,7 @@ func (a *app) contextCommands(root *cobra.Command) {
 func contextHints(executable, profile string) []runtime.CommandHint {
 	prefix := quoteCommandPart(executable) + " --profile " + quoteCommandPart(profile) + " context "
 	return []runtime.CommandHint{
+		{Name: "context.compact", Usage: prefix + "compact AGENT", Guidance: "Request a summary when earlier context can be condensed. Returns operation_id; query it with operation inspect ID. For your own Agent, return from this command without polling: core summarizes after current tools and pending answers settle. History stays readable; compaction does not resume a paused Agent."},
 		{Name: "context.inspect", Usage: prefix + "inspect AGENT [--request REQUEST]", Guidance: "Inspect the current view or one model request's saved boundary, prompt reference, tool versions and resource catalog. A catalog lists available definitions, not instructions already applied."},
 		{Name: "context.read", Usage: prefix + "read AGENT [--raw] [--at CURSOR --after NEXT]", Guidance: "Look up details omitted by a summary. --raw reads original committed messages; default reads the summary and retained tail. Keep cursor as --at across pages. If an item has more=true, use context entry AGENT SEQ and byte-page text until more=false. Queries do not change history or run work."},
 	}

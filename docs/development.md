@@ -140,9 +140,19 @@ zende context entry AGENT SEQ --offset 0 --limit 65536
 
 公共读取保留消息角色、分类、文本、调用和来源，省略供应商私有续接数据，另报 `private_data_bytes`。请求查询只输出选定字段，端点、绑定及凭据引用不进入结果，也不解析凭据。用户和工具正文按已保存内容返回，不承诺清理业务文本中自行写入的秘密。私有数据继续留在存储中供原协议恢复。
 
-这些查询只读数据库，不调用模型或改写历史。普通请求沿用有效上下文并追加新消息与状态通知；自动压缩只替换后续请求选用的前段，原文保留。用户/模型主动压缩入口仍由 9.2 实现；新增查询与压缩代码未测试或构建。
+这些查询只读数据库。普通请求沿用有效上下文并追加新消息与状态通知；自动和主动压缩只替换后续请求选用的前段，原文保留。新增查询与压缩代码未测试或构建。
 
-### 请求容量与压缩准备（实现中）
+### 主动压缩
+
+`zende --request-id compact-1 context compact AGENT` 与 TUI `/compact` 共用 `context.compact`，立即返回接受回执；用 `zende operation inspect compact-1` 查询状态。重复请求复用原 ID，另一项压缩尚未结束时返回 `compaction_busy`，错误中带已有操作 ID。
+
+忙碌 Agent 在当前工具及提问回答落定、投递 steer 后处理；空闲或暂停 Agent 由同一调度器单独处理，不新建 Task、不解除暂停、不消费 mailbox。未核实任务仍须先恢复。手动操作保存接受时的预算策略，实际尝试保存当时所选模型和 cwd；并发选择或上下文变化最多重读 8 次。
+
+模型通过 exec 调用同一 CLI，自动保存来源和稳定操作 ID。压缩自身时，提交后须先结束当前工具调用；在工具内轮询等待会挡住压缩边界。手动操作可跨越提交它的 Task 终态，随后在空闲时执行；普通 stop 和整树 stop 均取消所属压缩，关闭 TUI 保留工作。
+
+TUI 复用输出区的一条状态，失败进入 `/issues`；原始摘要流不作为用户回答显示。操作结束后仍可查询历史、结果视图和失败原因。
+
+### 请求容量与压缩准备
 
 内置连接和插件模型把各自声明的 `context_window` 传入运行绑定。新 Task 保存预算策略；每次请求的 `context_budget` 记录当时的窗口、输出预留、阈值及输入估算，可通过 `context inspect AGENT --request REQUEST` 读取。显式换模型采用新窗口，任务预算策略保持原值。旧任务未记录策略或预算时保持缺失，不用当前默认值补写历史。
 
@@ -172,9 +182,9 @@ compaction:
 
 自动压缩 ID 由 Agent、Task 和上一普通请求确定，同一边界重建请求或重启继续使用原操作与已用次数。Core 启动将旧实例的运行中摘要记为 interrupted，有剩余额度则回到 pending，否则失败；同一 Core 内显式恢复已退出的 worker 也沿用此额度。停止 Agent 取消所属压缩；Task 进入终态时关闭遗留自动压缩，迟到结果不能发布。新普通请求和空闲 Task 领取避开正在生成的摘要。
 
-`agent history` / `events watch` 返回压缩操作 ID；`operation inspect OPERATION` 返回 pending、running、completed、failed 或 cancelled，以及尝试次数、视图和固定错误原因。超限错误也关联该自动操作；容量参数本身不可用时只记录预算拒绝。原始上下文仍通过 `context read --raw` 查询。
+`agent history` / `events watch` 返回压缩操作 ID；`operation inspect OPERATION` 返回 pending、running、completed、failed 或 cancelled，以及尝试次数、视图和固定错误原因。`context.compaction.started.budget` 是请求估算，`context.compaction.completed.usage` 是供应商用量，缺失保持未知。超限错误也关联该自动操作；容量参数本身不可用时只记录预算拒绝。原始上下文仍通过 `context read --raw` 查询。
 
-摘要生成与自动触发已接入模型循环，用户/模型主动入口仍待 9.2 连接；9.3 按实现完成记录。算法参考 Pi `7bc154ad082e2f0029c19117a16d22a504439476` 的 `packages/coding-agent/src/core/compaction/compaction.ts`，保留 Zende 的追加历史和调用配对规则。本次未新增或运行测试、构建及验收。
+摘要生成、自动触发与主动入口已接入同一流程。算法参考 Pi `7bc154ad082e2f0029c19117a16d22a504439476` 的 `packages/coding-agent/src/core/compaction/compaction.ts`，保留 Zende 的追加历史和调用配对规则。9.2、9.3 按实现完成记录；未新增或运行测试、构建及验收。
 
 ## 数据与恢复边界
 
@@ -247,7 +257,7 @@ go test ./internal/cli -run 'TestConfiguredResponsesBinaryExecutesPatch|TestBina
 
 ## TUI 客户端
 
-已有 Agent 可用 `zende --profile dev tui AGENT` 打开 alt screen。core/runner 沿用前面的独立服务；Ctrl+C 或 `/detach` 只退出客户端。Enter 提交输入，Alt+Enter 换行，`/help` 按需显示命令。`/stop`、`/resume`、`/recover` 调用同一 core 接口；接收状态不明时 `/retry` 复用原请求 ID 和参数，新输入保留。
+已有 Agent 可用 `zende --profile dev tui AGENT` 打开 alt screen。core/runner 沿用前面的独立服务；Ctrl+C 或 `/detach` 只退出客户端。Enter 提交输入，Alt+Enter 换行，`/help` 按需显示命令。`/stop`、`/resume`、`/recover`、`/compact` 调用同一 core 接口；接收状态不明时 `/retry` 复用原请求 ID 和参数，新输入保留。
 
 输入、事件、窗口尺寸只更新本地状态，网络操作通过 Bubble Tea Cmd 执行。终端清理由框架负责；关闭客户端取消订阅和请求等待，已接受工作继续运行。`tui --plain AGENT`、`--json` 或 stdout 重定向时只输出 JSON 快照；持续线性输出用 `events watch`，提交用 `agent submit`。
 
@@ -694,7 +704,7 @@ go test -race ./internal/runtime -run '^TestPluginExecution' -count=3
 
 请求最多 32 MiB，SSE 单事件 8 MiB、单次流 64 MiB；公共组装仍受单块 1 MiB、响应 4 MiB/128 块限制，私有数据计入额度。服务端的 `response.completed` 必须与已结束 item 一致。响应结束只通过传输校验，任务完成仍需显式 final。
 
-`reasoning` 只保存为协议数据，不进入可见正文。端点、型号或协议变化导致私有数据不兼容时返回 `protocol_mismatch`，原历史保留。user 图片输入见上一节；assistant/tool 附件、内置远端工具、原生 tool search、自动重试和上下文压缩仍待接入。遇到不支持的输出事件/类型会报错，`limits.model_retries` 此阶段不驱动 HTTP 重试。
+`reasoning` 只保存为协议数据，不进入可见正文。端点、型号或协议变化导致私有数据不兼容时返回 `protocol_mismatch`，原历史保留。user 图片输入见上一节；assistant/tool 附件、内置远端工具、原生 tool search 和自动重试仍待接入。上下文压缩由公共运行时处理，新增代码未测试。遇到不支持的输出事件/类型会报错，`limits.model_retries` 此阶段不驱动 HTTP 重试。
 
 协议与本地源码依据：OpenAI [流事件](https://developers.openai.com/api/reference/resources/responses/streaming-events)、[函数调用](https://developers.openai.com/api/docs/guides/function-calling)、[reasoning](https://developers.openai.com/api/docs/guides/reasoning)；Pi `7bc154ad082e2f0029c19117a16d22a504439476` 的 `packages/ai/src/providers/openai-responses{,-shared}.ts`，Codex `7219fd735bef2f9cfd0363fecdbbb212e3df5255` 的 `codex-rs/codex-api/src/sse/responses.rs`。实现及测试不代表任意兼容端点支持这些字段；真实端点、凭据和原生 phase 仍未验收。
 
@@ -725,7 +735,7 @@ chat:
 
 请求最多 32 MiB，SSE 单事件 8 MiB、单次流 64 MiB；公共组装限单块 1 MiB、响应 4 MiB/128 块，最多 127 个工具调用，私有数据计入额度。支持 LF/CRLF/CR 和字节分片，拒绝重定向，HTTP 错误只保存状态码。adapter 不自动换字段重试；不支持的能力返回错误。
 
-Responses 与 Chat 已有共用两轮工具/错误回填、断流不执行和真实 CLI patch 的历史测试记录。按当前开发约定，10.2 以实现完成勾选，不追加测试；完整共享套件未通过，真实兼容端点未验收。上下文压缩、原生工具搜索和跨协议迁移仍由 9、10 组交付。
+Responses 与 Chat 已有共用两轮工具/错误回填、断流不执行和真实 CLI patch 的历史测试记录。按当前开发约定，10.2 以实现完成勾选，不追加测试；完整共享套件未通过，真实兼容端点未验收。公共压缩流程已接入但未测试，原生工具搜索和跨协议迁移仍由第 10 组交付。
 
 ## Anthropic Messages 接入
 
@@ -770,4 +780,4 @@ gemini:
 
 请求限 32 MiB，SSE 单事件 8 MiB、单流 64 MiB；公共消息沿用单块 1 MiB、响应 4 MiB/128 块限制。用量保留未知值，已报告的输出按 candidates 与 thoughts 合计；输入已包含缓存计数，不重复相加。HTTP 错误只返回状态码，拒绝重定向。Interactions、Live、Vertex 认证、媒体生成及服务端工具不在本 adapter 的范围内；未支持的 part 或结束原因报错。
 
-实现参考 Pi `7bc154ad082e2f0029c19117a16d22a504439476` 的 `packages/ai/src/providers/google{,-shared}.ts`。未运行测试、构建或真实端点验收；原生工具搜索、跨协议迁移和上下文压缩仍按任务清单继续。
+实现参考 Pi `7bc154ad082e2f0029c19117a16d22a504439476` 的 `packages/ai/src/providers/google{,-shared}.ts`。公共压缩流程已接入；未运行测试、构建或真实端点验收。原生工具搜索和跨协议迁移仍按任务清单继续。

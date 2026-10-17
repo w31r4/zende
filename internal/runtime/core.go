@@ -30,6 +30,7 @@ type Core struct {
 	loopMu             sync.Mutex
 	loopRunning        bool
 	workers            map[string]context.CancelFunc // task ID, never just Agent ID
+	compactionWorkers  map[string]*compactionWorker  // idle summaries, keyed by Agent
 	mcpMu              sync.Mutex
 	mcpSlots           map[protocol.ResourceTarget]*mcpSlot
 	mcpClosed          bool
@@ -57,6 +58,12 @@ func New(s *store.Store, config resource.Effective) *Core {
 
 func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 	switch req.Method {
+	case "context.compact":
+		var p protocol.CompactContext
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.Store.QueueCompaction(ctx, req, p.AgentID, "", "manual", c.Config.Config.ContextBudgetPolicy())
 	case "context.inspect":
 		var p protocol.ContextTarget
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
@@ -398,6 +405,7 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 		accepted, err := c.Store.Stop(ctx, req, protocol.Target{AgentID: p.AgentID})
 		if err == nil {
 			c.cancelTask(accepted.TaskID)
+			c.cancelIdleCompaction(ctx, p.AgentID)
 		}
 		return accepted, err
 	case "agent.inspect":

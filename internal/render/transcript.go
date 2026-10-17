@@ -141,6 +141,31 @@ func (p *Transcript) Apply(e protocol.Event) error {
 
 func (p *Transcript) apply(e protocol.Event) error {
 	switch e.Kind {
+	case "context.compaction.state":
+		var info protocol.CompactionInfo
+		if err := decodePayload(e, &info); err != nil {
+			return err
+		}
+		if !validID(info.OperationID) || info.AgentID != e.AgentID || info.Reason != "manual" && info.Reason != "automatic" || info.MaxAttempts < 1 || info.MaxAttempts > 8 || info.Attempts < 0 || info.Attempts > info.MaxAttempts {
+			return protocol.E("invalid_state", "invalid compaction state")
+		}
+		switch info.State {
+		case "pending", "running":
+		case "completed":
+			if !validID(info.ViewID) {
+				return protocol.E("invalid_state", "completed compaction has no view")
+			}
+		case "failed", "cancelled":
+			if info.Failure == nil {
+				return protocol.E("invalid_state", "compaction failure has no reason")
+			}
+		default:
+			return protocol.E("invalid_state", "unknown compaction state")
+		}
+		entry := p.entry(e, "compaction:"+info.OperationID, "compaction")
+		entry.OperationID, entry.TaskID, entry.RequestID = info.OperationID, info.TaskID, info.RequestID
+		entry.State = info.State
+		p.text(entry, "context "+info.State, false)
 	case "mailbox.accepted", "mailbox.delivered":
 		return p.applyMail(e)
 	case "question.asked", "question.answered", "question.cancelled":

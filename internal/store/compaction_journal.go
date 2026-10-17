@@ -299,7 +299,7 @@ func cancelAgentCompaction(ctx context.Context, tx *sql.Tx, agent string) error 
 
 func finishTaskCompaction(ctx context.Context, tx *sql.Tx, agent, task string) error {
 	var id string
-	err := tx.QueryRowContext(ctx, `SELECT id FROM compactions WHERE agent_id=? AND json_extract(record,'$.task_id')=? AND json_extract(record,'$.reason')='automatic' AND json_extract(record,'$.state') IN ('pending','running')`, agent, task).Scan(&id)
+	err := tx.QueryRowContext(ctx, `SELECT id FROM compactions WHERE agent_id=? AND json_extract(record,'$.state') IN ('pending','running')`, agent).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}
@@ -309,6 +309,21 @@ func finishTaskCompaction(ctx context.Context, tx *sql.Tx, agent, task string) e
 	r, err := compactionRecord(ctx, tx, id)
 	if err != nil {
 		return err
+	}
+	if r.Reason == "manual" {
+		if r.State == "running" {
+			attempt, err := loadCompactionAttempt(ctx, tx, r)
+			if err != nil {
+				return err
+			}
+			if attempt.TaskID == task {
+				return finishCompactionFailure(ctx, tx, r, "interrupted", true)
+			}
+		}
+		return nil // Accepted manual work outlives the Task that requested it.
+	}
+	if r.TaskID != task {
+		return nil
 	}
 	return finishCompactionFailure(ctx, tx, r, "cancelled", false)
 }

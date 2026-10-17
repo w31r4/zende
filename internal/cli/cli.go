@@ -270,6 +270,8 @@ func (a *app) call(cmd *cobra.Command, method string, mutation bool, params any)
 		caller = p.Caller
 	case protocol.PluginSubscribe:
 		caller = p.Caller
+	case protocol.CompactContext:
+		caller = p.Caller
 	}
 	if caller != nil && a.operationID == "" {
 		// One execution may retry the same CLI after losing stdout or reconnecting.

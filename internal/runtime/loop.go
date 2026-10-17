@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -99,8 +98,9 @@ func (c *Core) Run(ctx context.Context) error {
 			return err
 		}
 		type candidate struct {
-			agent string
-			held  *store.HeldTask
+			agent   string
+			held    *store.HeldTask
+			compact string
 		}
 		var candidates []candidate
 		held, err := c.Store.HeldTasks(ctx)
@@ -114,6 +114,16 @@ func (c *Core) Run(ctx context.Context) error {
 			if seq, tried := triedRecovery[h.TaskID]; !tried || h.RequestSeq > seq {
 				candidates = append(candidates, candidate{agent: h.AgentID, held: &h})
 			}
+		}
+		compactions, err := c.Store.IdleCompactions(ctx, c.Config.Config.Limits.Agents)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return err
+		}
+		for _, pending := range compactions {
+			candidates = append(candidates, candidate{agent: pending.AgentID, compact: pending.OperationID})
 		}
 		if c.modelAvailable() {
 			for _, id := range ids {
@@ -137,6 +147,21 @@ func (c *Core) Run(ctx context.Context) error {
 		for _, next := range candidates {
 			id := next.agent
 			if active[id] || len(active) >= c.Config.Config.Limits.Agents {
+				continue
+			}
+			if next.compact != "" {
+				active[id] = true
+				worker, compactCtx := c.registerCompactionWorker(ctx, id, next.compact)
+				workers.Add(1)
+				go func() {
+					defer workers.Done()
+					defer c.forgetCompactionWorker(id, worker)
+					err := c.runIdleCompaction(compactCtx, ctx, id, next.compact)
+					select {
+					case done <- outcome{id, err}:
+					case <-ctx.Done():
+					}
+				}()
 				continue
 			}
 			var work *store.Work
@@ -360,15 +385,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 	var binding model.Binding
 	var err error
 	if resume == nil {
-		if strings.HasPrefix(selection, "plugin:") && len(choice.Binding) > 0 {
-			binding, err = c.restoreBinding(ctx, w.Agent.ID, choice.Binding)
-		} else if choice.Choice.ModelRevision > 0 || strings.HasPrefix(selection, "plugin:") {
-			binding, err = c.resolveModelSelection(ctx, w.Agent.ID, selection, choice.Choice.Effort, "")
-		} else if c.modelResolver() != nil {
-			binding, err = c.modelResolver().Resolve(ctx, selection)
-		} else {
-			return "", protocol.E("model_unavailable", "model selection is unavailable")
-		}
+		selection, binding, err = c.initialModelSelection(ctx, w.Agent.ID, choice)
 		if err != nil {
 			return "", safeFailure(err, "model_unavailable", "selected model is unavailable")
 		}
@@ -408,7 +425,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if err := appendEvent("task.config", settings); err != nil {
 			return "", err
 		}
-		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "20", Body: system}); err != nil {
+		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "21", Body: system}); err != nil {
 			return "", err
 		}
 	} else {
@@ -419,7 +436,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if resume.Journal.Prompt.Body != "" {
 			system = resume.Journal.Prompt.Body
 		} else {
-			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "20", Body: system}); err != nil {
+			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "21", Body: system}); err != nil {
 				return "", err
 			}
 		}
@@ -524,6 +541,17 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		nextSettings, nextBinding, err := c.requestSelection(ctx, w.Agent.ID, settings, binding)
 		if err != nil {
 			return "", err
+		}
+		changed, err := c.manualCompaction(ctx, persist, w, nextSettings, nextBinding)
+		if isFailure(err, "request_conflict") && conflicts < 8 {
+			conflicts++
+			continue
+		}
+		if err != nil {
+			return "", err
+		}
+		if changed {
+			continue
 		}
 		contextSnapshot, err := c.Store.ContextSnapshot(persist, w.Agent.ID)
 		if err != nil {

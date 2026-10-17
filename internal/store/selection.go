@@ -108,6 +108,9 @@ func (s *Store) BeginModelRequest(ctx context.Context, agent, task string, revis
 		if compacting {
 			return protocol.E("context_busy", "wait for the active summary attempt before another model request")
 		}
+		if err := manualCompactionBoundary(ctx, tx, agent); err != nil {
+			return err
+		}
 		for _, notice := range notices {
 			if notice.Message.Role != "developer" || notice.RequestID != "" || notice.MessageID != "" || len(notice.MessageIDs) != 0 || notice.QuestionID != "" || notice.Summary != nil {
 				return protocol.E("invalid_params", "request notices must be developer context, not model or tool results")

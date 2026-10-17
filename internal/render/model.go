@@ -218,6 +218,17 @@ func (m Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.cursor = m.transcript.Cursor
 		m.projectQuestionEvent(msg.Event)
+		if msg.Event.Kind == "context.compaction.state" {
+			var info protocol.CompactionInfo
+			// Transcript.Apply already checked the event before advancing.
+			if decodePayload(msg.Event, &info) == nil {
+				if info.State == "failed" {
+					m.issues.raise("compaction", info.Failure)
+				} else if info.State == "completed" || info.State == "cancelled" {
+					m.issues.resolve("compaction")
+				}
+			}
+		}
 		if msg.Event.Kind == "resource.published" {
 			m.skillsFloor = max(m.skillsFloor, msg.Event.Seq)
 			if m.palette.entry == "skill" {

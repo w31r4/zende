@@ -47,6 +47,7 @@ var commands = []command{
 	{name: "stop", description: "Stop current work"},
 	{name: "resume", description: "Resume Agent"},
 	{name: "recover", description: "Recover interrupted work"},
+	{name: "compact", description: "Summarize earlier context"},
 	{name: "attach", usage: "[PROCESS]", description: "Interact with PTY", maxArgs: 1},
 	{name: "resize", usage: "[COLS ROWS]", description: "Resize selected PTY", maxArgs: 2},
 	{name: "next", description: "Next page"},
@@ -187,6 +188,8 @@ func (m *Shell) invoke(call invocation) (tea.Cmd, error) {
 		return m.mutate("agent."+c.name, protocol.Target{AgentID: m.agent}, "")
 	case "recover":
 		return m.mutate("agent.recover", protocol.RecoveryTarget{AgentID: m.agent}, "")
+	case "compact":
+		return m.mutate("context.compact", protocol.CompactContext{AgentID: m.agent}, "")
 	case "terminal", "logs", "attach", "resize":
 		return m.runProcessCommand(c.name, call.args)
 	}

@@ -28,6 +28,7 @@ func (c *Core) beginTreeStop(ctx context.Context, req protocol.Request, agent st
 	}
 	for _, member := range plan.Members {
 		c.cancelTask(member.TaskID)
+		c.cancelIdleCompaction(ctx, member.AgentID)
 		c.cancelAgentPluginCalls(member.AgentID)
 	}
 	return accepted, nil
@@ -86,6 +87,7 @@ func (c *Core) advanceTreeStop(ctx context.Context, id string) (string, error) {
 	}
 	for _, member := range plan.Members {
 		c.cancelTask(member.TaskID)
+		c.cancelIdleCompaction(ctx, member.AgentID)
 		c.cancelAgentPluginCalls(member.AgentID)
 	}
 	controller, ok := c.Runner.(process.StopController)

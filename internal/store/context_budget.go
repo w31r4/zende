@@ -16,6 +16,9 @@ func (s *Store) RecordContextBudgetBlock(ctx context.Context, agent, task string
 		if _, err := requestBoundary(ctx, tx, agent, task, revision, cursor); err != nil {
 			return err
 		}
+		if err := manualCompactionBoundary(ctx, tx, agent); err != nil {
+			return err
+		}
 		view, err := contextView(ctx, tx, agent, cursor)
 		if err != nil {
 			return err
