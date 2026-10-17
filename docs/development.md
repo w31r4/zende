@@ -1,8 +1,10 @@
 # 本地开发
 
-CLI 支持持久会话、子 Agent 创建与复用、历史查询、进程工具、Responses 和 Chat Completions；独立 runner 管理 pipe、tmux PTY 与输出。当前验证使用本地模型夹具，完整 Day1 和部署验收仍在实施。进度见 [OpenSpec 任务](../openspec/changes/build-day1-harness/tasks.md)。
+CLI 支持持久会话、子 Agent 创建与复用、历史查询、进程工具、Responses、Chat Completions 和 Anthropic Messages；独立 runner 管理 pipe、tmux PTY 与输出。完整 Day1 和部署仍在实施。验证证据按版本记录，新增 Anthropic 接入未测试。进度见 [OpenSpec 任务](../openspec/changes/build-day1-harness/tasks.md)。
 
 ## 构建与测试
+
+2026-10-16 起按项目原则停止新增和运行测试。下面及各章节的测试命令保留供查阅，不作为当前执行步骤。
 
 ```sh
 go test ./...
@@ -96,7 +98,7 @@ model: local/my-model
 
 ## 模型目录与工作目录查询
 
-`zende model connections` 列出当前 core 配置的连接，`model list CONNECTION` 返回型号、思考力度和能力声明。两条命令加 `--agent AGENT` 可包含该 Agent 的就绪插件 provider。同厂商连接按 ID 区分，空配置返回空列表；`supported` 只表示 adapter 已实现，内置协议目前为 Responses 和 Chat Completions。查询不解析凭据、不访问端点，认证和网络状态在模型请求时检查。
+`zende model connections` 列出当前 core 配置的连接，`model list CONNECTION` 返回型号、思考力度和能力声明。两条命令加 `--agent AGENT` 可包含该 Agent 的就绪插件 provider。同厂商连接按 ID 区分，空配置返回空列表；`supported` 只表示 adapter 已实现，内置协议目前为 Responses、Chat Completions 和 Anthropic Messages。查询不解析凭据、不访问端点，认证和网络状态在模型请求时检查。
 
 两级目录均支持 `--after NEXT`、`--limit`（默认 20，最多 100）和 `--version VERSION`；跨页或分步选择携带返回版本，配置或插件目录变化时报 `catalog_changed`。每页最多 1 MiB，超限可减小页数或缩短元数据。返回值只含公开元数据，端点与凭据引用留在连接配置中。
 
@@ -623,7 +625,7 @@ go test -race ./internal/runtime -run '^TestPluginExecution' -count=3
 
 ## Responses 接入
 
-连接使用 `protocol: responses`，`base_url` 为 API 根地址，adapter 追加 `/responses`。型号、输出上限和可选思考力度均来自配置。`native_categories: true` 仅用于已确认支持 assistant `phase` 的具体型号，默认使用显式文本标签。Anthropic 和 Gemini adapter 仍待交付。
+连接使用 `protocol: responses`，`base_url` 为 API 根地址，adapter 追加 `/responses`。型号、输出上限和可选思考力度均来自配置。`native_categories: true` 仅用于已确认支持 assistant `phase` 的具体型号，默认使用显式文本标签。Gemini adapter 仍待交付。
 
 | 内容 | 当前处理 |
 | --- | --- |
@@ -667,4 +669,27 @@ chat:
 
 请求最多 32 MiB，SSE 单事件 8 MiB、单次流 64 MiB；公共组装限单块 1 MiB、响应 4 MiB/128 块，最多 127 个工具调用，私有数据计入额度。支持 LF/CRLF/CR 和字节分片，拒绝重定向，HTTP 错误只保存状态码。adapter 不自动换字段重试；不支持的能力返回错误。
 
-Responses 与 Chat 共用两轮工具/错误回填、断流不执行和真实 CLI patch 测试。完整共享套件中的压缩、MCP 和跨协议迁移仍由 9、10 组补齐，10.2 保持未完成；当前证据来自本地 HTTP 夹具，真实兼容端点未验收。
+Responses 与 Chat 已有共用两轮工具/错误回填、断流不执行和真实 CLI patch 的历史测试记录。按当前开发约定，10.2 以实现完成勾选，不追加测试；完整共享套件未通过，真实兼容端点未验收。上下文压缩、原生工具搜索和跨协议迁移仍由 9、10 组交付。
+
+## Anthropic Messages 接入
+
+连接使用 `protocol: anthropic`，`base_url` 填 API 根地址（直接接入时包含 `/v1`），adapter 追加 `/messages`。凭据引用在请求时解析，使用 `x-api-key`；版本头固定为 `2023-06-01`，HTTP 错误保留状态码，不回显响应正文。字段依据见 [API 概览](https://platform.claude.com/docs/en/api/overview)。
+
+型号来自配置。每个 `models` 项可增加 `anthropic`：
+
+| 字段 | 缺省与作用 |
+| --- | --- |
+| `thinking` | 空表示不发此字段；可选 `disabled`、`enabled`、`adaptive` |
+| `thinking_budget_tokens` | 仅 `enabled` 使用，至少 1024 且小于该型号的 `max_output` |
+| `thinking_display` | 可选 `summarized`、`omitted`，仅随 `enabled` 或 `adaptive` 发送 |
+| `interleaved_thinking` | 默认 false；仅 `enabled` 可显式开启对应 beta 头 |
+
+已选思考力度发送为 `output_config.effort`。这些字段须由具体端点和型号支持，不按厂商名推断，也不自动移除字段重试。配置与绑定快照一起保存，恢复使用原设置。选项参考 [Thinking](https://platform.claude.com/docs/en/build-with-claude/thinking)、[Effort](https://platform.claude.com/docs/en/build-with-claude/effort)，以及 Pi `7bc154ad082e2f0029c19117a16d22a504439476` 的 `packages/ai/src/providers/anthropic.ts`。
+
+请求把连续 assistant 内容组成同一条消息，把工具结果组成 user 消息中的 `tool_result`；错误使用 `is_error`。基础指令放顶层 `system`。历史 system/developer 提醒保留原位置，适配成 user 消息中的 `harness_instruction` 文本块；这是 host 约定，不依赖新型号的会话内 system 扩展，也不改写存储中的角色。模型输出仍使用 commentary/final 显式标签。
+
+流按 content block 保存 text、tool_use、thinking 与 redacted_thinking。思考文本、签名和不透明数据仅作协议续接，不投影成 commentary。保存的内容与公共文本/调用核对，绑定不匹配时明确报错。完整参数和 `message_stop` 到齐后才返回可执行响应；`end_turn` 不等于任务 final。实现依据见 [流格式](https://platform.claude.com/docs/en/build-with-claude/streaming)和 [stop reason](https://platform.claude.com/docs/en/build-with-claude/handling-stop-reasons)。
+
+支持声明后的 PNG/JPEG 输入、取消、有界 SSE 和工具结果回填；请求上限 32 MiB，SSE 单事件 8 MiB、单流 64 MiB，公共消息沿用单块 1 MiB、响应 4 MiB/128 块限制。用量缺失保持未知，缓存输入计入总输入 token。未支持的内容类型、citations、服务端工具暂停等返回明确错误。
+
+此接入未运行测试、构建或真实端点验收。原生 deferred/tool search、跨协议迁移与完整 Day1 行为继续按任务清单实现。

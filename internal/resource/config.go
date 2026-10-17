@@ -29,14 +29,15 @@ type Limits struct {
 }
 
 type ModelConfig struct {
-	ID               string      `json:"id" yaml:"id"`
-	Label            string      `json:"label,omitempty" yaml:"label,omitempty"`
-	ContextWindow    int         `json:"context_window" yaml:"context_window"`
-	MaxOutput        int         `json:"max_output" yaml:"max_output"`
-	Efforts          []string    `json:"efforts,omitempty" yaml:"efforts,omitempty"`
-	Images           bool        `json:"images,omitempty" yaml:"images,omitempty"`
-	NativeCategories bool        `json:"native_categories,omitempty" yaml:"native_categories,omitempty"`
-	Chat             *ChatConfig `json:"chat,omitempty" yaml:"chat,omitempty"`
+	ID               string           `json:"id" yaml:"id"`
+	Label            string           `json:"label,omitempty" yaml:"label,omitempty"`
+	ContextWindow    int              `json:"context_window" yaml:"context_window"`
+	MaxOutput        int              `json:"max_output" yaml:"max_output"`
+	Efforts          []string         `json:"efforts,omitempty" yaml:"efforts,omitempty"`
+	Images           bool             `json:"images,omitempty" yaml:"images,omitempty"`
+	NativeCategories bool             `json:"native_categories,omitempty" yaml:"native_categories,omitempty"`
+	Chat             *ChatConfig      `json:"chat,omitempty" yaml:"chat,omitempty"`
+	Anthropic        *AnthropicConfig `json:"anthropic,omitempty" yaml:"anthropic,omitempty"`
 }
 
 // ChatConfig declares wire differences for a specific configured model.
@@ -45,6 +46,14 @@ type ChatConfig struct {
 	InstructionRole string `json:"instruction_role,omitempty" yaml:"instruction_role,omitempty"`
 	IncludeUsage    bool   `json:"include_usage,omitempty" yaml:"include_usage,omitempty"`
 	ReasoningField  string `json:"reasoning_field,omitempty" yaml:"reasoning_field,omitempty"`
+}
+
+// AnthropicConfig describes only explicitly selected Messages API options.
+type AnthropicConfig struct {
+	Thinking            string `json:"thinking,omitempty" yaml:"thinking,omitempty"`
+	ThinkingBudget      int    `json:"thinking_budget_tokens,omitempty" yaml:"thinking_budget_tokens,omitempty"`
+	ThinkingDisplay     string `json:"thinking_display,omitempty" yaml:"thinking_display,omitempty"`
+	InterleavedThinking bool   `json:"interleaved_thinking,omitempty" yaml:"interleaved_thinking,omitempty"`
 }
 
 type Connection struct {
@@ -267,8 +276,28 @@ func (c Config) Validate() error {
 					return fmt.Errorf("invalid Chat Completions compatibility settings")
 				}
 			}
-			if conn.Protocol == "chat-completions" && m.NativeCategories {
-				return fmt.Errorf("Chat Completions uses explicit text markers, not native categories")
+			if o := m.Anthropic; o != nil {
+				if conn.Protocol != "anthropic" {
+					return fmt.Errorf("Anthropic settings require the anthropic protocol")
+				}
+				switch o.Thinking {
+				case "", "disabled", "adaptive":
+					if o.ThinkingBudget != 0 || o.InterleavedThinking {
+						return fmt.Errorf("thinking budget and interleaving beta require enabled thinking")
+					}
+				case "enabled":
+					if o.ThinkingBudget < 1024 || o.ThinkingBudget >= m.MaxOutput {
+						return fmt.Errorf("thinking budget must be at least 1024 and smaller than max output")
+					}
+				default:
+					return fmt.Errorf("unsupported Anthropic thinking mode")
+				}
+				if o.ThinkingDisplay != "" && (o.ThinkingDisplay != "summarized" && o.ThinkingDisplay != "omitted" || o.Thinking != "enabled" && o.Thinking != "adaptive") {
+					return fmt.Errorf("thinking display requires enabled or adaptive thinking")
+				}
+			}
+			if (conn.Protocol == "chat-completions" || conn.Protocol == "anthropic") && m.NativeCategories {
+				return fmt.Errorf("selected protocol uses explicit text markers, not native categories")
 			}
 		}
 	}

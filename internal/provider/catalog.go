@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"zende.local/harness/internal/model/anthropic"
 	"zende.local/harness/internal/model/chatcompletions"
 	"zende.local/harness/internal/model/responses"
 	"zende.local/harness/internal/protocol"
@@ -14,7 +15,7 @@ import (
 )
 
 func supportsProtocol(name string) bool {
-	return name == responses.Protocol || name == chatcompletions.Protocol
+	return name == responses.Protocol || name == chatcompletions.Protocol || name == anthropic.Protocol
 }
 
 func connectionInfo(id string, c resource.Connection) protocol.ConnectionInfo {

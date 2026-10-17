@@ -1003,6 +1003,12 @@ Chat Completions 已接入 provider 目录、选配和保存绑定的恢复。10
 
 协议依据与兼容选项见 [Chat Completions 接入](./development.md#chat-completions-接入)。OpenAI Docs 用于核对官方请求与流格式，Pi 源码用于识别兼容差异；trim-cn-tech-doc 更新过时支持范围，保留配置、预算和失败条件。提示词及 TUI 布局未改。全部请求来自本地 HTTP 夹具，未访问用户端点或凭据，真实模型与部署仍未验收。
 
+## 2026-10-17：Anthropic Messages 实现，未测试
+
+新增 `internal/model/anthropic`，接入请求、SSE、工具结果回填、取消及 thinking/signature/redacted_thinking 保存；provider 目录、配置选择和绑定恢复已接线。配置及协议依据见 [Anthropic Messages 接入](./development.md#anthropic-messages-接入)。
+
+按用户“不测试”要求，没有新增测试文件，没有运行测试、构建、vet、冒烟或 OpenSpec 校验。只做源码阅读、编辑与 gofmt 格式整理，未访问用户模型端点或凭据。此记录不证明运行正确性或兼容性。OpenSpec 10.2、10.3 按新约定记为实现完成，累计 50/68；历史测试证据保留，完整共享套件与本机部署未验收。
+
 ## 进行中
 
 2026-10-16 用户要求后续不新增、不运行测试，直接推进实现。此前记录是历史结果；后续改动单独标注未验证，不沿用旧测试结果作为新代码的证明。

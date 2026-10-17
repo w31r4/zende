@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"zende.local/harness/internal/model"
+	"zende.local/harness/internal/model/anthropic"
 	"zende.local/harness/internal/model/chatcompletions"
 	"zende.local/harness/internal/model/responses"
 	"zende.local/harness/internal/protocol"
@@ -121,6 +122,17 @@ func (r *Resolver) bind(ctx context.Context, saved bindingSnapshot) (model.Bindi
 	}
 	var adapter model.Adapter
 	switch conn.Protocol {
+	case anthropic.Protocol:
+		config := anthropic.Config{Endpoint: conn.BaseURL, Effort: saved.Effort, Credential: credential, Images: selected.Images}
+		if options := selected.Anthropic; options != nil {
+			config.Thinking, config.ThinkingBudget = options.Thinking, options.ThinkingBudget
+			config.ThinkingDisplay, config.InterleavedThinking = options.ThinkingDisplay, options.InterleavedThinking
+		}
+		value, err := anthropic.New(config)
+		if err != nil {
+			return model.Binding{}, err
+		}
+		adapter = value
 	case chatcompletions.Protocol:
 		config := chatcompletions.Config{Endpoint: conn.BaseURL, Effort: saved.Effort, Credential: credential, Images: selected.Images}
 		if options := selected.Chat; options != nil {
