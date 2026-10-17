@@ -90,6 +90,7 @@ type Binding struct {
 	NativeCategories bool
 	Images           bool
 	MaxOutputTokens  int
+	ContextWindow    int // Zero means unknown; never infer capacity from the model name.
 	// Snapshot contains provider-owned versioned settings, never resolved keys.
 	Snapshot json.RawMessage
 }

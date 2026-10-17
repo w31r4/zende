@@ -167,7 +167,7 @@ func (r *Resolver) bind(ctx context.Context, saved bindingSnapshot) (model.Bindi
 	if err != nil {
 		return model.Binding{}, err
 	}
-	return model.Binding{Adapter: adapter, Model: selected.ID, Protocol: conn.Protocol, NativeCategories: selected.NativeCategories, Images: selected.Images, MaxOutputTokens: selected.MaxOutput, Snapshot: data}, nil
+	return model.Binding{Adapter: adapter, Model: selected.ID, Protocol: conn.Protocol, NativeCategories: selected.NativeCategories, Images: selected.Images, MaxOutputTokens: selected.MaxOutput, ContextWindow: selected.ContextWindow, Snapshot: data}, nil
 }
 
 var _ model.Restorer = (*Resolver)(nil)

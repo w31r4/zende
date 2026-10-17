@@ -124,7 +124,7 @@ func (c *Core) bindPluginModel(ctx context.Context, agent string, s pluginModelS
 	}
 	info := a.Info()
 	raw, _ := json.Marshal(s)
-	return model.Binding{Adapter: &pluginModelSelection{core: c, agent: agent, snapshot: s, validator: a}, Model: info.ID, Protocol: a.Protocol(), NativeCategories: info.NativeCategories, Images: info.Images, MaxOutputTokens: info.MaxOutput, Snapshot: raw}, nil
+	return model.Binding{Adapter: &pluginModelSelection{core: c, agent: agent, snapshot: s, validator: a}, Model: info.ID, Protocol: a.Protocol(), NativeCategories: info.NativeCategories, Images: info.Images, MaxOutputTokens: info.MaxOutput, ContextWindow: info.ContextWindow, Snapshot: raw}, nil
 }
 
 func (c *Core) prepareModelRequest(b model.Binding, scope plugin.Scope, requestID string) (model.Adapter, *pluginModelRequestBinding, func(), error) {

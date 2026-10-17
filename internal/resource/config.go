@@ -81,6 +81,20 @@ type Config struct {
 	Limits       Limits                `json:"limits" yaml:"limits"`
 	Connections  map[string]Connection `json:"connections" yaml:"connections"`
 	ResourceDirs []string              `json:"resource_dirs" yaml:"resource_dirs"`
+	Compaction   CompactionConfig      `json:"compaction" yaml:"compaction"`
+}
+
+type CompactionConfig struct {
+	TriggerPercent   int `json:"trigger_percent" yaml:"trigger_percent"`
+	SummaryTokens    int `json:"summary_tokens" yaml:"summary_tokens"`
+	KeepRecentTokens int `json:"keep_recent_tokens" yaml:"keep_recent_tokens"`
+	MaxAttempts      int `json:"max_attempts" yaml:"max_attempts"`
+}
+
+func (c Config) ContextBudgetPolicy() protocol.ContextBudgetPolicy {
+	return protocol.ContextBudgetPolicy{Version: 1, TriggerPercent: c.Compaction.TriggerPercent,
+		ReserveTokens: c.Limits.ContextReserve, SummaryTokens: c.Compaction.SummaryTokens,
+		KeepRecentTokens: c.Compaction.KeepRecentTokens, MaxAttempts: c.Compaction.MaxAttempts}
 }
 
 type Effective struct {
@@ -95,7 +109,8 @@ type Layer struct {
 
 func Defaults(cwd string) Config {
 	return Config{Cwd: cwd, Shell: "/bin/sh", Connections: map[string]Connection{}, ResourceDirs: []string{},
-		Limits: Limits{Agents: 8, Depth: 4, Processes: 16, OutputBytes: 64 << 20, ModelRetries: 2, FormatRepairs: 1, RetryBaseMS: 250, ContextReserve: 8192}}
+		Compaction: CompactionConfig{TriggerPercent: 90, SummaryTokens: 2048, KeepRecentTokens: 8192, MaxAttempts: 2},
+		Limits:     Limits{Agents: 8, Depth: 4, Processes: 16, OutputBytes: 64 << 20, ModelRetries: 2, FormatRepairs: 1, RetryBaseMS: 250, ContextReserve: 8192}}
 }
 
 // Compose replaces lists, recursively merges maps and rejects invalid input
@@ -246,6 +261,9 @@ func validCredential(ref string) bool {
 func (c Config) Validate() error {
 	if !filepath.IsAbs(c.Cwd) || !filepath.IsAbs(c.Shell) {
 		return fmt.Errorf("cwd and shell must be absolute paths")
+	}
+	if !c.ContextBudgetPolicy().Valid() {
+		return fmt.Errorf("invalid context compaction settings")
 	}
 	l := c.Limits
 	if l.Agents < 1 || l.Depth < 1 || l.Processes < 1 || l.OutputBytes < 1024 || l.ModelRetries < 0 || l.FormatRepairs < 0 || l.RetryBaseMS < 1 || l.ContextReserve < 1 {
