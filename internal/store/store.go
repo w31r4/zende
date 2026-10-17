@@ -15,7 +15,7 @@ import (
 	"zende.local/harness/internal/protocol"
 )
 
-const SchemaVersion = 18
+const SchemaVersion = 19
 
 type Store struct {
 	db   *sql.DB
@@ -156,7 +156,12 @@ PRAGMA user_version=2;`); err != nil {
 				return err
 			}
 		}
-		_, err := tx.Exec(configSchema)
+		if version < 18 {
+			if _, err := tx.Exec(configSchema); err != nil {
+				return err
+			}
+		}
+		_, err := tx.Exec(resourceDiscoverySchema)
 		return err
 	})
 }

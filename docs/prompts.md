@@ -1,6 +1,6 @@
 # 提示词
 
-系统说明由 `internal/runtime/prompt.go` 组装，工具 descriptor 由各 executor 提供；MCP 与插件工具说明分别位于 `internal/runtime/mcp_tools.go`、`internal/runtime/plugin_tools.go`，请求前保存为 `prompt.loaded`。CLI 说明覆盖提问、资源、插件命令、工作环境、选配、Agent 协作、上下文和配置；手动或自动发布后，在后续请求追加发现通知。配置及已注册资源已接入文件监视，`resource_dirs` 新资源发现待完成；此次接线未测试，提示词版本保持 22。
+系统说明由 `internal/runtime/prompt.go` 组装，工具 descriptor 由各 executor 提供；MCP 与插件工具说明分别位于 `internal/runtime/mcp_tools.go`、`internal/runtime/plugin_tools.go`，请求前保存为 `prompt.loaded`。CLI 说明覆盖提问、资源、插件命令、工作环境、选配、Agent 协作、上下文和配置；手动刷新、文件监视和 `resource_dirs` 发现共用发布通知，在后续请求追加。新资源正文仍按需读取；自动发现接线未测试，提示词版本保持 22。
 
 ## Pi 参考
 

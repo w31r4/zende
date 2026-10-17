@@ -33,20 +33,24 @@ type WatchLoopStatus struct {
 }
 
 type WatchStatus struct {
-	Configuration WatchLoopStatus `json:"configuration"`
-	Resources     WatchLoopStatus `json:"resources"`
-	PollMS        int64           `json:"poll_ms"`
-	SettleMS      int64           `json:"settle_ms"`
-	PageLimit     int             `json:"page_limit"`
-	Parallelism   int             `json:"parallelism"`
+	Configuration WatchLoopStatus      `json:"configuration"`
+	Resources     WatchLoopStatus      `json:"resources"`
+	Discovery     DiscoveryWatchStatus `json:"discovery"`
+	PollMS        int64                `json:"poll_ms"`
+	SettleMS      int64                `json:"settle_ms"`
+	PageLimit     int                  `json:"page_limit"`
+	Parallelism   int                  `json:"parallelism"`
 }
 
 func (c *Core) watchStatus() WatchStatus {
 	c.watchMu.Lock()
 	defer c.watchMu.Unlock()
 	status := c.watch
+	status.Discovery.Failures = append([]DiscoveryFailure(nil), status.Discovery.Failures...)
 	status.PollMS, status.SettleMS = watchPoll.Milliseconds(), watchSettle.Milliseconds()
 	status.PageLimit, status.Parallelism = watchPageLimit, watchParallelism
+	status.Discovery.MaxRoots, status.Discovery.MaxEntries = resource.MaxResourceDirectories, resource.MaxDiscoveryEntries
+	status.Discovery.PageLimit = resource.MaxDiscoveryPage
 	return status
 }
 
@@ -186,6 +190,8 @@ type watchedCandidate struct {
 func (c *Core) watchResources(ctx context.Context) {
 	c.watchState(false, true, false, "")
 	defer c.watchState(false, false, false, "")
+	defer c.stopDiscovery()
+	var discovery discoveryCursor
 	var afterAgent, afterID string
 	for ctx.Err() == nil {
 		page, err := c.Store.ResourceWatchPage(ctx, afterAgent, afterID, watchPageLimit)
@@ -220,6 +226,7 @@ func (c *Core) watchResources(ctx context.Context) {
 			}
 		}
 		c.watchState(false, true, true, failure)
+		c.discoverResources(ctx, &discovery)
 		if !watchDelay(ctx, watchPoll) {
 			return
 		}
@@ -229,6 +236,24 @@ func (c *Core) watchResources(ctx context.Context) {
 func (c *Core) observeResource(ctx context.Context, target store.ResourceWatchTarget) (*watchedCandidate, error) {
 	if strings.HasPrefix(target.Info.Source, "plugin://") || (target.Update != nil && target.Update.State == "preparing") {
 		return nil, nil
+	}
+	if target.Discovery != nil {
+		current := c.configuration()
+		if current.publication == nil {
+			return nil, nil
+		}
+		configured := false
+		for _, root := range current.effective.Config.ResourceDirs {
+			configured = configured || root == target.Discovery.Root
+		}
+		if !configured {
+			return nil, nil
+		}
+		// Failed first installs remain tied to their managed root; use the
+		// current publication to fence this retry, never mutate saved metadata.
+		copy := *target.Discovery
+		copy.Configuration = *current.publication
+		target.Discovery = &copy
 	}
 	observation, err := resource.ObserveSource(ctx, target.Info.Kind, target.Info.Source)
 	if err != nil {

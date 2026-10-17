@@ -9,6 +9,10 @@ import (
 	"zende.local/harness/internal/resource"
 )
 
+// v19 adds discovery provenance to resource preparation records and events.
+// Older owners cannot honor the removed-root fence or decode these records.
+const resourceDiscoverySchema = `PRAGMA user_version=19;`
+
 // A scan holds at most one page of metadata, including failed first installs.
 // Generation and AttemptID fence automatic work against newer manual requests.
 type ResourceWatchTarget struct {
@@ -16,6 +20,14 @@ type ResourceWatchTarget struct {
 	Info       protocol.ResourceInfo
 	Generation int64
 	Update     *protocol.ResourceUpdate
+	Discovery  *ResourceDiscovery
+}
+
+// Discovery is retained while a first installation is pending or failed. A
+// removed root must not be reinstalled by the ordinary registered-source scan.
+type ResourceDiscovery struct {
+	Root          string                     `json:"root"`
+	Configuration protocol.ConfigPublication `json:"configuration"`
 }
 
 func (s *Store) ResourceWatchPage(ctx context.Context, afterAgent, afterID string, limit int) ([]ResourceWatchTarget, error) {
@@ -59,6 +71,7 @@ ORDER BY t.agent_id,t.id LIMIT ?`, afterAgent, afterID, limit)
 			}
 			if version == "" {
 				t.Info = p.Identity
+				t.Discovery = p.Discovery
 			} else if t.Info.Kind != p.Identity.Kind || t.Info.Source != p.Identity.Source {
 				return nil, protocol.E("invalid_state", "watched resource update has a different identity")
 			}
@@ -91,5 +104,67 @@ func checkWatchedResource(ctx context.Context, tx *sql.Tx, target ResourceWatchT
 	if generation != target.Generation || wantAttempt != actualAttempt || (current != nil && current.Update.State == "preparing") {
 		return protocol.E("resource_changed", "resource changed since observation; observe it again")
 	}
+	if target.Discovery != nil {
+		return checkDiscoveryConfiguration(ctx, tx, *target.Discovery, target.Info)
+	}
 	return nil
+}
+
+func checkDiscoveryConfiguration(ctx context.Context, tx *sql.Tx, discovery ResourceDiscovery, identity protocol.ResourceInfo) error {
+	if !discovery.Configuration.Valid() || resource.ValidateResourceDirectories([]string{discovery.Root}) != nil || !resource.DiscoveryContains(discovery.Root, identity) {
+		return protocol.E("invalid_params", "invalid discovered source")
+	}
+	if err := checkConfigPublication(ctx, tx, &discovery.Configuration); err != nil {
+		return err
+	}
+	var generation int64
+	if err := tx.QueryRowContext(ctx, "SELECT coalesce(max(generation),0) FROM config_publications").Scan(&generation); err != nil {
+		return err
+	}
+	if generation != discovery.Configuration.Generation {
+		return protocol.E("resource_changed", "configuration changed during resource discovery")
+	}
+	snapshot, err := readConfigSnapshot(ctx, tx, discovery.Configuration.Version)
+	if err != nil {
+		return err
+	}
+	for _, root := range snapshot.Effective.Config.ResourceDirs {
+		if root == discovery.Root {
+			return nil
+		}
+	}
+	return protocol.E("resource_changed", "resource directory is no longer configured")
+}
+
+// UndiscoveredResources advances one Agent at a time, even when all entries
+// already exist. It does not load retained histories or whole Agent catalogs.
+func (s *Store) UndiscoveredResources(ctx context.Context, afterAgent string, sources []protocol.ResourceInfo) (string, []ResourceWatchTarget, error) {
+	if len(sources) > resource.MaxDiscoveryPage {
+		return "", nil, protocol.E("invalid_params", "discovery source page exceeds 16 entries")
+	}
+	var agent string
+	var targets []ResourceWatchTarget
+	err := s.Transaction(ctx, func(tx *sql.Tx) error {
+		err := tx.QueryRowContext(ctx, "SELECT coalesce(min(id),'') FROM agents WHERE id>? AND state NOT IN ('archived','copying')", afterAgent).Scan(&agent)
+		if err != nil || agent == "" {
+			return err
+		}
+		for _, identity := range sources {
+			checked, err := resource.Identity(identity.Kind, identity.Source)
+			if err != nil || checked.ID != identity.ID || checked.Source != identity.Source {
+				return protocol.E("invalid_params", "discovery source identity is invalid")
+			}
+			var exists bool
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+ SELECT id FROM agent_resources WHERE agent_id=? AND id=?
+ UNION ALL SELECT id FROM resource_updates WHERE agent_id=? AND id=?)`, agent, identity.ID, agent, identity.ID).Scan(&exists); err != nil {
+				return err
+			}
+			if !exists {
+				targets = append(targets, ResourceWatchTarget{AgentID: agent, Info: checked})
+			}
+		}
+		return nil
+	})
+	return agent, targets, err
 }

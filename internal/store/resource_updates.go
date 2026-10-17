@@ -29,6 +29,7 @@ type ResourcePreparation struct {
 	BaseGeneration int64                   `json:"base_generation"`
 	Owner          string                  `json:"owner"`
 	Fingerprint    string                  `json:"fingerprint"`
+	Discovery      *ResourceDiscovery      `json:"discovery,omitempty"`
 }
 
 func resourceUpdate(ctx context.Context, tx *sql.Tx, agent, id string) (*ResourcePreparation, error) {
@@ -52,6 +53,9 @@ func decodeResourceUpdate(id, raw string) (*ResourcePreparation, error) {
 	if err != nil || identity.ID != id || !reflect.DeepEqual(identity, p.Identity) || p.Update.AttemptID == "" || p.Update.OperationID == "" || p.Owner == "" || p.Fingerprint == "" || p.BaseGeneration < 0 {
 		return nil, protocol.E("invalid_state", "saved resource update identity changed")
 	}
+	if p.Discovery != nil && (!p.Discovery.Configuration.Valid() || resource.ValidateResourceDirectories([]string{p.Discovery.Root}) != nil || !resource.DiscoveryContains(p.Discovery.Root, identity)) {
+		return nil, protocol.E("invalid_state", "saved discovery source is invalid")
+	}
 	switch p.Update.State {
 	case "preparing", "ready":
 		if p.Update.Error != nil {
@@ -73,11 +77,12 @@ func saveResourceUpdate(ctx context.Context, tx *sql.Tx, agent string, p Resourc
 		return err
 	}
 	if _, err := appendEvent(ctx, tx, agent, "", "resource.update", struct {
-		ID     string                  `json:"resource_id"`
-		Kind   string                  `json:"kind"`
-		Source string                  `json:"source"`
-		Update protocol.ResourceUpdate `json:"update"`
-	}{p.Identity.ID, p.Identity.Kind, p.Identity.Source, p.Update}); err != nil {
+		ID        string                  `json:"resource_id"`
+		Kind      string                  `json:"kind"`
+		Source    string                  `json:"source"`
+		Update    protocol.ResourceUpdate `json:"update"`
+		Discovery *ResourceDiscovery      `json:"discovery,omitempty"`
+	}{p.Identity.ID, p.Identity.Kind, p.Identity.Source, p.Update, p.Discovery}); err != nil {
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO resource_updates(agent_id,id,record) VALUES(?,?,?)
@@ -145,6 +150,10 @@ func (s *Store) beginResourceUpdate(ctx context.Context, req protocol.Request, a
 		}
 		p = ResourcePreparation{Identity: identity, Owner: owner, Fingerprint: want,
 			Update: protocol.ResourceUpdate{AttemptID: protocol.NewID("preparation"), OperationID: req.OperationID, State: "preparing"}}
+		if watched != nil && watched.Discovery != nil {
+			copy := *watched.Discovery
+			p.Discovery = &copy
+		}
 		if err := tx.QueryRowContext(ctx, "SELECT coalesce(max(generation),0) FROM resource_publications WHERE agent_id=?", agent).Scan(&p.BaseGeneration); err != nil {
 			return err
 		}
@@ -167,6 +176,9 @@ func checkResourcePreparation(ctx context.Context, tx *sql.Tx, req protocol.Requ
 	}
 	if current == nil || current.Update.State != "preparing" || !reflect.DeepEqual(*current, *attempt) || current.Update.OperationID != req.OperationID || current.Fingerprint != want || current.Identity.ID != p.Info.ID || current.Identity.Source != p.Info.Source || current.Identity.Kind != p.Info.Kind {
 		return protocol.E("resource_changed", "resource preparation was superseded; refresh again")
+	}
+	if attempt.Discovery != nil {
+		return checkDiscoveryConfiguration(ctx, tx, *attempt.Discovery, attempt.Identity)
 	}
 	return nil
 }

@@ -151,6 +151,9 @@ func (c *Core) prepareConfig(ctx context.Context) (*provider.PreparedConfig, err
 	if err != nil {
 		return nil, err
 	}
+	if err := resource.ValidateResourceDirectories(prepared.Snapshot().Effective.Config.ResourceDirs); err != nil {
+		return nil, err
+	}
 	if err := process.CheckConfiguration(runnerConfiguration(prepared.Snapshot().Effective.Config, nil)); err != nil {
 		return nil, err
 	}
@@ -212,6 +215,12 @@ func (c *Core) commitConfig(ctx context.Context, req protocol.Request, candidate
 		return protocol.Accepted{}, failure
 	}
 	snapshot := candidate.Snapshot()
+	if err := resource.ValidateResourceDirectories(snapshot.Effective.Config.ResourceDirs); err != nil {
+		failure := configFailure(err)
+		failure.Data.OperationID = req.OperationID
+		c.configError.Store(failure)
+		return protocol.Accepted{}, failure
+	}
 	if err := process.CheckConfiguration(runnerConfiguration(snapshot.Effective.Config, nil)); err != nil {
 		failure := configFailure(err)
 		failure.Data.OperationID = req.OperationID
