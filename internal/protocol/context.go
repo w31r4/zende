@@ -41,6 +41,7 @@ type ContextRequestInfo struct {
 	Started           int64                `json:"started"`
 	Model             string               `json:"model"`
 	Protocol          string               `json:"protocol"`
+	ToolSearch        string               `json:"tool_search,omitempty"`
 	Selection         string               `json:"selection,omitempty"`
 	Cwd               string               `json:"cwd,omitempty"`
 	Effort            string               `json:"effort,omitempty"`

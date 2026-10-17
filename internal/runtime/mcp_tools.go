@@ -16,8 +16,8 @@ type mcpTool struct {
 	invoke bool
 }
 
-// MCPExecutors are the entire native MCP surface. Server definitions are
-// discovered as data, not permanently added to the model's tool registry.
+// MCPExecutors register the stable host entries. Native protocol routes add
+// request-scoped discovered functions without growing the global registry.
 func (c *Core) MCPExecutors() []tool.Executor {
 	return []tool.Executor{mcpTool{core: c}, mcpTool{core: c, invoke: true}}
 }

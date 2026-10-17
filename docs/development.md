@@ -198,7 +198,7 @@ compaction:
 
 ## 数据与恢复边界
 
-SQLite schema 为 19，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。版本 8 加入上下文视图事件，9 保存 worktree 准备，10 加入 mailbox，11 保存结果投递回执，12 加入整树停止事件与调度保护，13 保存资源准备状态，14 保存 MCP 调用与结果回执，15 保存插件调用、进度与结果，16 追加插件订阅状态、投递身份和事件数据，17 保存压缩操作状态，18 追加配置版本与发布记录，19 在资源准备及事件中保存自动发现来源。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答、资源和配置版本，以及插件调用意图、进度、订阅记录和已完成的 MCP/插件回执；更高版本拒绝打开。
+SQLite schema 为 20，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。版本 8 加入上下文视图事件，9 保存 worktree 准备，10 加入 mailbox，11 保存结果投递回执，12 加入整树停止事件与调度保护，13 保存资源准备状态，14 保存 MCP 调用与结果回执，15 保存插件调用、进度与结果，16 追加插件订阅状态、投递身份和事件数据，17 保存压缩操作状态，18 追加配置版本与发布记录，19 在资源准备及事件中保存自动发现来源，20 保存原生搜索选路和请求级 MCP 函数绑定。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答、资源和配置版本，以及插件调用意图、进度、订阅记录和已完成的 MCP/插件回执；更高版本拒绝打开。
 
 core 启动先将中断任务置为待核实，再按原身份恢复。取消中的任务保留 cancelling 和暂停选择；核实完成后结束取消，不恢复执行。历史、已接受输入和原 Task ID 保留。
 
@@ -754,17 +754,29 @@ go test -race ./internal/runtime -run '^TestPluginExecution' -count=3
 
 协议与本地源码依据：OpenAI [流事件](https://developers.openai.com/api/reference/resources/responses/streaming-events)、[函数调用](https://developers.openai.com/api/docs/guides/function-calling)、[reasoning](https://developers.openai.com/api/docs/guides/reasoning)；Pi `7bc154ad082e2f0029c19117a16d22a504439476` 的 `packages/ai/src/providers/openai-responses{,-shared}.ts`，Codex `7219fd735bef2f9cfd0363fecdbbb212e3df5255` 的 `codex-rs/codex-api/src/sse/responses.rs`。实现及测试不代表任意兼容端点支持这些字段；真实端点、凭据和原生 phase 仍未验收。
 
-### 原生工具搜索协议层，尚未接通运行时
+### 原生工具搜索，未测试
 
-adapter 的 `ClientToolSearch` 开关将 `tool_search` 定义编码为 `type:tool_search`、`execution:client`。它只供后续运行时接线使用；当前 provider 配置仍走 host 搜索，不能据此宣称具体端点已支持原生路径。
+在 Responses 连接的具体 `models` 条目中设置 `tool_search: responses-client`，声明该端点、型号及配置已确认支持原生 client search。省略或设为 `host` 使用原 host 路径，其他值和协议组合报配置错误。系统不按品牌推断支持，也不自动访问端点探测；目前没有经真实请求验证的原生组合。
+
+```yaml
+tool_search: responses-client
+```
+
+选路进入 provider 绑定和任务快照，模型目录及 `context inspect --request` 可查询。热更新不改变已开始 Task 的选择，显式重新选用后作用于后续请求。插件 provider 当前支持 host 路径，声明其他选路会被拒绝。
+
+adapter 将搜索入口编码为 `type:tool_search`、`execution:client`。搜索结果中的函数名绑定 `server_id + tool_ref`，描述保留远端名称与说明，输入 schema 保持完整。模型直接调用该函数，Core 补齐服务和引用，复用 `tool_invoke` 的校验、派发意图、原操作 ID、租约及回执链。引用失效要求重新搜索，未知结果继续核实原操作。
 
 `tool_search_call.arguments` 按 JSON 对象读取，完整响应后交给公共工具调用流程。原始 item 使用私有记录版本 2 保存，同端点、同型号且启用该能力才能续接。普通 function call 保留字符串参数；已有 host 搜索历史仍按原类型回放。
 
-配对结果采用 `model.ToolSearchResult`：`tools` 保存完整定义，`text` 保存分页等数据。adapter 生成同 call ID 的 `tool_search_output`，其中 function 使用 `defer_loading:true`、`strict:false`。数据和错误另放相邻的 user 级 JSON 文本；错误结果加载空集合。普通文本中的 tools 字段不会被当作原生定义。
+配对结果采用 `model.ToolSearchResult`：`tools` 保存函数定义，`text` 保存发现 Agent、服务、目录/资源版本、generation、引用映射和分页数据。adapter 生成同 call ID 的 `tool_search_output`，其中 function 使用 `defer_loading:true`、`strict:false`。数据和错误另放相邻的 user 级 JSON 文本；错误结果加载空集合。普通文本中的 tools 字段不会被当作原生定义。
+
+每次请求从所选上下文重建映射，在 `model.started.discovered_mcp` 和工具版本列表中保存；动态函数不再平铺进请求的初始 tools。恢复按原请求映射核对名称、schema、版本及结果，已派发调用只查询原 MCP 记录。继承上下文保留发现来源，实际调用仍使用当前 Agent 的资源与 Task 身份。schema 20 只提升兼容版本标记，旧二进制拒绝打开，原记录保留。
 
 每页最多 50 个定义、结果文本最多 1 MiB，载入新名称时请求内已有定义须少于 256 个。同名重用须保持描述和 schema 一致；超限报错，schema 保持完整。只支持平铺 function，以及返回同名 namespace 的 function call；其他 namespace 明确报不支持。纯文本请求显式设置 `tool_choice:none`，禁用历史中已加载的工具。
 
-字段依据：[OpenAI Tool search](https://developers.openai.com/api/docs/guides/tools-tool-search) 的 client-executed 流程，以及本地 Codex 的 `tools/handlers/tool_search_spec.rs`、`protocol/src/models.rs`。后续还需接通能力声明、MCP 引用与执行器绑定、恢复和其他协议选路；本批未新增或运行测试、构建或真实模型请求，10.5 保持未完成。
+Core 每次请求最多保留 240 个动态 MCP 映射，编码合计最多 2 MiB；超限提示压缩上下文，原历史保留。压缩后若发现结果已被摘要覆盖，需要重新搜索才能取得可调用定义。
+
+字段依据：[OpenAI Tool search](https://developers.openai.com/api/docs/guides/tools-tool-search) 的 client-executed 流程，以及本地 Codex 的 `tools/handlers/tool_search_spec.rs`、`protocol/src/models.rs`。Responses 原生路径已接线，其他协议的原生选路继续实施，10.5 保持未完成。本批未新增或运行测试、构建或真实模型请求。
 
 ## Chat Completions 接入
 

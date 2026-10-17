@@ -105,6 +105,11 @@ func (c *Catalog) compileCapabilities(info Info, reply catalogReply) error {
 		ids := map[string]bool{}
 		for n := range p.Models {
 			m := &p.Models[n]
+			// Plugin providers use the portable host function contract. Native
+			// Responses discovery belongs to the built-in endpoint adapter.
+			if m.ToolSearch != "" && m.ToolSearch != "host" {
+				return invalidCatalog()
+			}
 			if !boundedID(m.ID, 256) || ids[m.ID] || len(m.Label) > 1024 || m.ContextWindow < 1 || m.MaxOutput < 1 || m.MaxOutput >= m.ContextWindow || len(m.Efforts) > 16 {
 				return invalidCatalog()
 			}

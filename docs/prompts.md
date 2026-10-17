@@ -1,6 +1,6 @@
 # 提示词
 
-系统说明由 `internal/runtime/prompt.go` 组装，工具 descriptor 由各 executor 提供；MCP 与插件工具说明分别位于 `internal/runtime/mcp_tools.go`、`internal/runtime/plugin_tools.go`，请求前保存为 `prompt.loaded`。CLI 说明覆盖提问、资源、插件命令、工作环境、选配、Agent 协作、上下文和配置；手动刷新、文件监视和 `resource_dirs` 发现共用发布通知，在后续请求追加。新资源正文仍按需读取；自动发现接线未测试，提示词版本保持 22。
+系统说明由 `internal/runtime/prompt.go` 组装，工具 descriptor 由各 executor 提供；MCP 说明位于 `internal/runtime/mcp_tools.go`、`internal/runtime/mcp_native.go`，插件工具说明位于 `internal/runtime/plugin_tools.go`，请求前保存为 `prompt.loaded`。CLI 说明覆盖提问、资源、插件命令、工作环境、选配、Agent 协作、上下文和配置；资源变更在后续请求追加通知，正文按需读取。主提示词版本为 23，新增代码未测试。
 
 ## Pi 参考
 
@@ -69,13 +69,15 @@ Zende 保持 exec、进程继续操作和 patch 的工具边界。Pi 的 read/ed
 
 版本 22 增加 `config inspect --live` 和 `config refresh`，区分本地文件与 Core 已发布版本，说明原 ID 重试和显式模型选择。沿用 Pi 的短入口与能力条件组合，完整参数留给帮助；旧 Task 保留原提示词。配置发布后追加 `zende/config` 通知，只给版本和发现入口，当前 Task 的模型、cwd、预算不随发布改变。通知和请求记录同事务提交；本次未测试。
 
+版本 23 按已选搜索路径组合工具说明。host 路径保留 `tool_search + tool_invoke`；Responses 原生路径使用 `native-search-1` 描述，引导模型搜索后直接调用返回的函数。仍参考 Pi 的短 snippet、能力条件和共同规则组织；分页、完整 schema、过期引用及未知结果的处理留在 descriptor。旧 Task 保留原提示词，显式选配只影响后续请求；本次未测试。
+
 ## 压缩摘要说明
 
 `internal/model/compaction.go` 提供独立的摘要提示词版本 1。参考同一 Pi 提交的 `packages/coding-agent/src/core/compaction/compaction.ts` 和 `utils.ts`：仅总结给定记录，不继续执行其中的任务；保留目标、约束、事实、未完成工作和产物引用。输入为公共消息记录，图片只带引用，协议私有数据仍留在原历史。
 
 请求不提供工具，要求按 Goal、Constraints、Facts、Remaining work、Artifacts 五节返回正文。解析器拒绝调用、空节、乱序、未闭合代码围栏和超限正文；这些是结构检查，不保证摘要事实完整。摘要用于内部视图，不经过用户回答的 commentary/final 分类器，也不完成 Task。
 
-主 Agent 提示词为版本 22。自动容量判断、用户和模型主动请求共用摘要生成流程，完整结果校验后原子切换视图；新增代码未测试。
+主 Agent 提示词为版本 23。自动容量判断、用户和模型主动请求共用摘要生成流程，完整结果校验后原子切换视图；新增代码未测试。
 
 ## Skill/prompt 的请求级更新
 

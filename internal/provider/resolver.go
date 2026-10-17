@@ -155,7 +155,7 @@ func (r *Resolver) bind(ctx context.Context, saved bindingSnapshot) (model.Bindi
 		}
 		adapter = value
 	case responses.Protocol:
-		value, err := responses.New(responses.Config{Endpoint: conn.BaseURL, Effort: saved.Effort, Credential: credential, Images: selected.Images})
+		value, err := responses.New(responses.Config{Endpoint: conn.BaseURL, Effort: saved.Effort, Credential: credential, Images: selected.Images, ClientToolSearch: selected.ToolSearch == "responses-client"})
 		if err != nil {
 			return model.Binding{}, err
 		}
@@ -167,7 +167,11 @@ func (r *Resolver) bind(ctx context.Context, saved bindingSnapshot) (model.Bindi
 	if err != nil {
 		return model.Binding{}, err
 	}
-	return model.Binding{Adapter: adapter, Model: selected.ID, Protocol: conn.Protocol, NativeCategories: selected.NativeCategories, Images: selected.Images, MaxOutputTokens: selected.MaxOutput, ContextWindow: selected.ContextWindow, Snapshot: data}, nil
+	search := selected.ToolSearch
+	if search == "host" {
+		search = ""
+	}
+	return model.Binding{Adapter: adapter, Model: selected.ID, Protocol: conn.Protocol, NativeCategories: selected.NativeCategories, ToolSearch: search, Images: selected.Images, MaxOutputTokens: selected.MaxOutput, ContextWindow: selected.ContextWindow, Snapshot: data}, nil
 }
 
 var _ model.Restorer = (*Resolver)(nil)

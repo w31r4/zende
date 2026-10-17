@@ -92,6 +92,7 @@ func contextRequest(ctx context.Context, tx *sql.Tx, agent, id string) (*protoco
 			Selection         string                      `json:"selection"`
 			Cwd               string                      `json:"cwd"`
 			Effort            string                      `json:"effort"`
+			ToolSearch        string                      `json:"tool_search"`
 			SelectionRevision int64                       `json:"selection_revision"`
 		} `json:"settings"`
 	}
@@ -132,6 +133,7 @@ func contextRequest(ctx context.Context, tx *sql.Tx, agent, id string) (*protoco
 			return nil, nil, 0, "", protocol.E("invalid_state", "request configuration predates its Task configuration")
 		}
 		out.TaskConfiguration = s.Configuration
+		out.ToolSearch = s.ToolSearch
 		out.Selection, out.Cwd, out.Effort, out.SelectionRevision = s.Selection, s.Cwd, s.Effort, s.SelectionRevision
 	}
 	err = tx.QueryRowContext(ctx, `SELECT seq FROM events WHERE agent_id=? AND task_id=? AND kind='prompt.loaded' AND seq<? ORDER BY seq DESC LIMIT 1`, agent, out.TaskID, out.Started).Scan(&out.PromptSeq)

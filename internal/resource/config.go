@@ -36,6 +36,7 @@ type ModelConfig struct {
 	Efforts          []string         `json:"efforts,omitempty" yaml:"efforts,omitempty"`
 	Images           bool             `json:"images,omitempty" yaml:"images,omitempty"`
 	NativeCategories bool             `json:"native_categories,omitempty" yaml:"native_categories,omitempty"`
+	ToolSearch       string           `json:"tool_search,omitempty" yaml:"tool_search,omitempty"`
 	Chat             *ChatConfig      `json:"chat,omitempty" yaml:"chat,omitempty"`
 	Anthropic        *AnthropicConfig `json:"anthropic,omitempty" yaml:"anthropic,omitempty"`
 	Gemini           *GeminiConfig    `json:"gemini,omitempty" yaml:"gemini,omitempty"`
@@ -341,6 +342,9 @@ func (c Config) Validate() error {
 			}
 			if conn.Protocol != "responses" && m.NativeCategories {
 				return fmt.Errorf("selected protocol uses explicit text markers, not native categories")
+			}
+			if m.ToolSearch != "" && m.ToolSearch != "host" && (m.ToolSearch != "responses-client" || conn.Protocol != "responses") {
+				return fmt.Errorf("tool_search must be host or responses-client on a confirmed Responses endpoint/model")
 			}
 		}
 	}

@@ -34,6 +34,7 @@ type ModelInfo struct {
 	Efforts          []string `json:"efforts"`
 	Images           bool     `json:"images"`
 	NativeCategories bool     `json:"native_categories"`
+	ToolSearch       string   `json:"tool_search,omitempty"`
 }
 
 type ConnectionPage struct {

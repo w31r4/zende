@@ -88,6 +88,7 @@ type Binding struct {
 	Adapter          Adapter
 	Model, Protocol  string
 	NativeCategories bool
+	ToolSearch       string // Empty uses host search; native routes are explicitly configured.
 	Images           bool
 	MaxOutputTokens  int
 	ContextWindow    int // Zero means unknown; never infer capacity from the model name.

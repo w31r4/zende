@@ -333,6 +333,7 @@ type requestRecord struct {
 	ResourceCatalog *protocol.ResourceCatalog   `json:"resource_catalog,omitempty"`
 	PluginBinding   *pluginModelRequestBinding  `json:"plugin_binding,omitempty"`
 	ContextBudget   *protocol.ContextBudget     `json:"context_budget,omitempty"`
+	DiscoveredMCP   []discoveredMCP             `json:"discovered_mcp,omitempty"`
 }
 type invocation struct {
 	SchemaVersion int            `json:"schema_version,omitempty"`
@@ -359,6 +360,7 @@ type taskSettings struct {
 	Model             string                        `json:"model"`
 	Protocol          string                        `json:"protocol"`
 	NativeCategories  bool                          `json:"native_categories"`
+	ToolSearch        string                        `json:"tool_search,omitempty"`
 	Images            bool                          `json:"images,omitempty"`
 	MaxOutputTokens   int                           `json:"max_output_tokens"`
 	FormatRepairs     int                           `json:"format_repairs"`
@@ -405,7 +407,10 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		binding = resume.Binding
 	}
 	registry := c.Tools
-	descriptors := registry.Descriptors()
+	descriptors, err := c.searchDescriptors(registry.Descriptors(), binding.ToolSearch)
+	if err != nil {
+		return "", err
+	}
 	var commands []CommandHint
 	for _, descriptor := range descriptors {
 		if descriptor.Name == "exec_command" {
@@ -428,6 +433,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 	policy := config.ContextBudgetPolicy()
 	settings := taskSettings{Version: 2, Selection: selection, Cwd: w.Agent.Cwd, Model: binding.Model, Protocol: binding.Protocol, NativeCategories: binding.NativeCategories, Images: binding.Images, MaxOutputTokens: binding.MaxOutputTokens, FormatRepairs: limit, Binding: binding.Snapshot, SelectionRevision: choice.Choice.Revision, ModelRevision: choice.Choice.ModelRevision, Effort: choice.Choice.Effort, ContextWindow: binding.ContextWindow, ContextPolicy: &policy}
 	settings.Configuration = configuration.publication
+	settings.ToolSearch = binding.ToolSearch
 	if choice.Choice.ModelRevision == 0 && selection == config.Model {
 		settings.Effort = config.Effort
 	}
@@ -435,7 +441,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if err := appendEvent("task.config", settings); err != nil {
 			return "", err
 		}
-		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "22", Body: system}); err != nil {
+		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "23", Body: system}); err != nil {
 			return "", err
 		}
 	} else {
@@ -446,7 +452,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if resume.Journal.Prompt.Body != "" {
 			system = resume.Journal.Prompt.Body
 		} else {
-			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "22", Body: system}); err != nil {
+			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "23", Body: system}); err != nil {
 				return "", err
 			}
 		}
@@ -481,7 +487,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 			for _, call := range j.Calls {
 				calls = append(calls, call.Call)
 			}
-			if err := c.settleCalls(ctx, persist, w, j.Request.ID, calls, j.Request.FormatRepair, j.Calls, appendEvent); err != nil {
+			if err := c.settleCalls(ctx, persist, w, j.Request, calls, j.Request.FormatRepair, j.Calls, appendEvent); err != nil {
 				return "", err
 			}
 			if ctx.Err() != nil {
@@ -593,12 +599,30 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 			messages = append(messages, item.Message)
 		}
 		req := model.Request{ID: protocol.NewID("request"), Model: nextBinding.Model, System: system, Messages: messages, MaxOutputTokens: nextBinding.MaxOutputTokens}
-		requestDescriptors := descriptors
+		requestDescriptors, err := c.searchDescriptors(c.Tools.Descriptors(), nextBinding.ToolSearch)
+		if err != nil {
+			return "", err
+		}
+		var discovered []discoveredMCP
+		if nextBinding.ToolSearch != "" && !repairOnly {
+			discovered, err = discoverMCPHistory(messages)
+			if err != nil {
+				return "", err
+			}
+		}
 		if repairOnly {
 			requestDescriptors = nil
 		}
 		for _, d := range requestDescriptors {
 			req.Tools = append(req.Tools, d.Tool)
+		}
+		// Native definitions are already present at their original search-result
+		// positions. Record executors here without eagerly adding wire tools.
+		for _, loaded := range discovered {
+			if _, _, exists := c.Tools.Lookup(loaded.Tool.Name); exists {
+				return "", protocol.E("tool_conflict", "native MCP name conflicts with a host executor")
+			}
+			requestDescriptors = append(requestDescriptors, loaded.descriptor())
 		}
 		var budget *protocol.ContextBudget
 		if nextSettings.ContextPolicy != nil {
@@ -655,8 +679,14 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if err != nil {
 			return "", modelDependencyFailure(nextBinding, err)
 		}
+		record := requestRecord{ID: req.ID, Model: nextBinding.Model, Protocol: nextBinding.Protocol, ViewID: contextSnapshot.View.ID, Tools: requestDescriptors, MaxOutputTokens: req.MaxOutputTokens, FormatRepair: repairOnly, RepairAttempt: repairs, RepairLimit: limit, Settings: &nextSettings, ResourceCatalog: &contextSnapshot.Resources.Catalog, PluginBinding: pluginBinding, ContextBudget: budget, Configuration: publication, DiscoveredMCP: discovered}
+		if !validDiscoveredMCPRecord(record) {
+			releaseModel()
+			return "", protocol.E("request_binding_invalid", "native MCP request bindings cannot be retained for recovery")
+		}
 		err = c.Store.BeginModelRequest(persist, w.Agent.ID, w.Task.ID, nextSettings.SelectionRevision, cursor, notices, func(cursor int64) any {
-			return requestRecord{ID: req.ID, Model: nextBinding.Model, Protocol: nextBinding.Protocol, Cursor: cursor, ViewID: contextSnapshot.View.ID, Tools: requestDescriptors, MaxOutputTokens: req.MaxOutputTokens, FormatRepair: repairOnly, RepairAttempt: repairs, RepairLimit: limit, Settings: &nextSettings, ResourceCatalog: &contextSnapshot.Resources.Catalog, PluginBinding: pluginBinding, ContextBudget: budget, Configuration: publication}
+			record.Cursor = cursor
+			return record
 		})
 		if err != nil {
 			releaseModel()
@@ -786,7 +816,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 			}
 			return final, nil
 		}
-		if err := c.settleCalls(ctx, persist, w, req.ID, response.Calls, repairOnly, nil, appendEvent); err != nil {
+		if err := c.settleCalls(ctx, persist, w, &record, response.Calls, repairOnly, nil, appendEvent); err != nil {
 			return "", err
 		}
 		if formatErr != nil {

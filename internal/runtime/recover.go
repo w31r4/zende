@@ -91,7 +91,7 @@ func (c *Core) verifyCalls(ctx context.Context, j *recoveryJournal) ([]store.Ver
 			continue
 		}
 		op := pending.Invocation
-		executor, descriptor, ok := c.Tools.Lookup(pending.Call.Name)
+		executor, descriptor, ok := c.requestTool(j.Request, pending.Call.Name)
 		if op == nil || !ok || op.Version != descriptor.Version {
 			failure = protocol.E("recovery_unavailable", "original tool version is unavailable; effect remains held")
 			continue
@@ -165,7 +165,7 @@ func (c *Core) prepareResume(ctx context.Context, j *recoveryJournal) (*resumedT
 		return nil, err
 	}
 	s := j.Settings
-	if b.Adapter == nil || b.Model != s.Model || b.Protocol != s.Protocol || b.NativeCategories != s.NativeCategories || b.MaxOutputTokens != s.MaxOutputTokens || s.Images && !b.Images || s.ContextWindow > 0 && b.ContextWindow != s.ContextWindow {
+	if b.Adapter == nil || b.Model != s.Model || b.Protocol != s.Protocol || b.NativeCategories != s.NativeCategories || b.ToolSearch != s.ToolSearch || b.MaxOutputTokens != s.MaxOutputTokens || s.Images && !b.Images || s.ContextWindow > 0 && b.ContextWindow != s.ContextWindow {
 		return nil, protocol.E("model_snapshot_invalid", "restored provider differs from the original task")
 	}
 	if j.Request != nil {
@@ -183,7 +183,7 @@ func (c *Core) prepareResume(ctx context.Context, j *recoveryJournal) (*resumedT
 					break
 				}
 			}
-			_, current, _ := c.Tools.Lookup(call.Call.Name)
+			_, current, _ := c.requestTool(j.Request, call.Call.Name)
 			if current.Version != expected || call.Invocation != nil && call.Invocation.Version != expected {
 				return nil, protocol.E("recovery_unavailable", "pending call requires its original tool definition")
 			}

@@ -30,9 +30,10 @@ func toolMessage(call model.ToolCall, result tool.Result, failure *protocol.Erro
 	return model.Message{Role: "tool", Content: content}, nil
 }
 
-func (c *Core) settleCalls(ctx, persist context.Context, w store.Work, request string, calls []model.ToolCall, repairOnly bool, previous []*recoveryCall, appendEvent func(string, any) error) error {
+func (c *Core) settleCalls(ctx, persist context.Context, w store.Work, record *requestRecord, calls []model.ToolCall, repairOnly bool, previous []*recoveryCall, appendEvent func(string, any) error) error {
+	request := record.ID
 	for index, call := range calls {
-		executor, descriptor, found := c.Tools.Lookup(call.Name)
+		executor, descriptor, found := c.requestTool(record, call.Name)
 		op := invocation{SchemaVersion: 2, ID: protocol.NewID("call"), RequestID: request, Call: call, Version: descriptor.Version}
 		prepared := false
 		var result tool.Result

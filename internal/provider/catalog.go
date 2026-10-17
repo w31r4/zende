@@ -74,7 +74,7 @@ func (r *Resolver) ListModels(ctx context.Context, q protocol.ModelQuery) (proto
 	out := protocol.ModelPage{Connection: connectionInfo(q.Connection, c), Items: []protocol.ModelInfo{}, Version: r.version}
 	for _, m := range c.Models {
 		if m.ID > q.After {
-			out.Items = append(out.Items, protocol.ModelInfo{ID: m.ID, Label: m.Label, ContextWindow: m.ContextWindow, MaxOutput: m.MaxOutput, Efforts: append([]string{}, m.Efforts...), Images: m.Images, NativeCategories: m.NativeCategories})
+			out.Items = append(out.Items, protocol.ModelInfo{ID: m.ID, Label: m.Label, ContextWindow: m.ContextWindow, MaxOutput: m.MaxOutput, Efforts: append([]string{}, m.Efforts...), Images: m.Images, NativeCategories: m.NativeCategories, ToolSearch: m.ToolSearch})
 		}
 	}
 	slices.SortFunc(out.Items, func(a, b protocol.ModelInfo) int { return strings.Compare(a.ID, b.ID) })

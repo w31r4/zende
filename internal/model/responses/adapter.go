@@ -22,8 +22,8 @@ type Config struct {
 	Credential func(context.Context) (string, error)
 	Client     *http.Client
 	Images     bool
-	// ClientToolSearch requires an explicitly confirmed endpoint/model. It is
-	// an adapter seam until the runtime can bind discovered tool executors.
+	// ClientToolSearch requires an explicitly confirmed endpoint/model and a
+	// host that retains the executors returned by each discovery result.
 	ClientToolSearch bool
 }
 
