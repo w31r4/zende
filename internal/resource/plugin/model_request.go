@@ -16,9 +16,16 @@ func (a *ModelAdapter) ValidateContext(r model.Request) error {
 	return a.validate(r, true)
 }
 
+func (a *ModelAdapter) KeepsPrivateHistory(message model.Message, modelID string) bool {
+	return message.Protocol == a.protocol && len(message.Opaque) != 0 && modelID == a.info.ID
+}
+
 // Preflight is local. It neither resolves credentials nor asks the plugin to
 // interpret history. Pending calls are permitted only during model selection.
 func (a *ModelAdapter) validate(r model.Request, allowPending bool) error {
+	if _, err := model.NativeSearchImports(r, false); err != nil {
+		return err
+	}
 	bad := func() error { return protocol.E("invalid_params", "invalid public model request for plugin provider") }
 	if !allowPending && !boundedID(r.ID, 128) || r.Model != a.info.ID || r.MaxOutputTokens < 1 || r.MaxOutputTokens > a.info.MaxOutput || !utf8.ValidString(r.System) {
 		return bad()

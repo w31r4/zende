@@ -761,11 +761,19 @@ go test -race ./internal/runtime -run '^TestPluginExecution' -count=3
 | Anthropic | 原始 block、thinking/signature/redacted_thinking、搜索身份；固定端点、型号与搜索语义 |
 | Gemini | 原始 part、thoughtSignature 与调用关联；固定端点、型号 |
 
-私有续接数据留在原记录中；当前选择预览会报告不兼容，跨协议转换仍在实施。用量缺失保持未知，配置容量与本地估算不等于供应商计量。认证、网络及字段支持须另做真实端点验证。
+私有续接数据留在原记录中；当前选择预览仍按原协议检查兼容性，显式转换的运行时接线待完成。用量缺失保持未知，配置容量与本地估算不等于供应商计量。认证、网络及字段支持须另做真实端点验证。
 
 原生字段依据分别见下方 Responses、Anthropic 章节。2026-10-17 查阅 [GenerateContent Tool / FunctionDeclaration](https://ai.google.dev/api/generate-content#Tool)，未确认适用于本地 client search 的原生 deferred 字段，因此当前 Gemini adapter 使用 host；文档中的远端 `mcpServers` 不等于本地 MCP 搜索与调用记录。Chat adapter 也只声明已实现的 host 路径。
 
 当前没有完成真实端点验收的端点/型号/配置组合。Responses、Chat 的历史局部测试记录见 [验证记录](./verification.md)；本轮及后续改动未运行测试或构建，Anthropic、Gemini、两条原生搜索路径、跨协议迁移与 V14/V15 均未验收。10.5、10.7 保持未完成。
+
+### 公开历史转换基础，未接入运行时
+
+`provider.ProjectPublicHistory` 构造独立的请求消息副本，原记录保持不变。目标仍能使用的私有数据保留；其他数据交给来源协议检查公开内容与私有记录是否对应，再导出公开文本和调用。只有私有状态的 reasoning、thinking 或 signature 块从该请求副本省略，继续留在存储中。目标不支持原生输出类别时，commentary/final 转成约定文本标签。
+
+Responses 与 Anthropic 的原生搜索调用由来源记录确认身份，通过 `Request.NativeSearchCalls` 交给目标编码器，配对结果沿用原生工具定义编码。仅凭函数名或同形结果 JSON 不改变旧 host 调用。重复、缺失或不匹配的导入 ID 报错；未启用原生路径的接入和插件拒绝该导入字段。插件私有数据只在原来源、定义版本和型号匹配时保留，跨插件格式转换报不支持。
+
+转换还需目标编码器检查完整消息顺序、调用配对、图片和工具定义。当前已加入四协议导出器与转换接口；选择预览、提交、任务快照及恢复尚未使用它们，默认选择行为未变。新代码未测试，10.6 保持未完成。
 
 ## Responses 接入
 

@@ -102,6 +102,10 @@ func encodeSearchRequest(request model.Request, endpoint, effort string, allowPe
 	if request.Model == "" || request.MaxOutputTokens < 1 {
 		return nil, protocol.E("invalid_params", "Responses requires a model and positive output budget")
 	}
+	imports, err := model.NativeSearchImports(request, clientSearch)
+	if err != nil {
+		return nil, err
+	}
 	input := []any{}
 	imageBytes := 0
 	pending := map[string]bool{}
@@ -243,6 +247,15 @@ func encodeSearchRequest(request model.Request, endpoint, effort string, allowPe
 					if err := appendCall(block.CallID); err != nil {
 						return nil, err
 					}
+					if imports[block.CallID] {
+						if block.Name != searchToolName {
+							return nil, wireError("imported native search ID does not identify a search call")
+						}
+						delete(imports, block.CallID)
+						searchCalls[block.CallID] = true
+						input = append(input, map[string]any{"type": "tool_search_call", "execution": "client", "call_id": block.CallID, "arguments": block.Arguments, "status": "completed"})
+						continue
+					}
 					// A public-only host call remains a function call even when
 					// native search is enabled later. Preserve its original kind.
 					input = append(input, map[string]any{"type": "function_call", "call_id": block.CallID, "name": block.Name, "arguments": string(block.Arguments)})
@@ -288,6 +301,9 @@ func encodeSearchRequest(request model.Request, endpoint, effort string, allowPe
 	}
 	if len(pending) != 0 && !allowPending {
 		return nil, wireError("historical calls are missing results")
+	}
+	if len(imports) != 0 {
+		return nil, wireError("native search imports do not match public historical calls")
 	}
 	tools := []any{}
 	toolNames := map[string]bool{}

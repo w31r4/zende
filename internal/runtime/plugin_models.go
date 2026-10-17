@@ -43,6 +43,9 @@ func (a *pluginModelSelection) ValidateRequest(r model.Request) error {
 func (a *pluginModelSelection) ValidateContext(r model.Request) error {
 	return a.validator.ValidateContext(r)
 }
+func (a *pluginModelSelection) KeepsPrivateHistory(message model.Message, modelID string) bool {
+	return a.validator.KeepsPrivateHistory(message, modelID)
+}
 func (a *pluginModelSelection) Stream(context.Context, model.Request, func(model.Delta) error) error {
 	return protocol.E("model_unavailable", "plugin model request must acquire its instance before journaling")
 }

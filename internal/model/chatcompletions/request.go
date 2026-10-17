@@ -38,6 +38,9 @@ func decodeObject(raw []byte, value any) error {
 }
 
 func (a *Adapter) encode(request model.Request, allowPending bool) ([]byte, error) {
+	if _, err := model.NativeSearchImports(request, false); err != nil {
+		return nil, err
+	}
 	if request.Model == "" || request.MaxOutputTokens < 1 {
 		return nil, protocol.E("invalid_params", "Chat Completions requires a model and positive output budget")
 	}

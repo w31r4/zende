@@ -37,6 +37,11 @@ type Request struct {
 	Messages        []Message `json:"messages"`
 	Tools           []Tool    `json:"tools"`
 	MaxOutputTokens int       `json:"max_output_tokens"`
+	// Native search calls exported by a source protocol during an explicit
+	// public-history conversion. Their public calls remain in Messages. A
+	// native adapter must consume every ID; arbitrary result text cannot add
+	// entries here. Ordinary host calls are never promoted by their name alone.
+	NativeSearchCalls []string `json:"native_search_calls,omitempty"`
 	// Resolved only for transport; durable context keeps attachment IDs.
 	Images map[string]Image `json:"-"`
 }

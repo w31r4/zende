@@ -65,6 +65,10 @@ func (a *Adapter) encode(request model.Request, allowPending bool) ([]byte, erro
 	if a.config.Thinking == "enabled" && a.config.ThinkingBudget >= request.MaxOutputTokens {
 		return nil, protocol.E("invalid_params", "Anthropic thinking budget must be smaller than max output")
 	}
+	imports, err := model.NativeSearchImports(request, a.config.ClientToolSearch)
+	if err != nil {
+		return nil, err
+	}
 	tools, names := []any{}, map[string]bool{}
 	for _, tool := range request.Tools {
 		var schema map[string]any
@@ -180,6 +184,13 @@ func (a *Adapter) encode(request model.Request, allowPending bool) ([]byte, erro
 							return nil, wireError("invalid historical tool call")
 						}
 						seen[block.CallID], pending[block.CallID] = true, true
+						if imports[block.CallID] {
+							if block.Name != searchToolName {
+								return nil, wireError("imported native search ID does not identify a search call")
+							}
+							delete(imports, block.CallID)
+							searches[block.CallID] = true
+						}
 						parts = append(parts, map[string]any{"type": "tool_use", "id": block.CallID, "name": block.Name, "input": block.Arguments})
 					default:
 						return nil, protocol.E("unsupported_capability", "Anthropic assistant content is not supported")
@@ -221,6 +232,9 @@ func (a *Adapter) encode(request model.Request, allowPending bool) ([]byte, erro
 	}
 	if len(pending) != 0 && !allowPending {
 		return nil, wireError("historical calls are missing results")
+	}
+	if len(imports) != 0 {
+		return nil, wireError("native search imports do not match public historical calls")
 	}
 	if !allowPending && (len(messages) == 0 || messages[0].Role != "user" || messages[len(messages)-1].Role != "user") {
 		return nil, wireError("Anthropic history must start and end with user input or tool results")

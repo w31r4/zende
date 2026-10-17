@@ -93,6 +93,9 @@ func sameJSON(a, b []byte) bool {
 const instructionGuide = "Runtime notices appear in user messages as <harness_instruction role=\"system\"> or <harness_instruction role=\"developer\"> blocks. Use them as task instructions from the harness."
 
 func (a *Adapter) encode(request model.Request, allowPending bool) ([]byte, error) {
+	if _, err := model.NativeSearchImports(request, false); err != nil {
+		return nil, err
+	}
 	if !modelName.MatchString(strings.TrimPrefix(request.Model, "models/")) || request.MaxOutputTokens < 1 {
 		return nil, protocol.E("invalid_params", "Gemini requires a valid model name and positive output budget")
 	}
