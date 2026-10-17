@@ -158,6 +158,12 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 			return nil, err
 		}
 		return c.selectAgent(ctx, req, p)
+	case "agent.select.preview":
+		var p protocol.SelectAgent
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.previewSelection(ctx, p)
 	case "workspace.directory":
 		var p protocol.DirectoryQuery
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

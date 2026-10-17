@@ -12,6 +12,7 @@ func (a *app) selectionCommands(agent *cobra.Command) {
 	}})
 	var cwd, model, effort, version string
 	var revision int64
+	var preview bool
 	selectCommand := &cobra.Command{Use: "select AGENT", Short: "Persist settings for the next model request; existing calls keep their settings", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		p := protocol.SelectAgent{AgentID: args[0], CatalogVersion: version}
 		if cmd.Flags().Changed("cwd") {
@@ -26,6 +27,9 @@ func (a *app) selectionCommands(agent *cobra.Command) {
 		if cmd.Flags().Changed("expected-revision") {
 			p.ExpectedRevision = &revision
 		}
+		if preview {
+			return a.call(cmd, "agent.select.preview", false, p)
+		}
 		return a.call(cmd, "agent.select", true, p)
 	}}
 	selectCommand.Flags().StringVar(&cwd, "cwd", "", "Existing directory, relative to the current Agent cwd")
@@ -33,6 +37,7 @@ func (a *app) selectionCommands(agent *cobra.Command) {
 	selectCommand.Flags().StringVar(&effort, "effort", "", "Model-supported effort; empty uses provider default (requires --model)")
 	selectCommand.Flags().StringVar(&version, "catalog-version", "", "Require an unchanged model catalog (requires --model)")
 	selectCommand.Flags().Int64Var(&revision, "expected-revision", 0, "Require the revision returned by agent selection")
+	selectCommand.Flags().BoolVar(&preview, "preview", false, "Read capability differences and local compatibility without selecting or contacting the model (requires --model)")
 	agent.AddCommand(selectCommand)
 }
 
@@ -40,6 +45,6 @@ func selectionHints(executable, profile string) []runtime.CommandHint {
 	prefix := quoteCommandPart(executable) + " --profile " + quoteCommandPart(profile) + " "
 	return []runtime.CommandHint{
 		{Name: "agent.selection", Usage: prefix + "agent selection AGENT", Guidance: "Read desired cwd, model, effort and revision. An in-flight request may still use the previous selection."},
-		{Name: "agent.select", Usage: prefix + "agent select AGENT [--cwd PATH] [--model CONNECTION/MODEL --effort VALUE]", Guidance: "Persist settings for the next model request. Inspect model connections/list before selecting. Empty effort uses the provider default. Existing calls and processes keep their original cwd. Use --expected-revision to avoid overwriting another selection."},
+		{Name: "agent.select", Usage: prefix + "agent select AGENT [--cwd PATH] [--model CONNECTION/MODEL --effort VALUE]", Guidance: "Persist settings for the next model request. Inspect model connections/list first; add --preview with --model to read capability differences and local incompatibilities without changing settings or contacting the provider. Empty effort uses the provider default. Existing calls and processes keep their original cwd. Use --expected-revision to avoid overwriting another selection."},
 	}
 }

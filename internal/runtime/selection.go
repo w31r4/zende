@@ -9,7 +9,6 @@ import (
 	"zende.local/harness/internal/model"
 	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/store"
-	"zende.local/harness/internal/workspace"
 )
 
 // Tasks and idle summaries resolve the same explicit selection and defaults.
@@ -68,55 +67,23 @@ func (c *Core) selectAgent(ctx context.Context, req protocol.Request, p protocol
 	if old, found, err := c.Store.AcceptedRequest(ctx, req); found || err != nil {
 		return old, err
 	}
-	if p.Cwd == nil && p.Model == nil || p.Effort != nil && p.Model == nil || p.CatalogVersion != "" && p.Model == nil {
-		return protocol.Accepted{}, protocol.E("invalid_params", "select cwd or model; effort and catalog_version require model")
-	}
-	current, err := c.Store.Selection(ctx, p.AgentID)
+	current, next, binding, err := c.prepareSelection(ctx, p)
 	if err != nil {
 		return protocol.Accepted{}, err
 	}
-	if p.ExpectedRevision != nil && *p.ExpectedRevision != current.Choice.Revision {
-		return protocol.Accepted{}, protocol.E("selection_changed", "Agent settings changed; inspect and select again")
-	}
-	next := current
-	if p.Cwd != nil {
-		next.Choice.Cwd, err = workspace.DirectoryPath(current.Choice.Cwd, *p.Cwd)
+	if binding != nil {
+		issues, _, err := c.selectionCompatibility(ctx, p.AgentID, *binding)
 		if err != nil {
 			return protocol.Accepted{}, err
 		}
-	}
-	if p.Model != nil {
-		effort := ""
-		if p.Effort != nil {
-			effort = *p.Effort
+		if len(issues) != 0 {
+			return protocol.Accepted{}, issues[0]
 		}
-		b, err := c.resolveModelSelection(ctx, p.AgentID, *p.Model, effort, p.CatalogVersion)
-		if err != nil {
-			return protocol.Accepted{}, safeFailure(err, "model_unavailable", "selected model is unavailable")
-		}
-		if b.Adapter == nil || b.Model == "" || b.Protocol == "" || len(b.Snapshot) == 0 {
-			return protocol.Accepted{}, protocol.E("model_unavailable", "selected model has no restorable binding")
-		}
-		messages, _, err := c.Store.ModelContext(ctx, p.AgentID)
-		if err != nil {
-			return protocol.Accepted{}, err
-		}
-		images, err := c.resolveImages(ctx, p.AgentID, messages, b.Images)
-		if err != nil {
-			return protocol.Accepted{}, err
-		}
-		if validator, ok := b.Adapter.(model.ContextValidator); ok {
-			if err := validator.ValidateContext(model.Request{Model: b.Model, Messages: messages, Images: images, MaxOutputTokens: b.MaxOutputTokens}); err != nil {
-				return protocol.Accepted{}, safeFailure(err, "model_incompatible", "current context cannot be used by this model")
-			}
-		}
-		next.Choice.Model, next.Choice.Effort, next.Binding = *p.Model, effort, b.Snapshot
-		if selected, ok := b.Adapter.(*pluginModelSelection); ok {
+		if selected, ok := binding.Adapter.(*pluginModelSelection); ok {
 			// Fence publication until the durable selection is committed.
 			c.pluginMu.Lock()
 			defer c.pluginMu.Unlock()
-			slot := c.pluginSlots[protocol.ResourceTarget{AgentID: p.AgentID, ID: selected.snapshot.Resource.ID}]
-			if c.pluginsClosed || slot == nil || slot.version != selected.snapshot.Resource.Version || slot.closing || slot.retiring || slot.instance.Info().State != "ready" {
+			if !c.selectionPluginReady(selected) {
 				return protocol.Accepted{}, protocol.E("catalog_changed", "plugin changed while selecting a model; reopen the model catalog")
 			}
 		}
