@@ -248,7 +248,7 @@ compaction:
 
 ## 数据与恢复边界
 
-SQLite schema 为 25，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。版本 8 加入上下文视图事件，9 保存 worktree 准备，10 加入 mailbox，11 保存结果投递回执，12 加入整树停止事件与调度保护，13 保存资源准备状态，14 保存 MCP 调用与结果回执，15 保存插件调用、进度与结果，16 追加插件订阅状态、投递身份和事件数据，17 保存压缩操作状态，18 追加配置版本与发布记录，19 在资源准备及事件中保存自动发现来源，20 保存原生搜索选路和请求级 MCP 函数绑定，21 加入 Anthropic deferred 选路及搜索私有记录版本 2，22 加入显式公开历史转换绑定与请求记录，23 保存会话复制意图、源树归属、图片映射及历史事件来源，24 加入复制队列输入的来源读取规则，25 识别复制草稿的原问题 Agent。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答、资源和配置版本，以及插件调用意图、进度、订阅记录和已完成的 MCP/插件回执；更高版本拒绝打开。
+SQLite schema 为 26，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。版本 8 加入上下文视图事件，9 保存 worktree 准备，10 加入 mailbox，11 保存结果投递回执，12 加入整树停止事件与调度保护，13 保存资源准备状态，14 保存 MCP 调用与结果回执，15 保存插件调用、进度与结果，16 追加插件订阅状态、投递身份和事件数据，17 保存压缩操作状态，18 追加配置版本与发布记录，19 在资源准备及事件中保存自动发现来源，20 保存原生搜索选路和请求级 MCP 函数绑定，21 加入 Anthropic deferred 选路及搜索私有记录版本 2，22 加入显式公开历史转换绑定与请求记录，23 保存会话复制意图、源树归属、图片映射及历史事件来源，24 加入复制队列输入的来源读取规则，25 识别复制草稿的原问题 Agent，26 保存并遵守模型重试策略和已用次数。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答、资源和配置版本，以及插件调用意图、进度、订阅记录和已完成的 MCP/插件回执；更高版本拒绝打开。
 
 Core 持有 profile 服务锁后，才打开数据库。旧 schema 升级前使用 SQLite 在线备份 API 按页复制，包含已提交 WAL 内容并保留 rowid；新库和同版本启动不生成副本。文件放在状态目录的 `schema-backups/schema-OLD-to-NEW-RANDOM.db`，目录须为私有目录且不能是符号链接，副本权限 0600。复制完成后核对原 schema，刷盘并发布唯一文件名，之后才执行迁移事务。备份失败或取消时不执行迁移，迁移失败则回滚事务。数据库未标版本却已有对象时拒绝初始化。
 
@@ -282,6 +282,29 @@ core 启动先将中断任务置为待核实，再按原身份恢复。取消中
 Task 保存启动设置和提示词；每次 `model.started` 另存实际 cwd、模型、端点、力度、输出上限和选择版本，格式修复额度在 Task 内固定。`settings.configuration` 标识 Task 启动配置，`configuration` 标识该请求可发现的目录版本，两者独立保留；旧记录缺失时保持未知。恢复先按原请求快照核实、处理旧调用，再为下一请求应用待生效选择；当前目录移除连接也不改变保存的绑定。快照只含凭据引用，请求时读取当前值。设置缺失、版本不兼容或待派发工具版本变化时保留待核实。手动和自动配置刷新共用发布流程。
 
 未完整提交的模型流保留原始片段，下次请求使用已提交上下文；已派发的格式修复计入原额度，重启不刷新次数。恢复提交使用事件游标核对并发 stop/新输入，冲突时重读，最多 4 次；持续冲突可显式 recover。
+
+## 运行限额与模型重试
+
+以下为暂定默认值，未做长会话或负载测试；可通过 YAML 覆盖。`config inspect --live` 查询已发布值及来源，`core status` 返回 Core 限额，`runner status` 返回进程限额和实际配置版本。
+
+| `limits` 字段 | 默认值 | 统计范围 |
+| --- | --- | --- |
+| `agents` | 8 | 有待处理工作的会话容量和 Core worker 上限；空闲历史不计 |
+| `depth` | 4 | 子 Agent 最大深度，根为 0 |
+| `processes` | 16 | runner 活动或不确定进程上限 |
+| `output_bytes` | 67108864 | 每进程保存的输出字节，pipe 两路共用 |
+| `model_retries` | 2 | 每 Task 共享的额外模型请求额度 |
+| `format_repairs` | 1 | 每 Task 的输出分类修复额度 |
+| `retry_base_ms` | 250 | 模型及摘要重试的初始等待毫秒数 |
+| `context_reserve` | 8192 | 上下文额外余量，独立于回答输出额度 |
+
+普通模型请求仅在没有收到任何 delta 时，自动重试 HTTP 408、429、500、502、503、504，以及 Anthropic 529。鉴权、配置、凭据错误、连接结果不明和已开始的流直接走原错误/修复流程；插件 provider 不走此 HTTP 重试。等待后重新核对任务停止、暂停与插件未知状态，再派发同一请求身份。
+
+新 Task 保存 `model_retry`，配置更新或换模型不重置额度。HTTP 重试与 Core 中断后从合法上下文重新请求共用计数；先保存 `model.retry.scheduled` 再等待，崩溃或取消不退回已用次数。等待按 `base_ms × 2^(attempt-1)` 增长，最多 30 秒，可取消；`model.retry.dispatching` 表示已通过再次派发检查，不证明远端接受。
+
+每次请求首次收到 delta 追加 `model.receiving`；原始流继续单独保存。恢复按历史核对策略、次数、原因和顺序，`agent recovery` 返回 `model_retry_count` 与 `model_retry_limit`。额度耗尽报 `model_retry_exhausted`，上下文和已完成副作用保留，可显式开启新续接 Task。`model_retries: 0` 关闭普通模型额外请求；旧 Task 没有已保存策略时不补写或套用新默认值。
+
+摘要仍由 `compaction.max_attempts` 单独限次，后续尝试使用相同的有界退避；Core 中断后已用尝试不归零。输出保留、轮转及引用保护见[进程记录](processes.md#输出保留)。新增重试和恢复路径未测试。
 
 ## 停止与恢复
 
@@ -848,7 +871,7 @@ Responses 与 Anthropic 的原生搜索调用由来源记录确认身份，通�
 
 请求最多 32 MiB，SSE 单事件 8 MiB、单次流 64 MiB；公共组装仍受单块 1 MiB、响应 4 MiB/128 块限制，私有数据计入额度。服务端的 `response.completed` 必须与已结束 item 一致。响应结束只通过传输校验，任务完成仍需显式 final。
 
-`reasoning` 保存为协议数据。端点、型号或协议变化导致私有数据不兼容时返回 `protocol_mismatch`，原历史保留。user 图片输入见上一节；assistant/tool 附件、内置远端工具和自动重试仍待接入。上下文压缩由公共运行时处理，新增代码未测试。不支持的输出事件/类型会报错，`limits.model_retries` 此阶段不驱动 HTTP 重试。
+`reasoning` 保存为协议数据。端点、型号或协议变化导致私有数据不兼容时返回 `protocol_mismatch`，原历史保留。user 图片输入见上一节；assistant/tool 附件和内置远端工具仍待接入。上下文压缩与有界模型重试由公共运行时处理，新增代码未测试。不支持的输出事件/类型会报错。
 
 协议与本地源码依据：OpenAI [流事件](https://developers.openai.com/api/reference/resources/responses/streaming-events)、[函数调用](https://developers.openai.com/api/docs/guides/function-calling)、[reasoning](https://developers.openai.com/api/docs/guides/reasoning)；Pi `7bc154ad082e2f0029c19117a16d22a504439476` 的 `packages/ai/src/providers/openai-responses{,-shared}.ts`，Codex `7219fd735bef2f9cfd0363fecdbbb212e3df5255` 的 `codex-rs/codex-api/src/sse/responses.rs`。实现及测试不代表任意兼容端点支持这些字段；真实端点、凭据和原生 phase 仍未验收。
 

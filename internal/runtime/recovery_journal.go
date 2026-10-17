@@ -35,6 +35,9 @@ type recoveryJournal struct {
 	RepairCount, RepairLimit int
 	RepairOnly               bool
 	RepairScheduled          bool
+	ModelRetryCount          int
+	RetryDispatchPending     bool
+	RequestReceiving         bool
 	Settings                 *taskSettings
 	Prompt                   Instruction
 }
@@ -60,6 +63,8 @@ type RecoveryReport struct {
 	RequestID        string                      `json:"request_id,omitempty"`
 	ResponseComplete bool                        `json:"response_complete"`
 	RepairCount      int                         `json:"repair_count"`
+	ModelRetryCount  *int                        `json:"model_retry_count,omitempty"`
+	ModelRetryLimit  *int                        `json:"model_retry_limit,omitempty"`
 	NextStep         string                      `json:"next_step"`
 	Calls            []RecoveryCallInfo          `json:"calls"`
 }
@@ -70,11 +75,11 @@ func recoveryInvalid() error {
 
 func validSettings(s taskSettings) bool {
 	search := s.ToolSearch == "" || s.ToolSearch == "responses-client" && s.Protocol == "responses" || s.ToolSearch == "anthropic-deferred" && s.Protocol == "anthropic"
-	return search && validContextSettings(s) && (s.Version == 1 || s.Version == 2) && filepath.IsAbs(s.Cwd) && s.Model != "" && s.Protocol != "" && s.FormatRepairs >= 0 && s.SelectionRevision >= 0 && s.ModelRevision >= 0 && s.ModelRevision <= s.SelectionRevision && s.ContextWindow >= 0 && (s.ContextPolicy == nil || s.ContextPolicy.Valid()) && (s.Configuration == nil || s.Configuration.Valid())
+	return search && validContextSettings(s) && (s.Version == 1 || s.Version == 2) && filepath.IsAbs(s.Cwd) && s.Model != "" && s.Protocol != "" && s.FormatRepairs >= 0 && s.SelectionRevision >= 0 && s.ModelRevision >= 0 && s.ModelRevision <= s.SelectionRevision && s.ContextWindow >= 0 && (s.ContextPolicy == nil || s.ContextPolicy.Valid()) && (s.ModelRetry == nil || s.ModelRetry.Valid()) && (s.Configuration == nil || s.Configuration.Valid())
 }
 
 func settingsFollow(previous, next taskSettings) bool {
-	if next.SelectionRevision < previous.SelectionRevision || next.ModelRevision < previous.ModelRevision || next.FormatRepairs != previous.FormatRepairs || !reflect.DeepEqual(previous.ContextPolicy, next.ContextPolicy) || !reflect.DeepEqual(previous.Configuration, next.Configuration) {
+	if next.SelectionRevision < previous.SelectionRevision || next.ModelRevision < previous.ModelRevision || next.FormatRepairs != previous.FormatRepairs || !reflect.DeepEqual(previous.ContextPolicy, next.ContextPolicy) || !reflect.DeepEqual(previous.ModelRetry, next.ModelRetry) || !reflect.DeepEqual(previous.Configuration, next.Configuration) {
 		return false
 	}
 	previous.Version, next.Version = 2, 2 // Legacy request snapshots may be upgraded.
@@ -214,10 +219,49 @@ func (j *recoveryJournal) add(e protocol.Event) error {
 		j.Output = nil
 		j.Invalid = nil
 		j.RepairScheduled = false
+		j.RetryDispatchPending = false
+		j.RequestReceiving = false
 		j.Calls = nil
 		j.byCall = map[string]*recoveryCall{}
 		j.byOperation = map[string]*recoveryCall{}
 		j.RepairLimit = r.RepairLimit
+	case "model.receiving":
+		var r struct {
+			RequestID string `json:"request_id"`
+		}
+		if protocol.StrictDecode(e.Payload, &r) != nil || j.Request == nil || r.RequestID != j.Request.ID || j.ResponseComplete || j.RequestReceiving || j.RetryDispatchPending {
+			return recoveryInvalid()
+		}
+		j.RequestReceiving = true
+	case "model.retry.scheduled":
+		var r modelRetrySchedule
+		if protocol.StrictDecode(e.Payload, &r) != nil || j.Request == nil || j.ResponseComplete || r.RequestID != j.Request.ID || j.Request.PluginBinding != nil || j.Settings == nil || j.Settings.ModelRetry == nil || r.Error == nil {
+			return recoveryInvalid()
+		}
+		policy := j.Settings.ModelRetry
+		if j.ModelRetryCount >= policy.Limit || r.Attempt != j.ModelRetryCount+1 || r.Limit != policy.Limit || r.DelayMS != policy.Delay(r.Attempt).Milliseconds() {
+			return recoveryInvalid()
+		}
+		switch r.Reason {
+		case "http":
+			if _, retry := retryableModelHTTP(r.Error); !retry || j.RequestReceiving || j.RetryDispatchPending {
+				return recoveryInvalid()
+			}
+		case "core_interrupted":
+			if r.Error.Data.Kind != "model_interrupted" {
+				return recoveryInvalid()
+			}
+		default:
+			return recoveryInvalid()
+		}
+		j.ModelRetryCount = r.Attempt
+		j.RetryDispatchPending = true
+	case "model.retry.dispatching":
+		var r modelRetryDispatch
+		if protocol.StrictDecode(e.Payload, &r) != nil || j.Request == nil || j.ResponseComplete || r.RequestID != j.Request.ID || r.Attempt != j.ModelRetryCount || !j.RetryDispatchPending {
+			return recoveryInvalid()
+		}
+		j.RetryDispatchPending = false
 	case "context.message":
 		var r store.ContextMessage
 		if protocol.StrictDecode(e.Payload, &r) != nil {
@@ -406,6 +450,12 @@ func (j *recoveryJournal) report() RecoveryReport {
 	r := RecoveryReport{AgentID: j.Work.Agent.ID, TaskID: j.Work.Task.ID, TaskState: j.Work.Task.State, Paused: j.Work.Agent.Paused, Cursor: j.Work.Agent.Seq, ResponseComplete: j.ResponseComplete, RepairCount: j.RepairCount, Calls: []RecoveryCallInfo{}, NextStep: "continue_model"}
 	if j.Request != nil {
 		r.RequestID = j.Request.ID
+	}
+	if j.Settings != nil && j.Settings.ModelRetry != nil {
+		count := j.ModelRetryCount
+		limit := j.Settings.ModelRetry.Limit
+		r.ModelRetryCount = &count
+		r.ModelRetryLimit = &limit
 	}
 	for _, c := range j.Calls {
 		info := RecoveryCallInfo{CallID: c.Call.ID, Name: c.Call.Name, State: c.State, IntentSeq: c.IntentSeq, DispatchSeq: c.DispatchSeq, ResultSeq: c.ResultSeq, ProcessID: c.ProcessID}

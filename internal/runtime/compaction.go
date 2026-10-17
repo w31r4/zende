@@ -76,6 +76,11 @@ func (c *Core) runCompaction(ctx, persist context.Context, w store.Work, id stri
 			}
 			return changed, nil
 		}
+		if r.Attempts > 0 && settings.ModelRetry != nil {
+			if err := waitModelDelay(ctx, settings.ModelRetry.Delay(r.Attempts)); err != nil {
+				return changed, err
+			}
+		}
 		snapshot, err := c.Store.ContextSnapshot(persist, w.Agent.ID)
 		if err != nil {
 			return changed, compactionStoreFailure(err)

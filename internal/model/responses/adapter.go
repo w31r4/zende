@@ -3,7 +3,6 @@ package responses
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"mime"
 	"net/http"
 	"net/url"
@@ -103,17 +102,8 @@ func (a *Adapter) Stream(ctx context.Context, request model.Request, emit func(m
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		code := "model_http"
-		switch response.StatusCode {
-		case 401, 403:
-			code = "model_auth"
-		case 429:
-			code = "model_rate_limit"
-		case 408, 504:
-			code = "model_timeout"
-		}
 		// Provider bodies and URLs can echo secrets or prompts. Keep them out of events.
-		return protocol.E(code, fmt.Sprintf("Responses HTTP %d", response.StatusCode))
+		return model.HTTPFailure("Responses", response.StatusCode)
 	}
 	media, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || media != "text/event-stream" {

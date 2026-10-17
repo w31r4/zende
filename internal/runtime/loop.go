@@ -374,6 +374,7 @@ type taskSettings struct {
 	Images            bool                          `json:"images,omitempty"`
 	MaxOutputTokens   int                           `json:"max_output_tokens"`
 	FormatRepairs     int                           `json:"format_repairs"`
+	ModelRetry        *model.RetryPolicy            `json:"model_retry,omitempty"`
 	Binding           json.RawMessage               `json:"binding,omitempty"`
 	Effort            string                        `json:"effort,omitempty"`
 	SelectionRevision int64                         `json:"selection_revision,omitempty"`
@@ -442,6 +443,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 	limit := config.Limits.FormatRepairs
 	policy := config.ContextBudgetPolicy()
 	settings := taskSettings{Version: 2, Selection: selection, Cwd: w.Agent.Cwd, Model: binding.Model, Protocol: binding.Protocol, NativeCategories: binding.NativeCategories, Images: binding.Images, MaxOutputTokens: binding.MaxOutputTokens, FormatRepairs: limit, Binding: binding.Snapshot, SelectionRevision: choice.Choice.Revision, ModelRevision: choice.Choice.ModelRevision, Effort: choice.Choice.Effort, ContextWindow: binding.ContextWindow, ContextPolicy: &policy}
+	settings.ModelRetry = &model.RetryPolicy{Limit: config.Limits.ModelRetries, BaseMS: config.Limits.RetryBaseMS}
 	settings.Configuration = configuration.publication
 	settings.ToolSearch = binding.ToolSearch
 	settings.ContextMode = binding.ContextMode
@@ -469,8 +471,10 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		}
 	}
 	repairs, repairOnly := 0, false
+	retry := modelRetryState{Policy: settings.ModelRetry}
 	if resume != nil {
 		repairs, repairOnly = resume.Journal.RepairCount, resume.Journal.RepairOnly
+		retry.Count = resume.Journal.ModelRetryCount
 	}
 	markInvalid := func(request string, failure error) error {
 		return appendEvent("model.output.invalid", map[string]any{"request_id": request, "error": safeFailure(failure, "output_format", "incomplete or invalid visible output")})
@@ -532,6 +536,11 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 				}
 			}
 			if !j.ResponseComplete {
+				if j.Request.PluginBinding == nil {
+					if err := retry.schedule(ctx, j.Request.ID, "core_interrupted", protocol.E("model_interrupted", "Core interrupted the previous model request"), appendEvent); err != nil {
+						return "", err
+					}
+				}
 				if err := appendEvent("model.interrupted", map[string]string{"request_id": j.Request.ID, "reason": "core interrupted the stream; retained deltas are not a complete response"}); err != nil {
 					return "", err
 				}
@@ -725,9 +734,17 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		var collector model.Collector
 		classifier := model.Classifier{Native: binding.NativeCategories}
 		var emitErr error
-		err = adapter.Stream(ctx, req, func(delta model.Delta) error {
+		receiving := false
+		err = retry.stream(ctx, adapter, req, pluginBinding != nil, func(delta model.Delta) error {
 			if emitErr != nil {
 				return emitErr
+			}
+			if !receiving {
+				emitErr = appendEvent("model.receiving", map[string]string{"request_id": req.ID})
+				if emitErr != nil {
+					return emitErr
+				}
+				receiving = true
 			}
 			size := len(delta.Text) + len(delta.Raw) + len(delta.Name) + len(delta.CallID) + len(delta.MessageID) + len(delta.Protocol)
 			if size > model.MaxBlockBytes {
@@ -768,7 +785,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 				emitErr = ctx.Err()
 			}
 			return emitErr
-		})
+		}, appendEvent)
 		releaseModel()
 		if emitErr != nil {
 			return "", emitErr

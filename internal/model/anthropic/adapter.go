@@ -4,7 +4,6 @@ package anthropic
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"mime"
 	"net/http"
 	"net/url"
@@ -119,16 +118,7 @@ func (a *Adapter) Stream(ctx context.Context, request model.Request, emit func(m
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		kind := "model_http"
-		switch response.StatusCode {
-		case 401, 403:
-			kind = "model_auth"
-		case 429, 529:
-			kind = "model_rate_limit"
-		case 408, 504:
-			kind = "model_timeout"
-		}
-		return protocol.E(kind, fmt.Sprintf("Anthropic HTTP %d", response.StatusCode))
+		return model.HTTPFailure("Anthropic", response.StatusCode)
 	}
 	media, _, err := mime.ParseMediaType(response.Header.Get("Content-Type"))
 	if err != nil || media != "text/event-stream" {

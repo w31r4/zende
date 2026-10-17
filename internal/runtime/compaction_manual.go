@@ -100,7 +100,8 @@ func (c *Core) runIdleCompaction(ctx, persist context.Context, agent, id string)
 		if err != nil {
 			return compactionStoreFailure(err)
 		}
-		_, binding, err := c.initialModelSelection(ctx, agent, choice, c.configuration())
+		configuration := c.configuration()
+		_, binding, err := c.initialModelSelection(ctx, agent, choice, configuration)
 		if ctx.Err() != nil {
 			return nil
 		}
@@ -108,6 +109,8 @@ func (c *Core) runIdleCompaction(ctx, persist context.Context, agent, id string)
 			return c.failIdleCompaction(persist, id, "model_unavailable")
 		}
 		settings := taskSettings{Cwd: choice.Choice.Cwd, SelectionRevision: choice.Choice.Revision}
+		limits := configuration.effective.Config.Limits
+		settings.ModelRetry = &model.RetryPolicy{Limit: limits.ModelRetries, BaseMS: limits.RetryBaseMS}
 		_, err = c.runCompaction(ctx, persist, store.Work{Agent: a}, id, settings, binding)
 		if ctx.Err() != nil {
 			return nil

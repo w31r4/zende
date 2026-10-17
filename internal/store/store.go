@@ -15,7 +15,7 @@ import (
 	"zende.local/harness/internal/protocol"
 )
 
-const SchemaVersion = 25
+const SchemaVersion = 26
 
 type Store struct {
 	db              *sql.DB
@@ -213,7 +213,9 @@ PRAGMA user_version=2;`); err != nil {
 		}
 		// v24 preserves copied mail attribution; v25 understands inherited
 		// question owners in retained copy drafts. Older strict readers must stop.
-		_, err := tx.ExecContext(ctx, "PRAGMA user_version=25;")
+		// v26 retains model retry policies and consumed attempts. Older schedulers
+		// must not resume these Tasks without honoring their durable budget.
+		_, err := tx.ExecContext(ctx, "PRAGMA user_version=26;")
 		return err
 	})
 	if err != nil && s.migrationBackup != "" {

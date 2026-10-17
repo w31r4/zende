@@ -146,7 +146,7 @@ func (s *Store) AppendTaskEvent(ctx context.Context, agent, task, kind string, p
 		if err := runningTask(ctx, tx, agent, task); err != nil {
 			return err
 		}
-		if kind == "model.started" || kind == "tool.started" || kind == "tool.dispatching" {
+		if kind == "model.started" || kind == "model.retry.scheduled" || kind == "model.retry.dispatching" || kind == "tool.started" || kind == "tool.dispatching" {
 			if err := activeTask(ctx, tx, agent, task); err != nil {
 				return err
 			}
