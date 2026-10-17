@@ -496,11 +496,18 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 	}
 	noticePending := settings.SelectionRevision > 0 && (resume == nil || resume.Journal.Request == nil)
 	previousView := ""
+	precedingRequest := ""
 	var previousResources int64
 	if resume != nil && resume.Journal.Request != nil {
 		previousView = resume.Journal.Request.ViewID
+		precedingRequest = resume.Journal.Request.ID
 		if resume.Journal.Request.ResourceCatalog != nil {
 			previousResources = resume.Journal.Request.ResourceCatalog.Generation
+		}
+	}
+	if resume != nil {
+		if err := c.Store.InterruptTaskCompaction(persist, w.Agent.ID, w.Task.ID); err != nil {
+			return "", compactionStoreFailure(err)
 		}
 	}
 	conflicts := 0
@@ -540,10 +547,6 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 			messages = append(messages, item.Message)
 		}
 		req := model.Request{ID: protocol.NewID("request"), Model: nextBinding.Model, System: system, Messages: messages, MaxOutputTokens: nextBinding.MaxOutputTokens}
-		req.Images, err = c.resolveImages(ctx, w.Agent.ID, messages, nextBinding.Images)
-		if err != nil {
-			return "", err
-		}
 		requestDescriptors := descriptors
 		if repairOnly {
 			requestDescriptors = nil
@@ -562,6 +565,18 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 				return "", err
 			}
 			budget = &planned
+			trigger := planned.State == "compaction_needed" || planned.State == "over_capacity"
+			changed, err := c.automaticCompaction(ctx, persist, w, precedingRequest, nextSettings, nextBinding, trigger)
+			if isFailure(err, "request_conflict") && conflicts < 8 {
+				conflicts++
+				continue
+			}
+			if err != nil {
+				return "", err
+			}
+			if changed {
+				continue
+			}
 			if planned.State == "over_capacity" || planned.State == "insufficient_capacity" {
 				err := c.Store.RecordContextBudgetBlock(persist, w.Agent.ID, w.Task.ID, nextSettings.SelectionRevision, cursor, contextSnapshot.View.ID, planned)
 				if isFailure(err, "request_conflict") && conflicts < 8 {
@@ -571,8 +586,19 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 				if err != nil {
 					return "", safeFailure(err, "persistence_failed", "capacity refusal could not be saved")
 				}
-				return "", protocol.E("context_capacity", "context estimate exceeds the selected capacity or leaves no compaction reserve; retained history is unchanged; select a larger window or adjust the budget")
+				failure := protocol.E("context_capacity", "selected capacity or reserve remains insufficient; history is preserved; select a larger window or adjust the next Task's budget")
+				failure.Data.Retryable = true
+				if planned.State == "over_capacity" {
+					failure.Data.OperationID = automaticCompactionID(w.Agent.ID, w.Task.ID, precedingRequest)
+				}
+				return "", failure
 			}
+		}
+		// Old image references may be covered by a successful summary. Resolve
+		// the selected request only after compaction has had a chance to run.
+		req.Images, err = c.resolveImages(ctx, w.Agent.ID, messages, nextBinding.Images)
+		if err != nil {
+			return "", err
 		}
 		if validator, ok := nextBinding.Adapter.(model.RequestValidator); ok {
 			if err := validator.ValidateRequest(req); err != nil {
@@ -598,6 +624,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		}
 		conflicts, noticePending = 0, false
 		previousView = contextSnapshot.View.ID
+		precedingRequest = req.ID
 		previousResources = contextSnapshot.Resources.Catalog.Generation
 		settings, binding, w.Agent.Cwd = nextSettings, nextBinding, nextSettings.Cwd
 		var collector model.Collector

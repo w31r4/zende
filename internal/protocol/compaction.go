@@ -10,6 +10,7 @@ type CompactContext struct {
 type CompactionInfo struct {
 	OperationID string      `json:"operation_id"`
 	AgentID     string      `json:"agent_id"`
+	TaskID      string      `json:"task_id,omitempty"`
 	Reason      string      `json:"reason"`
 	State       string      `json:"state"`
 	Attempts    int         `json:"attempts"`

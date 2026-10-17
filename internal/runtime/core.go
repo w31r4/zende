@@ -439,6 +439,13 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 		}
 		accepted, err := c.Store.Operation(ctx, p.ID)
 		if err == nil {
+			compaction, compactErr := c.Store.Compaction(ctx, p.ID)
+			if compactErr == nil {
+				return compaction.CompactionInfo, nil
+			}
+			if !isFailure(compactErr, "not_found") {
+				return nil, compactErr
+			}
 			stop, stopErr := c.Store.TreeStop(ctx, p.ID)
 			if stopErr == nil {
 				return stop, nil

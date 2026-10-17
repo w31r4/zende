@@ -28,6 +28,7 @@ type CompactionRecord struct {
 	StartedSeq int64                        `json:"started_seq,omitempty"`
 	DeltaCount int                          `json:"delta_count"`
 	DeltaBytes int                          `json:"delta_bytes"`
+	Dispatched bool                         `json:"dispatched,omitempty"`
 }
 
 type CompactionAttempt struct {
@@ -109,9 +110,9 @@ ON CONFLICT(id) DO UPDATE SET record=excluded.record`, r.OperationID, r.AgentID,
 
 // QueueCompaction accepts intent only. The scheduler must wait for complete
 // tool groups and persist BeginCompactionAttempt before contacting a model.
-func (s *Store) QueueCompaction(ctx context.Context, req protocol.Request, agent, reason string, policy protocol.ContextBudgetPolicy) (protocol.Accepted, error) {
+func (s *Store) QueueCompaction(ctx context.Context, req protocol.Request, agent, task, reason string, policy protocol.ContextBudgetPolicy) (protocol.Accepted, error) {
 	var target protocol.CompactContext
-	if req.Validate() != nil || req.Method != "context.compact" || protocol.StrictDecode(req.Params, &target) != nil || target.AgentID != agent || !compactionIdentity(agent) || !compactionIdentity(req.OperationID) || !policy.Valid() || reason != "manual" && reason != "automatic" {
+	if req.Validate() != nil || req.Method != "context.compact" || protocol.StrictDecode(req.Params, &target) != nil || target.AgentID != agent || !compactionIdentity(agent) || !compactionIdentity(req.OperationID) || !policy.Valid() || reason != "manual" && reason != "automatic" || (reason == "automatic") != (task != "") {
 		return protocol.Accepted{}, protocol.E("invalid_params", "compaction requires an Agent, operation identity and valid policy")
 	}
 	return s.accept(ctx, req, func(tx *sql.Tx) (protocol.Accepted, error) {
@@ -120,6 +121,11 @@ func (s *Store) QueueCompaction(ctx context.Context, req protocol.Request, agent
 		}
 		if err := treeWritable(ctx, tx, agent); err != nil {
 			return protocol.Accepted{}, err
+		}
+		if task != "" {
+			if err := activeTask(ctx, tx, agent, task); err != nil {
+				return protocol.Accepted{}, err
+			}
 		}
 		if err := treeCallerWritable(ctx, tx, target.Caller); err != nil {
 			return protocol.Accepted{}, err
@@ -138,11 +144,11 @@ func (s *Store) QueueCompaction(ctx context.Context, req protocol.Request, agent
 		if !errors.Is(err, sql.ErrNoRows) {
 			return protocol.Accepted{}, err
 		}
-		r := CompactionRecord{CompactionInfo: protocol.CompactionInfo{OperationID: req.OperationID, AgentID: agent, Reason: reason, State: "pending", MaxAttempts: policy.MaxAttempts, Source: source}, Policy: policy}
+		r := CompactionRecord{CompactionInfo: protocol.CompactionInfo{OperationID: req.OperationID, AgentID: agent, TaskID: task, Reason: reason, State: "pending", MaxAttempts: policy.MaxAttempts, Source: source}, Policy: policy}
 		if err := saveCompaction(ctx, tx, r); err != nil {
 			return protocol.Accepted{}, err
 		}
-		return protocol.Accepted{AgentID: agent}, nil
+		return protocol.Accepted{AgentID: agent, TaskID: task}, nil
 	})
 }
 
@@ -194,6 +200,9 @@ func (s *Store) BeginCompactionAttempt(ctx context.Context, id, owner, task stri
 		if r.State != "pending" || r.Attempts >= r.MaxAttempts {
 			return protocol.E("compaction_conflict", "compaction is not awaiting another attempt")
 		}
+		if r.Reason == "automatic" && (r.TaskID == "" || r.TaskID != task) {
+			return protocol.E("compaction_conflict", "automatic compaction belongs to another Task")
+		}
 		if err := compactionBoundary(ctx, tx, r.AgentID, task, cursor, revision); err != nil {
 			return err
 		}
@@ -243,6 +252,7 @@ func (s *Store) BeginCompactionAttempt(ctx context.Context, id, owner, task stri
 		}
 		r.State, r.Owner, r.RequestID, r.StartedSeq = "running", owner, request.ID, event.Seq
 		r.Attempts, r.DeltaCount, r.DeltaBytes, r.Failure = attempt.Number, 0, 0, nil
+		r.Dispatched = false
 		return saveCompaction(ctx, tx, r)
 	})
 	if err != nil {
@@ -365,4 +375,28 @@ func (s *Store) InterruptCompactions(ctx context.Context, owner string) error {
 		}
 		after = id
 	}
+}
+
+// Runtime calls this only after it has exclusively reclaimed a held Task and
+// settled its previous tools. It also covers a failed worker in the same Core,
+// which the startup-only owner check deliberately leaves alone.
+func (s *Store) InterruptTaskCompaction(ctx context.Context, agent, task string) error {
+	return s.Transaction(ctx, func(tx *sql.Tx) error {
+		if err := activeTask(ctx, tx, agent, task); err != nil {
+			return err
+		}
+		var id string
+		err := tx.QueryRowContext(ctx, `SELECT id FROM compactions WHERE agent_id=? AND json_extract(record,'$.task_id')=? AND json_extract(record,'$.state')='running'`, agent, task).Scan(&id)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		r, err := compactionRecord(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		return finishCompactionFailure(ctx, tx, r, "interrupted", true)
+	})
 }

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"unicode/utf8"
 
 	"zende.local/harness/internal/model"
@@ -13,6 +14,61 @@ import (
 
 const maxCompactionDeltas = 32768
 const maxCompactionDeltaBytes = 8 << 20
+
+type compactionDispatch struct {
+	OperationID   string          `json:"operation_id"`
+	RequestID     string          `json:"request_id"`
+	TaskID        string          `json:"task_id,omitempty"`
+	Cwd           string          `json:"cwd"`
+	PluginBinding json.RawMessage `json:"plugin_binding,omitempty"`
+}
+
+// A plugin lease is acquired after preparation and retained through Stream.
+// Save its actual process binding before dispatch; selection metadata alone
+// does not identify the process that handled this request.
+func (s *Store) DispatchCompaction(ctx context.Context, id, owner, request, cwd string, pluginBinding json.RawMessage) error {
+	if !filepath.IsAbs(cwd) || len(pluginBinding) > 256<<10 || len(pluginBinding) > 0 && !json.Valid(pluginBinding) {
+		return protocol.E("invalid_params", "summary dispatch requires a working directory and bounded binding")
+	}
+	return s.Transaction(ctx, func(tx *sql.Tx) error {
+		r, err := ownedCompaction(ctx, tx, id, owner, request)
+		if err != nil {
+			return err
+		}
+		if r.Dispatched {
+			return protocol.E("compaction_conflict", "summary attempt was already dispatched")
+		}
+		a, err := loadCompactionAttempt(ctx, tx, r)
+		if err != nil {
+			return err
+		}
+		if err := treeWritable(ctx, tx, r.AgentID); err != nil {
+			return err
+		}
+		if a.TaskID != "" {
+			if err := activeTask(ctx, tx, r.AgentID, a.TaskID); err != nil {
+				return err
+			}
+		}
+		choice, err := selection(ctx, tx, r.AgentID)
+		if err != nil {
+			return err
+		}
+		if choice.Choice.Revision != a.SelectionRevision {
+			return protocol.E("request_conflict", "selection changed before summary dispatch")
+		}
+		if _, err := appendEvent(ctx, tx, r.AgentID, a.TaskID, "context.compaction.dispatched", compactionDispatch{id, request, a.TaskID, cwd, pluginBinding}); err != nil {
+			return err
+		}
+		r.Dispatched = true
+		raw, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, "UPDATE compactions SET record=? WHERE id=?", string(raw), id)
+		return err
+	})
+}
 
 type compactionDelta struct {
 	OperationID string      `json:"operation_id"`
@@ -29,6 +85,9 @@ func (s *Store) RecordCompactionDelta(ctx context.Context, id, owner, request st
 		r, err := ownedCompaction(ctx, tx, id, owner, request)
 		if err != nil {
 			return err
+		}
+		if !r.Dispatched {
+			return protocol.E("compaction_conflict", "summary stream has no saved dispatch")
 		}
 		d := compactionDelta{OperationID: id, RequestID: request, Index: r.DeltaCount + 1, Delta: delta}
 		// Adapters may split a UTF-8 code point across text fragments. JSON
@@ -98,6 +157,13 @@ AND json_extract(payload,'$.operation_id')=? AND json_extract(payload,'$.request
 func publicCompactionEvent(event protocol.Event) (protocol.Event, error) {
 	var payload any
 	switch event.Kind {
+	case "context.compaction.dispatched":
+		var d compactionDispatch
+		if err := json.Unmarshal(event.Payload, &d); err != nil {
+			return event, err
+		}
+		d.PluginBinding = nil
+		payload = d
 	case "context.compaction.started":
 		var a CompactionAttempt
 		if err := json.Unmarshal(event.Payload, &a); err != nil {
@@ -144,6 +210,9 @@ func (s *Store) CompleteCompactionAttempt(ctx context.Context, id, owner, reques
 		r, err := ownedCompaction(ctx, tx, id, owner, request)
 		if err != nil {
 			return err
+		}
+		if !r.Dispatched {
+			return protocol.E("compaction_conflict", "summary completion has no saved dispatch")
 		}
 		a, err := loadCompactionAttempt(ctx, tx, r)
 		if err != nil {
@@ -215,6 +284,22 @@ func (s *Store) CompleteCompactionAttempt(ctx context.Context, id, owner, reques
 func cancelAgentCompaction(ctx context.Context, tx *sql.Tx, agent string) error {
 	var id string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM compactions WHERE agent_id=? AND json_extract(record,'$.state') IN ('pending','running')`, agent).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	r, err := compactionRecord(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	return finishCompactionFailure(ctx, tx, r, "cancelled", false)
+}
+
+func finishTaskCompaction(ctx context.Context, tx *sql.Tx, agent, task string) error {
+	var id string
+	err := tx.QueryRowContext(ctx, `SELECT id FROM compactions WHERE agent_id=? AND json_extract(record,'$.task_id')=? AND json_extract(record,'$.reason')='automatic' AND json_extract(record,'$.state') IN ('pending','running')`, agent, task).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil
 	}

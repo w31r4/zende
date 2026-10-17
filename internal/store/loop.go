@@ -337,6 +337,9 @@ func (s *Store) FinishTask(ctx context.Context, agent, task, state, result strin
 			if err := finishQuestions(ctx, tx, agent, task); err != nil {
 				return err
 			}
+			if err := finishTaskCompaction(ctx, tx, agent, task); err != nil {
+				return err
+			}
 		}
 		e, err := appendEvent(ctx, tx, agent, task, "task."+state, struct {
 			State  string          `json:"state"`
