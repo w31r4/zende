@@ -40,6 +40,10 @@ func resourceUpdate(ctx context.Context, tx *sql.Tx, agent, id string) (*Resourc
 	if err != nil {
 		return nil, err
 	}
+	return decodeResourceUpdate(id, raw)
+}
+
+func decodeResourceUpdate(id, raw string) (*ResourcePreparation, error) {
 	var p ResourcePreparation
 	if len(raw) > 32<<10 || protocol.StrictDecode([]byte(raw), &p) != nil {
 		return nil, protocol.E("invalid_state", "saved resource update is unreadable")
@@ -84,6 +88,18 @@ ON CONFLICT(agent_id,id) DO UPDATE SET record=excluded.record`, agent, p.Identit
 // BeginResourceUpdate rechecks acceptance inside its transaction, so a retry
 // cannot leave a false preparing status after the original request committed.
 func (s *Store) BeginResourceUpdate(ctx context.Context, req protocol.Request, agent string, identity protocol.ResourceInfo, owner string) (ResourcePreparation, *protocol.Accepted, error) {
+	return s.beginResourceUpdate(ctx, req, agent, identity, owner, nil)
+}
+
+func (s *Store) BeginWatchedResourceUpdate(ctx context.Context, req protocol.Request, target ResourceWatchTarget, owner string) (ResourcePreparation, *protocol.Accepted, error) {
+	identity, err := resource.Identity(target.Info.Kind, target.Info.Source)
+	if err != nil || identity.ID != target.Info.ID {
+		return ResourcePreparation{}, nil, protocol.E("invalid_params", "invalid watched resource identity")
+	}
+	return s.beginResourceUpdate(ctx, req, target.AgentID, identity, owner, &target)
+}
+
+func (s *Store) beginResourceUpdate(ctx context.Context, req protocol.Request, agent string, identity protocol.ResourceInfo, owner string, watched *ResourceWatchTarget) (ResourcePreparation, *protocol.Accepted, error) {
 	var p ResourcePreparation
 	var accepted *protocol.Accepted
 	want, err := req.EffectFingerprint()
@@ -112,6 +128,11 @@ func (s *Store) BeginResourceUpdate(ctx context.Context, req protocol.Request, a
 		}
 		if err := resourceAgent(ctx, tx, agent, true); err != nil {
 			return err
+		}
+		if watched != nil {
+			if err := checkWatchedResource(ctx, tx, *watched); err != nil {
+				return err
+			}
 		}
 		var count int
 		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM (

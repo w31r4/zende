@@ -9,6 +9,7 @@ import (
 
 	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/resource"
+	"zende.local/harness/internal/store"
 )
 
 func (c *Core) registerResource(ctx context.Context, req protocol.Request, p protocol.RegisterResource) (protocol.Accepted, error) {
@@ -40,11 +41,21 @@ func (c *Core) refreshResource(ctx context.Context, req protocol.Request, p prot
 }
 
 func (c *Core) prepareResource(ctx context.Context, req protocol.Request, agent, kind, path string) (accepted protocol.Accepted, err error) {
+	return c.prepareResourceSource(ctx, req, agent, kind, path, nil, "")
+}
+
+func (c *Core) prepareResourceSource(ctx context.Context, req protocol.Request, agent, kind, path string, watched *store.ResourceWatchTarget, observedVersion string) (accepted protocol.Accepted, err error) {
 	identity, err := resource.Identity(kind, path)
 	if err != nil {
 		return protocol.Accepted{}, err
 	}
-	attempt, previous, err := c.Store.BeginResourceUpdate(ctx, req, agent, identity, c.InstanceID)
+	var attempt store.ResourcePreparation
+	var previous *protocol.Accepted
+	if watched == nil {
+		attempt, previous, err = c.Store.BeginResourceUpdate(ctx, req, agent, identity, c.InstanceID)
+	} else {
+		attempt, previous, err = c.Store.BeginWatchedResourceUpdate(ctx, req, *watched, c.InstanceID)
+	}
 	if err != nil {
 		return protocol.Accepted{}, err
 	}
@@ -83,6 +94,12 @@ func (c *Core) prepareResource(ctx context.Context, req protocol.Request, agent,
 			err = failure
 		}
 	}()
+	checkObservation := func(p resource.Package) error {
+		if observedVersion != "" && resource.SourceVersion(p.Info.Kind, p.Info.Source, p.Files) != observedVersion {
+			return protocol.E("resource_changed", "source changed since observation; observe it again")
+		}
+		return nil
+	}
 	if strings.HasPrefix(identity.Source, "plugin://") {
 		return c.publishPluginResource(ctx, req, agent, identity.Source, attempt)
 	}
@@ -91,6 +108,10 @@ func (c *Core) prepareResource(ctx context.Context, req protocol.Request, agent,
 		if prepareErr != nil {
 			return protocol.Accepted{}, prepareErr
 		}
+		if err := checkObservation(prepared); err != nil {
+			conn.Close()
+			return protocol.Accepted{}, err
+		}
 		return c.publishMCP(ctx, req, agent, prepared, conn, attempt)
 	}
 	if kind == "plugin" {
@@ -98,10 +119,17 @@ func (c *Core) prepareResource(ctx context.Context, req protocol.Request, agent,
 		if prepareErr != nil {
 			return protocol.Accepted{}, prepareErr
 		}
+		if err := checkObservation(prepared); err != nil {
+			instance.Close()
+			return protocol.Accepted{}, err
+		}
 		return c.publishPlugin(ctx, req, agent, prepared, instance, attempt)
 	}
 	prepared, err := resource.Prepare(ctx, kind, identity.Source)
 	if err != nil {
+		return protocol.Accepted{}, err
+	}
+	if err := checkObservation(prepared); err != nil {
 		return protocol.Accepted{}, err
 	}
 	return c.Store.PublishResourceUpdate(ctx, req, agent, prepared, attempt)

@@ -36,6 +36,9 @@ func (a *app) resourceCommands(root *cobra.Command) {
 	register.Long = "Validate and publish complete instructions or a managed extension. PATH is a local path, or plugin://RESOURCE/skill/NAME (or /prompt/NAME) from plugin catalog. Plugin sources require a ready registered plugin; all files are verified and retained with plugin_origin. Use --kind to match the source. Refresh the parent plugin before refreshing its resources."
 	register.Flags().StringVar(&kind, "kind", "skill", "skill (directory or SKILL.md), prompt (Markdown), mcp or plugin (YAML/JSON)")
 	cmd.AddCommand(register)
+	cmd.AddCommand(&cobra.Command{Use: "watch-status", Short: "Inspect Core file observers and scan failures", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		return a.call(cmd, "resource.watch.status", false, struct{}{})
+	}})
 	for _, action := range []string{"refresh", "status"} {
 		cmd.AddCommand(&cobra.Command{Use: action + " AGENT RESOURCE", Short: map[string]string{"refresh": "Validate and publish changed source; failure keeps the last ready version", "status": "Inspect the ready version and latest preparation or failure"}[action], Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
 			return a.call(cmd, "resource."+action, action == "refresh", protocol.ResourceTarget{AgentID: args[0], ID: args[1]})

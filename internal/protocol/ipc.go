@@ -359,6 +359,8 @@ func ReadOnly(method string) bool {
 	switch method {
 	case "config.read", "config.history", "config.runner":
 		return true
+	case "resource.watch.status":
+		return true
 	case "context.inspect", "context.read", "context.entry":
 		return true
 	case "plugin.events.list", "plugin.events.inspect", "plugin.events.read":

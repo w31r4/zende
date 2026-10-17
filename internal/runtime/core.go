@@ -26,6 +26,8 @@ type Core struct {
 	configSource *configSource // Set once before serving/scheduling.
 	liveConfig   atomic.Pointer[runtimeConfiguration]
 	configError  atomic.Pointer[protocol.Error]
+	watchMu      sync.Mutex
+	watch        WatchStatus
 	// Legacy injection for embedders; configure before Run. Live configuration
 	// uses one immutable bundle without mutating these fields.
 	Models             model.Resolver
@@ -186,6 +188,12 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 			return nil, err
 		}
 		return c.registerResource(ctx, req, p)
+	case "resource.watch.status":
+		var p struct{}
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.watchStatus(), nil
 	case "resource.refresh", "resource.status":
 		var p protocol.ResourceTarget
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

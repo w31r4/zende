@@ -17,12 +17,13 @@ import (
 // One immutable bundle prevents a new default from being resolved against an
 // old catalog. Requests keep their captured bundle/binding after publication.
 type runtimeConfiguration struct {
-	effective    resource.Effective
-	publication  *protocol.ConfigPublication
-	models       model.Resolver
-	restore      model.Restorer
-	catalog      ModelCatalog
-	defaultModel bool
+	effective     resource.Effective
+	publication   *protocol.ConfigPublication
+	models        model.Resolver
+	restore       model.Restorer
+	catalog       ModelCatalog
+	defaultModel  bool
+	sourceVersion string
 }
 
 type configSource struct {
@@ -71,7 +72,8 @@ func (c *Core) configStatus() ConfigStatus {
 
 func configBundle(snapshot resource.ConfigSnapshot, publication protocol.ConfigPublication, resolver *provider.Resolver) *runtimeConfiguration {
 	return &runtimeConfiguration{effective: snapshot.Effective, publication: &publication,
-		models: resolver, restore: resolver, catalog: resolver, defaultModel: snapshot.Effective.Config.Model != ""}
+		models: resolver, restore: resolver, catalog: resolver, defaultModel: snapshot.Effective.Config.Model != "",
+		sourceVersion: resource.ConfigSourceVersion(snapshot.Documents)}
 }
 
 func runnerConfiguration(config resource.Config, publication *protocol.ConfigPublication) process.Configuration {
