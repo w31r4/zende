@@ -295,6 +295,7 @@ type requestRecord struct {
 	Settings        *taskSettings              `json:"settings,omitempty"`
 	ResourceCatalog *protocol.ResourceCatalog  `json:"resource_catalog,omitempty"`
 	PluginBinding   *pluginModelRequestBinding `json:"plugin_binding,omitempty"`
+	ContextBudget   *protocol.ContextBudget    `json:"context_budget,omitempty"`
 }
 type invocation struct {
 	SchemaVersion int            `json:"schema_version,omitempty"`
@@ -314,19 +315,21 @@ type toolOutcome struct {
 }
 
 type taskSettings struct {
-	Version           int             `json:"version"`
-	Selection         string          `json:"selection"`
-	Cwd               string          `json:"cwd"`
-	Model             string          `json:"model"`
-	Protocol          string          `json:"protocol"`
-	NativeCategories  bool            `json:"native_categories"`
-	Images            bool            `json:"images,omitempty"`
-	MaxOutputTokens   int             `json:"max_output_tokens"`
-	FormatRepairs     int             `json:"format_repairs"`
-	Binding           json.RawMessage `json:"binding,omitempty"`
-	Effort            string          `json:"effort,omitempty"`
-	SelectionRevision int64           `json:"selection_revision,omitempty"`
-	ModelRevision     int64           `json:"model_revision,omitempty"`
+	Version           int                           `json:"version"`
+	Selection         string                        `json:"selection"`
+	Cwd               string                        `json:"cwd"`
+	Model             string                        `json:"model"`
+	Protocol          string                        `json:"protocol"`
+	NativeCategories  bool                          `json:"native_categories"`
+	Images            bool                          `json:"images,omitempty"`
+	MaxOutputTokens   int                           `json:"max_output_tokens"`
+	FormatRepairs     int                           `json:"format_repairs"`
+	Binding           json.RawMessage               `json:"binding,omitempty"`
+	Effort            string                        `json:"effort,omitempty"`
+	SelectionRevision int64                         `json:"selection_revision,omitempty"`
+	ModelRevision     int64                         `json:"model_revision,omitempty"`
+	ContextWindow     int                           `json:"context_window,omitempty"`
+	ContextPolicy     *protocol.ContextBudgetPolicy `json:"context_policy,omitempty"`
 }
 
 type resumedTask struct {
@@ -390,7 +393,8 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		return nil
 	}
 	limit := c.Config.Config.Limits.FormatRepairs
-	settings := taskSettings{Version: 2, Selection: selection, Cwd: w.Agent.Cwd, Model: binding.Model, Protocol: binding.Protocol, NativeCategories: binding.NativeCategories, Images: binding.Images, MaxOutputTokens: binding.MaxOutputTokens, FormatRepairs: limit, Binding: binding.Snapshot, SelectionRevision: choice.Choice.Revision, ModelRevision: choice.Choice.ModelRevision, Effort: choice.Choice.Effort}
+	policy := c.Config.Config.ContextBudgetPolicy()
+	settings := taskSettings{Version: 2, Selection: selection, Cwd: w.Agent.Cwd, Model: binding.Model, Protocol: binding.Protocol, NativeCategories: binding.NativeCategories, Images: binding.Images, MaxOutputTokens: binding.MaxOutputTokens, FormatRepairs: limit, Binding: binding.Snapshot, SelectionRevision: choice.Choice.Revision, ModelRevision: choice.Choice.ModelRevision, Effort: choice.Choice.Effort, ContextWindow: binding.ContextWindow, ContextPolicy: &policy}
 	if choice.Choice.ModelRevision == 0 && selection == c.Config.Config.Model {
 		settings.Effort = c.Config.Config.Effort
 	}
@@ -541,6 +545,29 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		for _, d := range requestDescriptors {
 			req.Tools = append(req.Tools, d.Tool)
 		}
+		var budget *protocol.ContextBudget
+		if nextSettings.ContextPolicy != nil {
+			estimate, err := model.EstimateRequest(req)
+			if err != nil {
+				return "", err
+			}
+			planned, err := model.PlanContextBudget(estimate, int64(nextSettings.ContextWindow), int64(req.MaxOutputTokens), *nextSettings.ContextPolicy)
+			if err != nil {
+				return "", err
+			}
+			budget = &planned
+			if planned.State == "over_capacity" || planned.State == "insufficient_capacity" {
+				err := c.Store.RecordContextBudgetBlock(persist, w.Agent.ID, w.Task.ID, nextSettings.SelectionRevision, cursor, contextSnapshot.View.ID, planned)
+				if isFailure(err, "request_conflict") && conflicts < 8 {
+					conflicts++
+					continue
+				}
+				if err != nil {
+					return "", safeFailure(err, "persistence_failed", "capacity refusal could not be saved")
+				}
+				return "", protocol.E("context_capacity", "context estimate exceeds the selected capacity or leaves no compaction reserve; retained history is unchanged; select a larger window or adjust the budget")
+			}
+		}
 		if validator, ok := nextBinding.Adapter.(model.RequestValidator); ok {
 			if err := validator.ValidateRequest(req); err != nil {
 				return "", err
@@ -551,7 +578,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 			return "", modelDependencyFailure(nextBinding, err)
 		}
 		err = c.Store.BeginModelRequest(persist, w.Agent.ID, w.Task.ID, nextSettings.SelectionRevision, cursor, notices, func(cursor int64) any {
-			return requestRecord{ID: req.ID, Model: nextBinding.Model, Protocol: nextBinding.Protocol, Cursor: cursor, ViewID: contextSnapshot.View.ID, Tools: requestDescriptors, MaxOutputTokens: req.MaxOutputTokens, FormatRepair: repairOnly, RepairAttempt: repairs, RepairLimit: limit, Settings: &nextSettings, ResourceCatalog: &contextSnapshot.Resources.Catalog, PluginBinding: pluginBinding}
+			return requestRecord{ID: req.ID, Model: nextBinding.Model, Protocol: nextBinding.Protocol, Cursor: cursor, ViewID: contextSnapshot.View.ID, Tools: requestDescriptors, MaxOutputTokens: req.MaxOutputTokens, FormatRepair: repairOnly, RepairAttempt: repairs, RepairLimit: limit, Settings: &nextSettings, ResourceCatalog: &contextSnapshot.Resources.Catalog, PluginBinding: pluginBinding, ContextBudget: budget}
 		})
 		if err != nil {
 			releaseModel()

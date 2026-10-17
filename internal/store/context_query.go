@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"zende.local/harness/internal/model"
 	"zende.local/harness/internal/protocol"
 )
 
@@ -84,6 +85,7 @@ func contextRequest(ctx context.Context, tx *sql.Tx, agent, id string) (*protoco
 		MaxOutputTokens int                           `json:"max_output_tokens"`
 		FormatRepair    bool                          `json:"format_repair"`
 		Catalog         *protocol.ResourceCatalog     `json:"resource_catalog"`
+		ContextBudget   *protocol.ContextBudget       `json:"context_budget"`
 		Settings        *struct {
 			Selection         string `json:"selection"`
 			Cwd               string `json:"cwd"`
@@ -107,7 +109,11 @@ func contextRequest(ctx context.Context, tx *sql.Tx, agent, id string) (*protoco
 	if saved.Catalog != nil && (!saved.Catalog.Valid() || saved.Catalog.Generation > *saved.Cursor) {
 		return nil, nil, 0, "", protocol.E("context_invalid", "saved request resource catalog is invalid")
 	}
+	if saved.ContextBudget != nil && (!model.ValidContextBudget(*saved.ContextBudget) || saved.ContextBudget.OutputReserve != int64(saved.MaxOutputTokens)) {
+		return nil, nil, 0, "", protocol.E("context_invalid", "saved request context budget is invalid")
+	}
 	out.ID, out.Model, out.Protocol = saved.ID, saved.Model, saved.Protocol
+	out.ContextBudget = saved.ContextBudget
 	out.MaxOutputTokens, out.FormatRepair, out.Tools = saved.MaxOutputTokens, saved.FormatRepair, saved.Tools
 	if out.Tools == nil {
 		out.Tools = []protocol.ContextToolVersion{}

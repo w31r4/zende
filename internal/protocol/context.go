@@ -47,6 +47,7 @@ type ContextRequestInfo struct {
 	FormatRepair      bool                 `json:"format_repair"`
 	Tools             []ContextToolVersion `json:"tools"`
 	PromptSeq         int64                `json:"prompt_seq,omitempty"`
+	ContextBudget     *ContextBudget       `json:"context_budget"`
 }
 
 type ContextInfo struct {

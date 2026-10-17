@@ -133,6 +133,7 @@ func (c *Core) requestSelection(ctx context.Context, agent string, current taskS
 		current.Selection, current.Effort = next.Choice.Model, next.Choice.Effort
 		current.Model, current.Protocol, current.NativeCategories, current.Images = binding.Model, binding.Protocol, binding.NativeCategories, binding.Images
 		current.MaxOutputTokens, current.Binding = binding.MaxOutputTokens, binding.Snapshot
+		current.ContextWindow = binding.ContextWindow
 	}
 	current.Version = 2
 	current.Cwd, current.SelectionRevision, current.ModelRevision = next.Choice.Cwd, next.Choice.Revision, next.Choice.ModelRevision

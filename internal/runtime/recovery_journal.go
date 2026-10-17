@@ -68,11 +68,11 @@ func recoveryInvalid() error {
 }
 
 func validSettings(s taskSettings) bool {
-	return (s.Version == 1 || s.Version == 2) && filepath.IsAbs(s.Cwd) && s.Model != "" && s.Protocol != "" && s.FormatRepairs >= 0 && s.SelectionRevision >= 0 && s.ModelRevision >= 0 && s.ModelRevision <= s.SelectionRevision
+	return (s.Version == 1 || s.Version == 2) && filepath.IsAbs(s.Cwd) && s.Model != "" && s.Protocol != "" && s.FormatRepairs >= 0 && s.SelectionRevision >= 0 && s.ModelRevision >= 0 && s.ModelRevision <= s.SelectionRevision && s.ContextWindow >= 0 && (s.ContextPolicy == nil || s.ContextPolicy.Valid())
 }
 
 func settingsFollow(previous, next taskSettings) bool {
-	if next.SelectionRevision < previous.SelectionRevision || next.ModelRevision < previous.ModelRevision || next.FormatRepairs != previous.FormatRepairs {
+	if next.SelectionRevision < previous.SelectionRevision || next.ModelRevision < previous.ModelRevision || next.FormatRepairs != previous.FormatRepairs || !reflect.DeepEqual(previous.ContextPolicy, next.ContextPolicy) {
 		return false
 	}
 	previous.Version, next.Version = 2, 2 // Legacy request snapshots may be upgraded.
@@ -181,8 +181,15 @@ func (j *recoveryJournal) add(e protocol.Event) error {
 			if !validSettings(*s) || r.Model != s.Model || r.Protocol != s.Protocol || r.MaxOutputTokens != s.MaxOutputTokens || r.RepairLimit != s.FormatRepairs || j.Settings != nil && !settingsFollow(*j.Settings, *s) {
 				return recoveryInvalid()
 			}
+			if s.ContextPolicy != nil {
+				if r.ContextBudget == nil || !model.ValidContextBudget(*r.ContextBudget) || !reflect.DeepEqual(r.ContextBudget.Policy, *s.ContextPolicy) || r.ContextBudget.ContextWindow != int64(s.ContextWindow) || r.ContextBudget.OutputReserve != int64(r.MaxOutputTokens) || r.ContextBudget.State == "over_capacity" || r.ContextBudget.State == "insufficient_capacity" {
+					return recoveryInvalid()
+				}
+			} else if r.ContextBudget != nil {
+				return recoveryInvalid()
+			}
 			j.Settings = s
-		} else if j.Settings != nil && j.Settings.Version == 2 {
+		} else if r.ContextBudget != nil || j.Settings != nil && j.Settings.Version == 2 {
 			return recoveryInvalid()
 		}
 		j.Request = &r

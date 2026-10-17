@@ -97,26 +97,9 @@ func (s *Store) Select(ctx context.Context, req protocol.Request, next Selection
 // cannot see new settings attached to the previous request's pending calls.
 func (s *Store) BeginModelRequest(ctx context.Context, agent, task string, revision, cursor int64, notices []ContextMessage, record func(int64) any) error {
 	return s.Transaction(ctx, func(tx *sql.Tx) error {
-		if err := activeTask(ctx, tx, agent, task); err != nil {
-			return err
-		}
-		current, err := selection(ctx, tx, agent)
+		seq, err := requestBoundary(ctx, tx, agent, task, revision, cursor)
 		if err != nil {
 			return err
-		}
-		var seq int64
-		if err := tx.QueryRowContext(ctx, "SELECT seq FROM agents WHERE id=?", agent).Scan(&seq); err != nil {
-			return err
-		}
-		if current.Choice.Revision != revision || seq != cursor {
-			return protocol.E("request_conflict", "context or settings changed before request start; rebuild the request")
-		}
-		var pending bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM mailbox m WHERE m.agent_id=? AND "+readySteer+")", agent).Scan(&pending); err != nil {
-			return err
-		}
-		if pending {
-			return protocol.E("request_conflict", "steer arrived before request start; deliver before rebuilding")
 		}
 		for _, notice := range notices {
 			if notice.Message.Role != "developer" || notice.RequestID != "" || notice.MessageID != "" || len(notice.MessageIDs) != 0 || notice.QuestionID != "" || notice.Summary != nil {
@@ -131,4 +114,31 @@ func (s *Store) BeginModelRequest(ctx context.Context, agent, task string, revis
 		_, err = appendEvent(ctx, tx, agent, task, "model.started", record(seq))
 		return err
 	})
+}
+
+// Both dispatch and a capacity refusal must refer to the still-current input.
+// A concurrent selection, publication or steer requires rebuilding either.
+func requestBoundary(ctx context.Context, tx *sql.Tx, agent, task string, revision, cursor int64) (int64, error) {
+	if err := activeTask(ctx, tx, agent, task); err != nil {
+		return 0, err
+	}
+	current, err := selection(ctx, tx, agent)
+	if err != nil {
+		return 0, err
+	}
+	var seq int64
+	if err := tx.QueryRowContext(ctx, "SELECT seq FROM agents WHERE id=?", agent).Scan(&seq); err != nil {
+		return 0, err
+	}
+	if current.Choice.Revision != revision || seq != cursor {
+		return 0, protocol.E("request_conflict", "context or settings changed before request start; rebuild the request")
+	}
+	var pending bool
+	if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM mailbox m WHERE m.agent_id=? AND "+readySteer+")", agent).Scan(&pending); err != nil {
+		return 0, err
+	}
+	if pending {
+		return 0, protocol.E("request_conflict", "steer arrived before request start; deliver before rebuilding")
+	}
+	return seq, nil
 }
