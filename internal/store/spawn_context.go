@@ -44,6 +44,13 @@ func contextCuts(entries []contextEntry) ([]int, []int, error) {
 }
 
 func scanContext(entries []contextEntry) (int, []int, []int, error) {
+	return scanContextBoundaries(entries, nil)
+}
+
+// onComplete observes every closed message/tool group, not only user turns.
+// Compaction can therefore shorten one long-running turn without splitting
+// calls from results. Inheritance retains its existing user-turn cuts.
+func scanContextBoundaries(entries []contextEntry, onComplete func(int)) (int, []int, []int, error) {
 	pending, seen := map[string]bool{}, map[string]bool{}
 	cuts, turns := []int{0}, []int{}
 	complete := 0
@@ -75,6 +82,9 @@ func scanContext(entries []contextEntry) (int, []int, []int, error) {
 		}
 		if len(pending) == 0 {
 			complete = i + 1
+			if onComplete != nil {
+				onComplete(complete)
+			}
 		}
 	}
 	return complete, cuts, turns, nil

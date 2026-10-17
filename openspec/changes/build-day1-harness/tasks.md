@@ -114,6 +114,8 @@
 
 9.1 接通 `context inspect/read/entry`，可固定历史边界、回查原文和请求版本；旧历史及私有续接数据继续保存。自动/主动压缩由 9.2、9.3 继续实现。本次未测试或构建，说明见 docs/development.md。
 
+9.2、9.3 已补模型窗口绑定、任务预算策略、请求估算记录、超限拒绝和固定游标的前段选择。摘要生成、持久操作与自动/主动调度尚未接通，保持未完成；新代码未测试或构建。
+
 ## 10. 四协议共同交付线
 
 对应设计 D6、D8；能力：[model-protocols](./specs/model-protocols/spec.md)、[live-resources](./specs/live-resources/spec.md)。
