@@ -52,13 +52,13 @@ const agentTree = `WITH RECURSIVE tree(id) AS (
 func treeWritable(ctx context.Context, q rowQuerier, agent string) error {
 	var id string
 	err := q.QueryRowContext(ctx, `SELECT json_extract(e.payload,'$.operation_id')
- FROM events e WHERE e.agent_id=? AND e.kind='agent.tree_stopping'
+ FROM events e WHERE e.agent_id=? AND e.kind='agent.tree_stopping' AND e.source_agent=''
  AND NOT EXISTS(SELECT 1 FROM events done WHERE done.agent_id=json_extract(e.payload,'$.root_agent_id')
  AND done.kind='tree_stop.completed'
  AND json_extract(done.payload,'$.operation_id')=json_extract(e.payload,'$.operation_id'))
  ORDER BY e.seq DESC LIMIT 1`, agent).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil
+		return copyWritable(ctx, q, agent)
 	}
 	if err != nil {
 		return err
@@ -92,90 +92,96 @@ func (s *Store) BeginTreeStop(ctx context.Context, req protocol.Request, root st
 		return protocol.Accepted{}, protocol.E("invalid_params", "tree stop requires an explicit tree scope matching the target Agent")
 	}
 	return s.accept(ctx, req, func(tx *sql.Tx) (protocol.Accepted, error) {
-		plan := TreeStopPlan{OperationID: req.OperationID, AgentID: root, Members: []TreeStopMember{}, Worktrees: []string{}}
-		rows, err := tx.QueryContext(ctx, agentTree+`SELECT a.id,a.state FROM agents a JOIN tree t ON t.id=a.id ORDER BY a.rowid LIMIT ?`, root, maxTreeStopMembers+1)
-		if err != nil {
+		return beginTreeStop(ctx, tx, req.OperationID, root)
+	})
+}
+
+// Scope capture is shared by copy and explicit tree stop in their acceptance
+// transaction. No stop or copy identity is published before commit.
+func beginTreeStop(ctx context.Context, tx *sql.Tx, operation, root string) (protocol.Accepted, error) {
+	plan := TreeStopPlan{OperationID: operation, AgentID: root, Members: []TreeStopMember{}, Worktrees: []string{}}
+	rows, err := tx.QueryContext(ctx, agentTree+`SELECT a.id,a.state FROM agents a JOIN tree t ON t.id=a.id ORDER BY a.rowid LIMIT ?`, root, maxTreeStopMembers+1)
+	if err != nil {
+		return protocol.Accepted{}, err
+	}
+	for rows.Next() {
+		var member TreeStopMember
+		var state string
+		if err := rows.Scan(&member.AgentID, &state); err != nil {
+			rows.Close()
 			return protocol.Accepted{}, err
 		}
-		for rows.Next() {
-			var member TreeStopMember
-			var state string
-			if err := rows.Scan(&member.AgentID, &state); err != nil {
-				rows.Close()
-				return protocol.Accepted{}, err
-			}
-			if state == "archived" || state == "copying" {
-				rows.Close()
-				return protocol.Accepted{}, protocol.E("conflict", "tree contains a read-only Agent")
-			}
-			plan.Members = append(plan.Members, member)
+		if state == "archived" || state == "copying" {
+			rows.Close()
+			return protocol.Accepted{}, protocol.E("conflict", "tree contains a read-only Agent")
 		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
-			return protocol.Accepted{}, err
-		}
-		if len(plan.Members) == 0 {
-			return protocol.Accepted{}, protocol.E("not_found", "Agent tree not found")
-		}
-		if len(plan.Members) > maxTreeStopMembers {
-			return protocol.Accepted{}, protocol.E("limit_exceeded", "tree stop exceeds 10000 Agents; no work was stopped")
-		}
-		rows, err = tx.QueryContext(ctx, agentTree+`
+		plan.Members = append(plan.Members, member)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return protocol.Accepted{}, err
+	}
+	if len(plan.Members) == 0 {
+		return protocol.Accepted{}, protocol.E("not_found", "Agent tree not found")
+	}
+	if len(plan.Members) > maxTreeStopMembers {
+		return protocol.Accepted{}, protocol.E("limit_exceeded", "tree stop exceeds 10000 Agents; no work was stopped")
+	}
+	rows, err = tx.QueryContext(ctx, agentTree+`
  SELECT w.id FROM workspace_operations w JOIN tree t ON t.id=w.parent_id
  WHERE NOT EXISTS(SELECT 1 FROM operations o WHERE o.id=w.id)
  AND w.state!='cancelled' ORDER BY w.rowid LIMIT ?`, root, maxTreeStopWorkspaces+1)
+	if err != nil {
+		return protocol.Accepted{}, err
+	}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return protocol.Accepted{}, err
+		}
+		plan.Worktrees = append(plan.Worktrees, id)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return protocol.Accepted{}, err
+	}
+	if len(plan.Worktrees) > maxTreeStopWorkspaces {
+		return protocol.Accepted{}, protocol.E("limit_exceeded", "tree stop exceeds 10000 pending workspaces; no work was stopped")
+	}
+	for i := range plan.Members {
+		member := &plan.Members[i]
+		if err := treeWritable(ctx, tx, member.AgentID); err != nil {
+			return protocol.Accepted{}, err
+		}
+		task, err := pauseAgent(ctx, tx, operation, member.AgentID)
 		if err != nil {
 			return protocol.Accepted{}, err
 		}
-		for rows.Next() {
-			var id string
-			if err := rows.Scan(&id); err != nil {
-				rows.Close()
-				return protocol.Accepted{}, err
-			}
-			plan.Worktrees = append(plan.Worktrees, id)
-		}
-		err = rows.Err()
-		rows.Close()
-		if err != nil {
+		member.TaskID = task
+		if err := cancelScopedPluginCalls(ctx, tx, member.AgentID, nil); err != nil {
 			return protocol.Accepted{}, err
 		}
-		if len(plan.Worktrees) > maxTreeStopWorkspaces {
-			return protocol.Accepted{}, protocol.E("limit_exceeded", "tree stop exceeds 10000 pending workspaces; no work was stopped")
-		}
-		for i := range plan.Members {
-			member := &plan.Members[i]
-			if err := treeWritable(ctx, tx, member.AgentID); err != nil {
-				return protocol.Accepted{}, err
-			}
-			task, err := pauseAgent(ctx, tx, req.OperationID, member.AgentID)
-			if err != nil {
-				return protocol.Accepted{}, err
-			}
-			member.TaskID = task
-			if err := cancelScopedPluginCalls(ctx, tx, member.AgentID, nil); err != nil {
-				return protocol.Accepted{}, err
-			}
-			if err := closeAgentPluginSubscriptions(ctx, tx, member.AgentID); err != nil {
-				return protocol.Accepted{}, err
-			}
-			if _, err := appendEvent(ctx, tx, member.AgentID, task, "agent.tree_stopping", map[string]string{"operation_id": req.OperationID, "root_agent_id": root}); err != nil {
-				return protocol.Accepted{}, err
-			}
-		}
-		data, err := json.Marshal(plan)
-		if err != nil {
+		if err := closeAgentPluginSubscriptions(ctx, tx, member.AgentID); err != nil {
 			return protocol.Accepted{}, err
 		}
-		if len(data) > protocol.MaxFrameBytes-4096 {
-			return protocol.Accepted{}, protocol.E("output_limit", "tree stop plan exceeds the IPC budget; no work was stopped")
-		}
-		if _, err := appendEvent(ctx, tx, root, "", "tree_stop.started", plan); err != nil {
+		if _, err := appendEvent(ctx, tx, member.AgentID, task, "agent.tree_stopping", map[string]string{"operation_id": operation, "root_agent_id": root}); err != nil {
 			return protocol.Accepted{}, err
 		}
-		return protocol.Accepted{AgentID: root}, nil
-	})
+	}
+	data, err := json.Marshal(plan)
+	if err != nil {
+		return protocol.Accepted{}, err
+	}
+	if len(data) > protocol.MaxFrameBytes-4096 {
+		return protocol.Accepted{}, protocol.E("output_limit", "tree stop plan exceeds the IPC budget; no work was stopped")
+	}
+	if _, err := appendEvent(ctx, tx, root, "", "tree_stop.started", plan); err != nil {
+		return protocol.Accepted{}, err
+	}
+	return protocol.Accepted{AgentID: root}, nil
 }
 
 func (s *Store) TreeStop(ctx context.Context, id string) (TreeStopRecord, error) {
@@ -193,7 +199,7 @@ func treeStop(ctx context.Context, q rowQuerier, id string) (TreeStopRecord, err
 	var data []byte
 	err := q.QueryRowContext(ctx, `SELECT e.payload FROM operations o
  JOIN events e ON e.agent_id=json_extract(o.result,'$.agent_id')
- WHERE o.id=? AND e.kind='tree_stop.started' AND json_extract(e.payload,'$.operation_id')=o.id`, id).Scan(&data)
+ WHERE o.id=? AND e.kind='tree_stop.started' AND e.source_agent='' AND json_extract(e.payload,'$.operation_id')=o.id`, id).Scan(&data)
 	if errors.Is(err, sql.ErrNoRows) {
 		return result, protocol.E("not_found", "tree stop not found")
 	}

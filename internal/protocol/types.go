@@ -164,12 +164,13 @@ func (r Request) Fingerprint() (string, error) {
 }
 
 type Event struct {
-	Version int             `json:"schema_version"`
-	AgentID string          `json:"agent_id"`
-	Seq     int64           `json:"seq"`
-	Kind    string          `json:"kind"`
-	TaskID  string          `json:"task_id,omitempty"`
-	Payload json.RawMessage `json:"payload"`
+	Version    int                `json:"schema_version"`
+	AgentID    string             `json:"agent_id"`
+	Seq        int64              `json:"seq"`
+	Kind       string             `json:"kind"`
+	TaskID     string             `json:"task_id,omitempty"`
+	Payload    json.RawMessage    `json:"payload"`
+	CopiedFrom *CopiedEventSource `json:"copied_from,omitempty"`
 }
 
 type Notification struct {
@@ -219,6 +220,7 @@ type Accepted struct {
 	Spawn              *SpawnSource       `json:"spawn,omitempty"`
 	Workspace          *Worktree          `json:"workspace,omitempty"`
 	Config             *ConfigPublication `json:"config,omitempty"`
+	Copy               *SessionCopyInfo   `json:"copy,omitempty"`
 }
 
 type CreateAgent struct {

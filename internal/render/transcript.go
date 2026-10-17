@@ -130,8 +130,24 @@ func (p *Transcript) Apply(e protocol.Event) error {
 	if e.Seq != p.Cursor+1 {
 		return protocol.E("cursor_gap", "event history has a gap")
 	}
-	if err := p.apply(e); err != nil {
-		return err
+	if e.CopiedFrom != nil {
+		if !validID(e.CopiedFrom.AgentID) || e.CopiedFrom.Seq <= 0 {
+			return protocol.E("invalid_state", "invalid copied history source")
+		}
+		// Payloads keep their original identities. They may update historical
+		// entries, but never the target's current model or execution state.
+		agent, resolved := p.Agent, p.ResolvedModel
+		original := e
+		original.AgentID = e.CopiedFrom.AgentID
+		err := p.apply(original)
+		p.Agent, p.ResolvedModel = agent, resolved
+		if err != nil {
+			return err
+		}
+	} else {
+		if err := p.apply(e); err != nil {
+			return err
+		}
 	}
 	p.Cursor = e.Seq
 	p.Agent.Seq = e.Seq

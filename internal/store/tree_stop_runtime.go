@@ -18,7 +18,7 @@ type PendingTreeStop struct {
 
 func (s *Store) PendingTreeStops(ctx context.Context, after int64) ([]PendingTreeStop, error) {
 	rows, err := s.db.QueryContext(ctx, `SELECT json_extract(e.payload,'$.operation_id'),e.rowid FROM events e
- WHERE e.kind='tree_stop.started' AND e.rowid>? AND NOT EXISTS(
+ WHERE e.kind='tree_stop.started' AND e.source_agent='' AND e.rowid>? AND NOT EXISTS(
  SELECT 1 FROM events d WHERE d.agent_id=e.agent_id AND d.kind='tree_stop.completed'
  AND json_extract(d.payload,'$.operation_id')=json_extract(e.payload,'$.operation_id')) ORDER BY e.rowid LIMIT 32`, after)
 	if err != nil {
@@ -139,7 +139,7 @@ func (s *Store) TreeStopRunnerScope(ctx context.Context, id string) (process.Sto
 		for _, member := range plan.Members {
 			result.Agents = append(result.Agents, member.AgentID)
 			rows, err := tx.QueryContext(ctx, `SELECT DISTINCT task_id,json_extract(payload,'$.operation_id') FROM events
- WHERE agent_id=? AND json_extract(payload,'$.call.name')='exec_command' AND
+ WHERE agent_id=? AND source_agent='' AND json_extract(payload,'$.call.name')='exec_command' AND
  (kind='tool.dispatching' OR (kind='tool.started' AND coalesce(json_extract(payload,'$.schema_version'),1)<2)) LIMIT 10001`, member.AgentID)
 			if err != nil {
 				return err

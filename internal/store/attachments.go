@@ -61,6 +61,9 @@ func (s *Store) SaveImage(ctx context.Context, req protocol.Request, agent, name
 		return protocol.Accepted{}, err
 	}
 	return s.accept(ctx, req, func(tx *sql.Tx) (protocol.Accepted, error) {
+		if err := copyWritable(ctx, tx, agent); err != nil {
+			return protocol.Accepted{}, err
+		}
 		var state string
 		if err := tx.QueryRowContext(ctx, "SELECT state FROM agents WHERE id=?", agent).Scan(&state); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {

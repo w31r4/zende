@@ -217,6 +217,9 @@ func (m Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.cursor = m.transcript.Cursor
+		if msg.Event.CopiedFrom != nil {
+			return m, nil
+		}
 		m.projectQuestionEvent(msg.Event)
 		if msg.Event.Kind == "context.compaction.state" {
 			var info protocol.CompactionInfo

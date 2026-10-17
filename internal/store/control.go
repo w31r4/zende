@@ -13,6 +13,9 @@ import (
 // its in-memory worker. Retrying this operation never targets a newer Task.
 func (s *Store) Stop(ctx context.Context, req protocol.Request, p protocol.Target) (protocol.Accepted, error) {
 	return s.accept(ctx, req, func(tx *sql.Tx) (protocol.Accepted, error) {
+		if err := copyWritable(ctx, tx, p.AgentID); err != nil {
+			return protocol.Accepted{}, err
+		}
 		task, err := pauseAgent(ctx, tx, req.OperationID, p.AgentID)
 		return protocol.Accepted{AgentID: p.AgentID, TaskID: task}, err
 	})

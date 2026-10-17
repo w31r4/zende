@@ -15,7 +15,7 @@ import (
 	"zende.local/harness/internal/protocol"
 )
 
-const SchemaVersion = 22
+const SchemaVersion = 23
 
 type Store struct {
 	db   *sql.DB
@@ -166,9 +166,12 @@ PRAGMA user_version=2;`); err != nil {
 				return err
 			}
 		}
-		// v22 adds versioned public-context bindings and request projections.
-		// Older binaries must not recover those requests as strict continuation.
-		_, err := tx.Exec("PRAGMA user_version=22;")
+		if version < 23 {
+			if _, err := tx.Exec(sessionCopySchema); err != nil {
+				return err
+			}
+		}
+		_, err := tx.Exec("PRAGMA user_version=23;")
 		return err
 	})
 }
@@ -494,7 +497,7 @@ func (s *Store) Events(ctx context.Context, c protocol.Cursor) (protocol.EventPa
 		if c.After > p.Latest {
 			return protocol.E("cursor_gap", "cursor is ahead of durable history; obtain a new snapshot")
 		}
-		rows, err := tx.QueryContext(ctx, "SELECT seq,kind,task_id,payload FROM events WHERE agent_id=? AND seq>? ORDER BY seq LIMIT ?", c.AgentID, c.After, c.Limit)
+		rows, err := tx.QueryContext(ctx, "SELECT seq,kind,task_id,payload,source_agent,source_seq FROM events WHERE agent_id=? AND seq>? ORDER BY seq LIMIT ?", c.AgentID, c.After, c.Limit)
 		if err != nil {
 			return err
 		}
@@ -503,8 +506,17 @@ func (s *Store) Events(ctx context.Context, c protocol.Cursor) (protocol.EventPa
 		for rows.Next() {
 			e := protocol.Event{Version: protocol.Version, AgentID: c.AgentID}
 			var payload string
-			if err := rows.Scan(&e.Seq, &e.Kind, &e.TaskID, &payload); err != nil {
+			var source protocol.CopiedEventSource
+			if err := rows.Scan(&e.Seq, &e.Kind, &e.TaskID, &payload, &source.AgentID, &source.Seq); err != nil {
 				return err
+			}
+			if source.AgentID != "" {
+				if source.Seq <= 0 {
+					return protocol.E("invalid_state", "copied event has an invalid source cursor")
+				}
+				e.CopiedFrom = &source
+			} else if source.Seq != 0 {
+				return protocol.E("invalid_state", "event source cursor has no source Agent")
 			}
 			if e.Seq != p.Next+1 {
 				return protocol.E("cursor_gap", "durable event range is missing")

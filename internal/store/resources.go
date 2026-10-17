@@ -194,6 +194,11 @@ func resourceSnapshot(ctx context.Context, tx *sql.Tx, agent string) (ResourceSn
 }
 
 func resourceAgent(ctx context.Context, tx rowQuerier, agent string, writable bool) error {
+	if writable {
+		if err := copyWritable(ctx, tx, agent); err != nil {
+			return err
+		}
+	}
 	var state string
 	err := tx.QueryRowContext(ctx, "SELECT state FROM agents WHERE id=?", agent).Scan(&state)
 	if errors.Is(err, sql.ErrNoRows) {
