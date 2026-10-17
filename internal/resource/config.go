@@ -38,6 +38,7 @@ type ModelConfig struct {
 	NativeCategories bool             `json:"native_categories,omitempty" yaml:"native_categories,omitempty"`
 	Chat             *ChatConfig      `json:"chat,omitempty" yaml:"chat,omitempty"`
 	Anthropic        *AnthropicConfig `json:"anthropic,omitempty" yaml:"anthropic,omitempty"`
+	Gemini           *GeminiConfig    `json:"gemini,omitempty" yaml:"gemini,omitempty"`
 }
 
 // ChatConfig declares wire differences for a specific configured model.
@@ -54,6 +55,13 @@ type AnthropicConfig struct {
 	ThinkingBudget      int    `json:"thinking_budget_tokens,omitempty" yaml:"thinking_budget_tokens,omitempty"`
 	ThinkingDisplay     string `json:"thinking_display,omitempty" yaml:"thinking_display,omitempty"`
 	InterleavedThinking bool   `json:"interleaved_thinking,omitempty" yaml:"interleaved_thinking,omitempty"`
+}
+
+// GeminiConfig keeps an omitted budget distinct from zero (disabled) and -1
+// (dynamic). Thinking levels are selected through the model's Efforts list.
+type GeminiConfig struct {
+	ThinkingBudget  *int `json:"thinking_budget_tokens,omitempty" yaml:"thinking_budget_tokens,omitempty"`
+	IncludeThoughts bool `json:"include_thoughts,omitempty" yaml:"include_thoughts,omitempty"`
 }
 
 type Connection struct {
@@ -296,7 +304,24 @@ func (c Config) Validate() error {
 					return fmt.Errorf("thinking display requires enabled or adaptive thinking")
 				}
 			}
-			if (conn.Protocol == "chat-completions" || conn.Protocol == "anthropic") && m.NativeCategories {
+			if o := m.Gemini; o != nil {
+				if conn.Protocol != "gemini" {
+					return fmt.Errorf("Gemini settings require the gemini protocol")
+				}
+				if o.ThinkingBudget != nil && (*o.ThinkingBudget < -1 || *o.ThinkingBudget >= m.MaxOutput || len(m.Efforts) != 0) {
+					return fmt.Errorf("Gemini thinking budget must be -1 or between zero and max output, and cannot be combined with effort options")
+				}
+			}
+			if conn.Protocol == "gemini" {
+				for _, effort := range m.Efforts {
+					switch strings.ToUpper(effort) {
+					case "MINIMAL", "LOW", "MEDIUM", "HIGH":
+					default:
+						return fmt.Errorf("unsupported Gemini thinking level")
+					}
+				}
+			}
+			if conn.Protocol != "responses" && m.NativeCategories {
 				return fmt.Errorf("selected protocol uses explicit text markers, not native categories")
 			}
 		}

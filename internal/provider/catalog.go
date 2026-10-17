@@ -9,13 +9,14 @@ import (
 
 	"zende.local/harness/internal/model/anthropic"
 	"zende.local/harness/internal/model/chatcompletions"
+	"zende.local/harness/internal/model/gemini"
 	"zende.local/harness/internal/model/responses"
 	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/resource"
 )
 
 func supportsProtocol(name string) bool {
-	return name == responses.Protocol || name == chatcompletions.Protocol || name == anthropic.Protocol
+	return name == responses.Protocol || name == chatcompletions.Protocol || name == anthropic.Protocol || name == gemini.Protocol
 }
 
 func connectionInfo(id string, c resource.Connection) protocol.ConnectionInfo {

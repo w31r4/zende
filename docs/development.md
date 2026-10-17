@@ -1,6 +1,6 @@
 # 本地开发
 
-CLI 支持持久会话、子 Agent 创建与复用、历史查询、进程工具、Responses、Chat Completions 和 Anthropic Messages；独立 runner 管理 pipe、tmux PTY 与输出。完整 Day1 和部署仍在实施。验证证据按版本记录，新增 Anthropic 接入未测试。进度见 [OpenSpec 任务](../openspec/changes/build-day1-harness/tasks.md)。
+CLI 支持持久会话、子 Agent 创建与复用、历史查询、进程工具及四种模型协议；独立 runner 管理 pipe、tmux PTY 与输出。完整 Day1 和部署仍在实施，新增 Anthropic、Gemini 接入未测试。进度见 [OpenSpec 任务](../openspec/changes/build-day1-harness/tasks.md)。
 
 ## 构建与测试
 
@@ -98,7 +98,7 @@ model: local/my-model
 
 ## 模型目录与工作目录查询
 
-`zende model connections` 列出当前 core 配置的连接，`model list CONNECTION` 返回型号、思考力度和能力声明。两条命令加 `--agent AGENT` 可包含该 Agent 的就绪插件 provider。同厂商连接按 ID 区分，空配置返回空列表；`supported` 只表示 adapter 已实现，内置协议目前为 Responses、Chat Completions 和 Anthropic Messages。查询不解析凭据、不访问端点，认证和网络状态在模型请求时检查。
+`zende model connections` 列出当前 core 配置的连接，`model list CONNECTION` 返回型号、思考力度和能力声明。两条命令加 `--agent AGENT` 可包含该 Agent 的就绪插件 provider。同厂商连接按 ID 区分，空配置返回空列表；`supported` 只表示 adapter 已实现，内置协议为 Responses、Chat Completions、Anthropic Messages 和 Gemini。查询不解析凭据、不访问端点，认证和网络状态在模型请求时检查。
 
 两级目录均支持 `--after NEXT`、`--limit`（默认 20，最多 100）和 `--version VERSION`；跨页或分步选择携带返回版本，配置或插件目录变化时报 `catalog_changed`。每页最多 1 MiB，超限可减小页数或缩短元数据。返回值只含公开元数据，端点与凭据引用留在连接配置中。
 
@@ -625,7 +625,7 @@ go test -race ./internal/runtime -run '^TestPluginExecution' -count=3
 
 ## Responses 接入
 
-连接使用 `protocol: responses`，`base_url` 为 API 根地址，adapter 追加 `/responses`。型号、输出上限和可选思考力度均来自配置。`native_categories: true` 仅用于已确认支持 assistant `phase` 的具体型号，默认使用显式文本标签。Gemini adapter 仍待交付。
+连接使用 `protocol: responses`，`base_url` 为 API 根地址，adapter 追加 `/responses`。型号、输出上限和可选思考力度均来自配置。`native_categories: true` 仅用于已确认支持 assistant `phase` 的具体型号，默认使用显式文本标签。
 
 | 内容 | 当前处理 |
 | --- | --- |
@@ -693,3 +693,25 @@ Responses 与 Chat 已有共用两轮工具/错误回填、断流不执行和真
 支持声明后的 PNG/JPEG 输入、取消、有界 SSE 和工具结果回填；请求上限 32 MiB，SSE 单事件 8 MiB、单流 64 MiB，公共消息沿用单块 1 MiB、响应 4 MiB/128 块限制。用量缺失保持未知，缓存输入计入总输入 token。未支持的内容类型、citations、服务端工具暂停等返回明确错误。
 
 此接入未运行测试、构建或真实端点验收。原生 deferred/tool search、跨协议迁移与完整 Day1 行为继续按任务清单实现。
+
+## Gemini 接入
+
+连接使用 `protocol: gemini`；直接接入时 `base_url` 为 `https://generativelanguage.googleapis.com/v1beta`，adapter 追加 `/models/MODEL:streamGenerateContent?alt=sse`。型号、上下文容量、输出上限和图片能力来自配置，型号 ID 可带 `models/` 前缀。凭据使用 `x-goog-api-key` 请求头，只在发送时解析引用。此实现对应 [GenerateContent API](https://ai.google.dev/api/generate-content)，认证方式见 [API key 文档](https://ai.google.dev/gemini-api/docs/api-key)。
+
+型号的 `efforts` 可声明具体端点支持的 `minimal`、`low`、`medium`、`high`；选中后发送大写 `thinkingLevel`，空选择不发该字段。固定预算放在该型号的 `gemini` 配置中，与 efforts 二选一：
+
+```yaml
+gemini:
+  thinking_budget_tokens: 2048
+  include_thoughts: true
+```
+
+预算省略时采用供应商默认值，`0` 表示请求关闭、`-1` 表示动态预算，非负值须小于 `max_output`；具体型号是否接受仍由端点决定。`include_thoughts` 默认 false，开启后收到的思考内容只用于协议保存，不展示为 commentary。配置选项随绑定快照保存，恢复沿用原选择。
+
+基础指令使用 `systemInstruction`。历史 system/developer 提醒在原位置适配为 user 消息中的 `harness_instruction`；原存储角色不变。工具定义使用 `parametersJsonSchema`，调用结果通过 `functionResponse` 回填。响应提供 ID 时原样关联；未提供时只生成内部 ID，发回协议的结果仍使用原名称。工具错误放在 response 的 error 字段中，图片使用 PNG/JPEG 本地字节。
+
+流片段按原顺序保存，`thoughtSignature` 留在原 part 上；公共文本可拼接，保存的 part 不合并。`thought: true` 才标识思考内容，普通文本或工具调用上的签名不改变其类别。重放核对端点、型号及公共内容，冲突返回明确错误。响应必须收到 `STOP` 并正常读至 SSE 结束，才提交完整消息和工具调用；截断、取消或协议错误保留已收片段，不执行部分调用。任务 final 仍由显式文本标签决定。
+
+请求限 32 MiB，SSE 单事件 8 MiB、单流 64 MiB；公共消息沿用单块 1 MiB、响应 4 MiB/128 块限制。用量保留未知值，已报告的输出按 candidates 与 thoughts 合计；输入已包含缓存计数，不重复相加。HTTP 错误只返回状态码，拒绝重定向。Interactions、Live、Vertex 认证、媒体生成及服务端工具不在本 adapter 的范围内；未支持的 part 或结束原因报错。
+
+实现参考 Pi `7bc154ad082e2f0029c19117a16d22a504439476` 的 `packages/ai/src/providers/google{,-shared}.ts`。未运行测试、构建或真实端点验收；原生工具搜索、跨协议迁移和上下文压缩仍按任务清单继续。

@@ -13,6 +13,7 @@ import (
 	"zende.local/harness/internal/model"
 	"zende.local/harness/internal/model/anthropic"
 	"zende.local/harness/internal/model/chatcompletions"
+	"zende.local/harness/internal/model/gemini"
 	"zende.local/harness/internal/model/responses"
 	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/resource"
@@ -122,6 +123,16 @@ func (r *Resolver) bind(ctx context.Context, saved bindingSnapshot) (model.Bindi
 	}
 	var adapter model.Adapter
 	switch conn.Protocol {
+	case gemini.Protocol:
+		config := gemini.Config{Endpoint: conn.BaseURL, Effort: saved.Effort, Credential: credential, Images: selected.Images}
+		if options := selected.Gemini; options != nil {
+			config.ThinkingBudget, config.IncludeThoughts = options.ThinkingBudget, options.IncludeThoughts
+		}
+		value, err := gemini.New(config)
+		if err != nil {
+			return model.Binding{}, err
+		}
+		adapter = value
 	case anthropic.Protocol:
 		config := anthropic.Config{Endpoint: conn.BaseURL, Effort: saved.Effort, Credential: credential, Images: selected.Images}
 		if options := selected.Anthropic; options != nil {
