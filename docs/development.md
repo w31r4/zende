@@ -741,6 +741,32 @@ go test -race ./internal/runtime -run '^TestPluginExecution' -count=3
 
 `TestPluginCapabilityCatalog` 验证 provider/resource 定义、预算、引用和旧目录编码；`TestPluginPackageExtendedCatalog` 验证真实子进程的目录发现、失败候选与保存后重建。CLI 集成测试同时核对多类目录及历史版本读取。
 
+## 四协议配置与能力对照
+
+[四协议配置示例](../examples/config/four-protocols.yaml) 列出连接、型号、容量与凭据引用。端点、型号和容量都是占位值，须按实际服务替换；示例默认 host 搜索，未安装到用户配置。图片能力与思考选项按具体型号声明，省略时不启用可选设置。
+
+| `protocol` | 请求路径（追加到 `base_url`） | 输出类别 | MCP 搜索路径 |
+| --- | --- | --- | --- |
+| `responses` | `/responses` | 文本标签；已声明时映射原生 phase | 默认 host；可声明 `responses-client` |
+| `chat-completions` | `/chat/completions` | 文本标签 | host |
+| `anthropic` | `/messages` | 文本标签 | 默认 host；可声明 `anthropic-deferred` |
+| `gemini` | `/models/MODEL:streamGenerateContent?alt=sse` | 文本标签 | host |
+
+四个 adapter 已写入文本流、完整调用组装、结果回填、取消和图片输入；预算、压缩、错误记录及任务 final 由公共运行时处理。host 路径使用 `tool_search + tool_invoke`，完整 MCP schema 按需进入工具结果；原生路径由各 adapter 编码发现结果，执行与恢复共用本地 MCP 记录。声明了不匹配的协议/搜索路径会报配置错误，运行中不自动换路重试。
+
+| 续接内容 | 当前保存与边界 |
+| --- | --- |
+| Responses | 原始 item、phase、reasoning/encrypted content；固定端点、型号和原生搜索语义 |
+| Chat Completions | refusal、已声明的 reasoning 扩展；固定端点、型号与扩展设置 |
+| Anthropic | 原始 block、thinking/signature/redacted_thinking、搜索身份；固定端点、型号与搜索语义 |
+| Gemini | 原始 part、thoughtSignature 与调用关联；固定端点、型号 |
+
+私有续接数据留在原记录中；当前选择预览会报告不兼容，跨协议转换仍在实施。用量缺失保持未知，配置容量与本地估算不等于供应商计量。认证、网络及字段支持须另做真实端点验证。
+
+原生字段依据分别见下方 Responses、Anthropic 章节。2026-10-17 查阅 [GenerateContent Tool / FunctionDeclaration](https://ai.google.dev/api/generate-content#Tool)，未确认适用于本地 client search 的原生 deferred 字段，因此当前 Gemini adapter 使用 host；文档中的远端 `mcpServers` 不等于本地 MCP 搜索与调用记录。Chat adapter 也只声明已实现的 host 路径。
+
+当前没有完成真实端点验收的端点/型号/配置组合。Responses、Chat 的历史局部测试记录见 [验证记录](./verification.md)；本轮及后续改动未运行测试或构建，Anthropic、Gemini、两条原生搜索路径、跨协议迁移与 V14/V15 均未验收。10.5、10.7 保持未完成。
+
 ## Responses 接入
 
 连接使用 `protocol: responses`，`base_url` 为 API 根地址，adapter 追加 `/responses`。型号、输出上限和可选思考力度均来自配置。`native_categories: true` 仅用于已确认支持 assistant `phase` 的具体型号，默认使用显式文本标签。

@@ -130,9 +130,11 @@
 
 10.2–10.4 已接通 Chat Completions、Anthropic Messages、Gemini 的请求、流、结果回填、专用内容保存和配置恢复。Chat 保留此前局部测试记录；Anthropic、Gemini 未运行测试或构建。三项按 2026-10-16 的实施约定勾选，不代表完整共享套件通过；配置和兼容边界见 docs/development.md。
 
-10.5 已接通 Responses client tool search 和 Anthropic deferred 的按型号声明、协议编码、请求级 MCP 函数映射、执行及恢复，默认保留 host 路径。四协议能力矩阵和真实兼容记录仍待交付；未新增或运行测试、构建及真实端点请求，本项保持未完成。
+10.5 已接通 Responses client tool search 和 Anthropic deferred 的按型号声明、协议编码、请求级 MCP 函数映射、执行及恢复，默认保留 host 路径。四协议能力矩阵已写入 docs/development.md，Chat 和 Gemini 当前使用 host；未新增或运行测试、构建及真实端点请求，本项保持未完成。
 
 10.6 已加入 `agent select --preview` 和只读能力差异报告；预览与实际选择共用候选、图片、工具搜索和私有数据检查。原模型不可用时仍可检查候选，历史保持原样；跨协议私有状态转换继续实施。本批未新增或运行测试、构建及真实请求，本项保持未完成。
+
+10.7 已提供四协议配置示例和能力对照，分别记录已实现路径、历史局部证据与未验证范围。示例仅含占位端点及凭据引用，未安装；没有完成真实端点验收的组合，V14、V15 未执行，本项保持未完成。
 
 ## 11. 跨模块验收与交付记录
 

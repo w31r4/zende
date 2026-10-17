@@ -1,0 +1,50 @@
+# Configuration example only; not tested or installed.
+# Replace endpoints, model IDs, capacities and credential references with
+# values supplied by your endpoint. The limits below are placeholders.
+connections:
+  responses:
+    label: Responses endpoint
+    protocol: responses
+    base_url: https://example.invalid/v1
+    credential: env:ZENDE_RESPONSES_KEY
+    models:
+      - id: configured-model
+        context_window: 32000
+        max_output: 4096
+        tool_search: host
+        # Set tool_search: responses-client only after confirming support.
+        # Set native_categories: true only if assistant phase is supported.
+  chat:
+    label: Chat Completions endpoint
+    protocol: chat-completions
+    base_url: https://example.invalid/v1
+    credential: env:ZENDE_CHAT_KEY
+    models:
+      - id: configured-model
+        context_window: 32000
+        max_output: 4096
+        tool_search: host
+        # Legacy endpoints may require chat.max_tokens_field: max_tokens.
+  anthropic:
+    label: Messages endpoint
+    protocol: anthropic
+    base_url: https://example.invalid/v1
+    credential: env:ZENDE_ANTHROPIC_KEY
+    models:
+      - id: configured-model
+        context_window: 32000
+        max_output: 4096
+        tool_search: host
+        # Set tool_search: anthropic-deferred only after confirming support.
+  gemini:
+    label: GenerateContent endpoint
+    protocol: gemini
+    base_url: https://example.invalid/v1beta
+    credential: env:ZENDE_GEMINI_KEY
+    models:
+      - id: configured-model
+        context_window: 32000
+        max_output: 4096
+        tool_search: host
+
+model: responses/configured-model
