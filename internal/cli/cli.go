@@ -83,6 +83,7 @@ func (a *app) command() *cobra.Command {
 	a.mailboxCommands(root)
 	a.resourceCommands(root)
 	a.workspaceCommands(root)
+	a.contextCommands(root)
 	config := &cobra.Command{Use: "config", Short: "Inspect effective configuration without resolving secrets"}
 	config.AddCommand(&cobra.Command{Use: "inspect", Short: "Show values and override sources", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		p, e, err := a.environment()
@@ -338,6 +339,7 @@ func (a *app) serve(cmd *cobra.Command, _ []string) error {
 		core.Commands = append(core.Commands, workspaceHints(exe, a.profile)...)
 		core.Commands = append(core.Commands, selectionHints(exe, a.profile)...)
 		core.Commands = append(core.Commands, collaborationHints(exe, a.profile)...)
+		core.Commands = append(core.Commands, contextHints(exe, a.profile)...)
 	}
 	configuredModels, err := provider.New(e.Config, os.Getenv)
 	if err != nil {

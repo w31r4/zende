@@ -398,7 +398,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if err := appendEvent("task.config", settings); err != nil {
 			return "", err
 		}
-		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "19", Body: system}); err != nil {
+		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "20", Body: system}); err != nil {
 			return "", err
 		}
 	} else {
@@ -409,7 +409,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if resume.Journal.Prompt.Body != "" {
 			system = resume.Journal.Prompt.Body
 		} else {
-			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "19", Body: system}); err != nil {
+			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "20", Body: system}); err != nil {
 				return "", err
 			}
 		}

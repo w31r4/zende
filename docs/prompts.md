@@ -1,6 +1,6 @@
 # 提示词
 
-系统说明由 `internal/runtime/prompt.go` 组装，工具 descriptor 由各 executor 提供；MCP 与插件工具说明分别位于 `internal/runtime/mcp_tools.go`、`internal/runtime/plugin_tools.go`，请求前保存为 `prompt.loaded`。CLI 说明覆盖提问、资源、插件命令、工作环境、选配和 Agent 协作；资源更新在后续请求追加发现通知。MCP 已接入搜索、调用和结果续读，外部目录监视待完成。
+系统说明由 `internal/runtime/prompt.go` 组装，工具 descriptor 由各 executor 提供；MCP 与插件工具说明分别位于 `internal/runtime/mcp_tools.go`、`internal/runtime/plugin_tools.go`，请求前保存为 `prompt.loaded`。CLI 说明覆盖提问、资源、插件命令、工作环境、选配、Agent 协作和上下文查询；资源更新在后续请求追加发现通知。MCP 已接入搜索、调用和结果续读，外部目录监视待完成。
 
 ## Pi 参考
 
@@ -62,6 +62,8 @@ Zende 保持 exec、进程继续操作和 patch 的工具边界。Pi 的 read/ed
 版本 18 为模型目录入口补充 `--agent AGENT`，让模型发现当前 Agent 的就绪插件 provider；型号和力度仍通过 `model list` 查询，再显式选用。继续采用 Pi 的短入口和按能力组合方式，详细协议留给帮助与开发文档，旧 Task 保留原提示词。
 
 版本 19 增加 `plugin events subscribe` 短入口：从目录选择来源，保留订阅 ID，通过 list/inspect/read/close 查询和关闭。说明区分 Core 事件与插件数据，指出断开、普通停止和 unknown 的处理。沿用 Pi 的能力条件组合，参数留给帮助；旧 Task 的提示词保持原样。
+
+版本 20 增加 `context inspect/read` 短入口，说明如何查询请求版本、回查摘要省略的原文、固定游标及续读大条目。`context entry` 的字节分页参数留给帮助。入口仍按 Pi 的已注册能力组合，旧 Task 保留已存提示词；查询不触发工作或修改历史。本次接线未测试。
 
 ## Skill/prompt 的请求级更新
 
