@@ -51,16 +51,17 @@ type RecoveryCallInfo struct {
 	ProcessID   string `json:"process_id,omitempty"`
 }
 type RecoveryReport struct {
-	AgentID          string             `json:"agent_id"`
-	TaskID           string             `json:"task_id"`
-	TaskState        string             `json:"task_state"`
-	Paused           bool               `json:"paused"`
-	Cursor           int64              `json:"cursor"`
-	RequestID        string             `json:"request_id,omitempty"`
-	ResponseComplete bool               `json:"response_complete"`
-	RepairCount      int                `json:"repair_count"`
-	NextStep         string             `json:"next_step"`
-	Calls            []RecoveryCallInfo `json:"calls"`
+	Dependencies     *store.RecoveryDependencies `json:"dependencies,omitempty"`
+	AgentID          string                      `json:"agent_id"`
+	TaskID           string                      `json:"task_id"`
+	TaskState        string                      `json:"task_state"`
+	Paused           bool                        `json:"paused"`
+	Cursor           int64                       `json:"cursor"`
+	RequestID        string                      `json:"request_id,omitempty"`
+	ResponseComplete bool                        `json:"response_complete"`
+	RepairCount      int                         `json:"repair_count"`
+	NextStep         string                      `json:"next_step"`
+	Calls            []RecoveryCallInfo          `json:"calls"`
 }
 
 func recoveryInvalid() error {
@@ -446,9 +447,26 @@ func (j *recoveryJournal) report() RecoveryReport {
 }
 
 func (c *Core) Recovery(ctx context.Context, target protocol.RecoveryTarget) (RecoveryReport, error) {
-	j, err := readRecoveryJournal(ctx, c.Store, target.AgentID, target.TaskID)
-	if err != nil {
-		return RecoveryReport{}, err
+	for range 3 {
+		j, err := readRecoveryJournal(ctx, c.Store, target.AgentID, target.TaskID)
+		if err != nil {
+			return RecoveryReport{}, err
+		}
+		dependencies, err := c.Store.RecoveryDependencies(ctx, j.Work.Agent.ID, j.Work.Task.ID, j.Work.Agent.Seq)
+		if isFailure(err, "recovery_conflict") {
+			continue
+		}
+		if err != nil {
+			return RecoveryReport{}, err
+		}
+		r := j.report()
+		r.Dependencies = &dependencies
+		if j.Work.Agent.State == "unknown" && (dependencies.Plugins.Unknown > 0 || c.pluginTaskFailure(r.AgentID, r.TaskID) != nil) {
+			r.NextStep = "verify_plugins"
+		} else if dependencies.Plugins.Pending > 0 && (r.NextStep == "finish" || r.NextStep == "settle_cancellation") {
+			r.NextStep = "wait_plugins"
+		}
+		return r, nil
 	}
-	return j.report(), nil
+	return RecoveryReport{}, protocol.E("recovery_conflict", "recovery history is changing; retry the read at a new cursor")
 }

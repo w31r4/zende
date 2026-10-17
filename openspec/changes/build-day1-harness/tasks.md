@@ -118,6 +118,8 @@
 
 9.2、9.3 已接通自动触发、`context compact`、TUI `/compact`、摘要派发和原子视图发布；`operation inspect` 查询状态。忙碌时在合法请求边界处理，空闲或暂停时独立压缩且不唤醒任务。重启保留尝试次数，stop 取消所属压缩；Task 终态关闭遗留自动操作，手动操作可在空闲时继续。新代码未测试或构建，V12 未验收。
 
+9.5 的恢复报告已包含 mailbox/子结果、资源准备及保留版本、本 Task 的插件原调用，按同一游标读取，各组有界列示并保留总数。恢复在激活原 Task 前检查插件未知结果与持久化故障，报告区分 verify_plugins、wait_plugins。消息去重和资源发布沿用已有事务；尚未执行逐故障点验证，9.5 与 V13 保持未验收。
+
 ## 10. 四协议共同交付线
 
 对应设计 D6、D8；能力：[model-protocols](./specs/model-protocols/spec.md)、[live-resources](./specs/live-resources/spec.md)。

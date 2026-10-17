@@ -53,6 +53,16 @@ func (c *Core) recoverWork(taskCtx, persist context.Context, held store.HeldTask
 		}
 		var resume *resumedTask
 		if failure == nil {
+			failure = c.pluginTaskFailure(j.Work.Agent.ID, j.Work.Task.ID)
+		}
+		if failure == nil {
+			plugins, err := c.Store.PluginTaskStatus(persist, j.Work.Agent.ID, j.Work.Task.ID)
+			failure = err
+			if err == nil && plugins.Unknown != 0 {
+				failure = protocol.E("operation_unknown", "original Task has unverified plugin outcomes; inspect their original operations before recovery")
+			}
+		}
+		if failure == nil {
 			resume, failure = c.prepareResume(persist, j)
 		}
 		if failure == nil {

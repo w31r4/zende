@@ -176,17 +176,8 @@ func (c *Core) waitPluginTask(ctx context.Context, agent, task string) error {
 	tick := time.NewTicker(25 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		c.pluginCallMu.Lock()
-		failed := false
-		for target, worker := range c.pluginCalls {
-			if target.AgentID == agent && worker.task == task && worker.failure != nil {
-				failed = true
-				break
-			}
-		}
-		c.pluginCallMu.Unlock()
-		if failed {
-			return protocol.E("persistence_failed", "Task has an uncommitted plugin outcome; inspect its original operation")
+		if err := c.pluginTaskFailure(agent, task); err != nil {
+			return err
 		}
 		status, err := c.Store.PluginTaskStatus(ctx, agent, task)
 		if err != nil {
@@ -204,4 +195,15 @@ func (c *Core) waitPluginTask(ctx context.Context, agent, task string) error {
 		case <-tick.C:
 		}
 	}
+}
+
+func (c *Core) pluginTaskFailure(agent, task string) error {
+	c.pluginCallMu.Lock()
+	defer c.pluginCallMu.Unlock()
+	for target, worker := range c.pluginCalls {
+		if target.AgentID == agent && worker.task == task && worker.failure != nil {
+			return protocol.E("persistence_failed", "Task has an uncommitted plugin outcome; inspect its original operation")
+		}
+	}
+	return nil
 }
