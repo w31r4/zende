@@ -96,6 +96,58 @@ func (s *Store) ConfigVersion(ctx context.Context, version string) (resource.Con
 	return readConfigSnapshot(ctx, s.db, version)
 }
 
+func checkConfigPublication(ctx context.Context, q rowQuerier, p *protocol.ConfigPublication) error {
+	if p == nil {
+		return nil // Legacy records did not have profile configuration versions.
+	}
+	if !p.Valid() {
+		return protocol.E("invalid_state", "configuration publication reference is invalid")
+	}
+	var version, operation string
+	err := q.QueryRowContext(ctx, "SELECT version,operation_id FROM config_publications WHERE generation=?", p.Generation).Scan(&version, &operation)
+	if errors.Is(err, sql.ErrNoRows) || err == nil && (version != p.Version || operation != p.OperationID) {
+		return protocol.E("invalid_state", "configuration publication reference differs from retained history")
+	}
+	return err
+}
+
+func checkRequestConfiguration(ctx context.Context, tx *sql.Tx, record any) error {
+	raw, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	var refs struct {
+		Configuration *protocol.ConfigPublication `json:"configuration"`
+		Settings      *struct {
+			Configuration *protocol.ConfigPublication `json:"configuration"`
+		} `json:"settings"`
+	}
+	if json.Unmarshal(raw, &refs) != nil {
+		return protocol.E("invalid_params", "request metadata is invalid")
+	}
+	if err := checkConfigPublication(ctx, tx, refs.Configuration); err != nil {
+		return err
+	}
+	if refs.Settings != nil {
+		if err := checkConfigPublication(ctx, tx, refs.Settings.Configuration); err != nil {
+			return err
+		}
+		if start := refs.Settings.Configuration; start != nil && (refs.Configuration == nil || start.Generation > refs.Configuration.Generation) {
+			return protocol.E("invalid_state", "request configuration predates its Task configuration")
+		}
+	}
+	if refs.Configuration != nil {
+		var latest int64
+		if err := tx.QueryRowContext(ctx, "SELECT coalesce(max(generation),0) FROM config_publications").Scan(&latest); err != nil {
+			return err
+		}
+		if latest != refs.Configuration.Generation {
+			return protocol.E("request_conflict", "configuration changed before request start; rebuild the discovery notice")
+		}
+	}
+	return nil
+}
+
 // PublishConfig commits bytes, the current-version journal and acceptance in
 // one transaction. The owner prepares providers first, rechecks sources before
 // this call and replaces its in-memory bundle only after commit succeeds.

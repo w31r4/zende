@@ -56,32 +56,11 @@ func (c *Core) importImage(ctx context.Context, req protocol.Request, p protocol
 }
 
 func (c *Core) checkImageCapability(ctx context.Context, agent string) error {
-	a, err := c.Store.Agent(ctx, agent)
+	choice, err := c.Store.Selection(ctx, agent)
 	if err != nil {
 		return err
 	}
-	selection := a.Model
-	if selection == "" {
-		selection = c.Config.Config.Model
-	}
-	resolver := c.modelResolver()
-	if resolver == nil && !strings.HasPrefix(selection, "plugin:") {
-		return protocol.E("unsupported_capability", "select a model with image input; draft attachments are retained")
-	}
-	var binding model.Binding
-	if strings.HasPrefix(selection, "plugin:") {
-		choice, readErr := c.Store.Selection(ctx, agent)
-		if readErr != nil {
-			return readErr
-		}
-		if len(choice.Binding) > 0 {
-			binding, err = c.restoreBinding(ctx, agent, choice.Binding)
-		} else {
-			binding, err = c.resolveModelSelection(ctx, agent, selection, choice.Choice.Effort, "")
-		}
-	} else {
-		binding, err = resolver.Resolve(ctx, selection)
-	}
+	_, binding, err := c.initialModelSelection(ctx, agent, choice, c.configuration())
 	if err != nil {
 		return safeFailure(err, "model_unavailable", "selected model is unavailable; draft attachments are retained")
 	}

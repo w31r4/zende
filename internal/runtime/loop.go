@@ -84,12 +84,14 @@ func (c *Core) Run(ctx context.Context) error {
 		agent string
 		err   error
 	}
-	done := make(chan outcome, c.Config.Config.Limits.Agents)
+	done := make(chan outcome, 1)
 	active := map[string]bool{}
 	triedRecovery := map[string]int64{}
 	tick := time.NewTicker(25 * time.Millisecond)
 	defer tick.Stop()
 	for {
+		configuration := c.configuration()
+		maxAgents := configuration.effective.Config.Limits.Agents
 		ids, err := c.Store.ReadyAgents(ctx)
 		if err != nil {
 			if ctx.Err() != nil {
@@ -115,7 +117,7 @@ func (c *Core) Run(ctx context.Context) error {
 				candidates = append(candidates, candidate{agent: h.AgentID, held: &h})
 			}
 		}
-		compactions, err := c.Store.IdleCompactions(ctx, c.Config.Config.Limits.Agents)
+		compactions, err := c.Store.IdleCompactions(ctx, maxAgents)
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil
@@ -129,7 +131,7 @@ func (c *Core) Run(ctx context.Context) error {
 			for _, id := range ids {
 				// A configured catalog without a default may still run an
 				// explicitly selected Agent. Others keep their accepted work.
-				if c.Models == nil {
+				if !configuration.defaultModel {
 					a, err := c.Store.Agent(ctx, id)
 					if err != nil {
 						if ctx.Err() != nil {
@@ -146,7 +148,7 @@ func (c *Core) Run(ctx context.Context) error {
 		}
 		for _, next := range candidates {
 			id := next.agent
-			if active[id] || len(active) >= c.Config.Config.Limits.Agents {
+			if active[id] || len(active) >= maxAgents {
 				continue
 			}
 			if next.compact != "" {
@@ -313,20 +315,21 @@ func (c *Core) executeWork(ctx, persist context.Context, w store.Work, resume *r
 }
 
 type requestRecord struct {
-	ID              string                     `json:"request_id"`
-	Model           string                     `json:"model"`
-	Protocol        string                     `json:"protocol"`
-	Cursor          int64                      `json:"context_cursor"`
-	ViewID          string                     `json:"context_view,omitempty"`
-	Tools           []tool.Descriptor          `json:"tools"`
-	MaxOutputTokens int                        `json:"max_output_tokens"`
-	FormatRepair    bool                       `json:"format_repair"`
-	RepairAttempt   int                        `json:"repair_attempt"`
-	RepairLimit     int                        `json:"repair_limit"`
-	Settings        *taskSettings              `json:"settings,omitempty"`
-	ResourceCatalog *protocol.ResourceCatalog  `json:"resource_catalog,omitempty"`
-	PluginBinding   *pluginModelRequestBinding `json:"plugin_binding,omitempty"`
-	ContextBudget   *protocol.ContextBudget    `json:"context_budget,omitempty"`
+	Configuration   *protocol.ConfigPublication `json:"configuration,omitempty"`
+	ID              string                      `json:"request_id"`
+	Model           string                      `json:"model"`
+	Protocol        string                      `json:"protocol"`
+	Cursor          int64                       `json:"context_cursor"`
+	ViewID          string                      `json:"context_view,omitempty"`
+	Tools           []tool.Descriptor           `json:"tools"`
+	MaxOutputTokens int                         `json:"max_output_tokens"`
+	FormatRepair    bool                        `json:"format_repair"`
+	RepairAttempt   int                         `json:"repair_attempt"`
+	RepairLimit     int                         `json:"repair_limit"`
+	Settings        *taskSettings               `json:"settings,omitempty"`
+	ResourceCatalog *protocol.ResourceCatalog   `json:"resource_catalog,omitempty"`
+	PluginBinding   *pluginModelRequestBinding  `json:"plugin_binding,omitempty"`
+	ContextBudget   *protocol.ContextBudget     `json:"context_budget,omitempty"`
 }
 type invocation struct {
 	SchemaVersion int            `json:"schema_version,omitempty"`
@@ -346,6 +349,7 @@ type toolOutcome struct {
 }
 
 type taskSettings struct {
+	Configuration     *protocol.ConfigPublication   `json:"configuration,omitempty"`
 	Version           int                           `json:"version"`
 	Selection         string                        `json:"selection"`
 	Cwd               string                        `json:"cwd"`
@@ -369,6 +373,8 @@ type resumedTask struct {
 }
 
 func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resumedTask) (string, error) {
+	configuration := c.configuration()
+	config := configuration.effective.Config
 	var choice store.Selection
 	if resume == nil {
 		var err error
@@ -380,12 +386,12 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 	}
 	selection := w.Agent.Model
 	if selection == "" {
-		selection = c.Config.Config.Model
+		selection = config.Model
 	}
 	var binding model.Binding
 	var err error
 	if resume == nil {
-		selection, binding, err = c.initialModelSelection(ctx, w.Agent.ID, choice)
+		selection, binding, err = c.initialModelSelection(ctx, w.Agent.ID, choice, configuration)
 		if err != nil {
 			return "", safeFailure(err, "model_unavailable", "selected model is unavailable")
 		}
@@ -415,17 +421,18 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		}
 		return nil
 	}
-	limit := c.Config.Config.Limits.FormatRepairs
-	policy := c.Config.Config.ContextBudgetPolicy()
+	limit := config.Limits.FormatRepairs
+	policy := config.ContextBudgetPolicy()
 	settings := taskSettings{Version: 2, Selection: selection, Cwd: w.Agent.Cwd, Model: binding.Model, Protocol: binding.Protocol, NativeCategories: binding.NativeCategories, Images: binding.Images, MaxOutputTokens: binding.MaxOutputTokens, FormatRepairs: limit, Binding: binding.Snapshot, SelectionRevision: choice.Choice.Revision, ModelRevision: choice.Choice.ModelRevision, Effort: choice.Choice.Effort, ContextWindow: binding.ContextWindow, ContextPolicy: &policy}
-	if choice.Choice.ModelRevision == 0 && selection == c.Config.Config.Model {
-		settings.Effort = c.Config.Config.Effort
+	settings.Configuration = configuration.publication
+	if choice.Choice.ModelRevision == 0 && selection == config.Model {
+		settings.Effort = config.Effort
 	}
 	if resume == nil {
 		if err := appendEvent("task.config", settings); err != nil {
 			return "", err
 		}
-		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "21", Body: system}); err != nil {
+		if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "22", Body: system}); err != nil {
 			return "", err
 		}
 	} else {
@@ -436,7 +443,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		if resume.Journal.Prompt.Body != "" {
 			system = resume.Journal.Prompt.Body
 		} else {
-			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "21", Body: system}); err != nil {
+			if err := appendEvent("prompt.loaded", Instruction{Source: "zende/core", Version: "22", Body: system}); err != nil {
 				return "", err
 			}
 		}
@@ -515,11 +522,15 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 	previousView := ""
 	precedingRequest := ""
 	var previousResources int64
+	var previousConfiguration int64
 	if resume != nil && resume.Journal.Request != nil {
 		previousView = resume.Journal.Request.ViewID
 		precedingRequest = resume.Journal.Request.ID
 		if resume.Journal.Request.ResourceCatalog != nil {
 			previousResources = resume.Journal.Request.ResourceCatalog.Generation
+		}
+		if resume.Journal.Request.Configuration != nil {
+			previousConfiguration = resume.Journal.Request.Configuration.Generation
 		}
 	}
 	if resume != nil {
@@ -569,6 +580,10 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 			notices = append(notices, store.ContextMessage{Message: model.Message{Role: "developer", Content: []model.Block{{Type: "text", Text: notice}}}})
 		}
 		if changed := resourceNotice(contextSnapshot.Resources, previousResources, contextSnapshot.View.ID != previousView, commands); changed != nil {
+			notices = append(notices, *changed)
+		}
+		publication := c.configuration().publication
+		if changed := configNotice(publication, previousConfiguration, contextSnapshot.View.ID != previousView, commands); changed != nil {
 			notices = append(notices, *changed)
 		}
 		for _, item := range notices {
@@ -638,7 +653,7 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 			return "", modelDependencyFailure(nextBinding, err)
 		}
 		err = c.Store.BeginModelRequest(persist, w.Agent.ID, w.Task.ID, nextSettings.SelectionRevision, cursor, notices, func(cursor int64) any {
-			return requestRecord{ID: req.ID, Model: nextBinding.Model, Protocol: nextBinding.Protocol, Cursor: cursor, ViewID: contextSnapshot.View.ID, Tools: requestDescriptors, MaxOutputTokens: req.MaxOutputTokens, FormatRepair: repairOnly, RepairAttempt: repairs, RepairLimit: limit, Settings: &nextSettings, ResourceCatalog: &contextSnapshot.Resources.Catalog, PluginBinding: pluginBinding, ContextBudget: budget}
+			return requestRecord{ID: req.ID, Model: nextBinding.Model, Protocol: nextBinding.Protocol, Cursor: cursor, ViewID: contextSnapshot.View.ID, Tools: requestDescriptors, MaxOutputTokens: req.MaxOutputTokens, FormatRepair: repairOnly, RepairAttempt: repairs, RepairLimit: limit, Settings: &nextSettings, ResourceCatalog: &contextSnapshot.Resources.Catalog, PluginBinding: pluginBinding, ContextBudget: budget, Configuration: publication}
 		})
 		if err != nil {
 			releaseModel()
@@ -654,6 +669,9 @@ func (c *Core) runTask(ctx, persist context.Context, w store.Work, resume *resum
 		previousView = contextSnapshot.View.ID
 		precedingRequest = req.ID
 		previousResources = contextSnapshot.Resources.Catalog.Generation
+		if publication != nil {
+			previousConfiguration = publication.Generation
+		}
 		settings, binding, w.Agent.Cwd = nextSettings, nextBinding, nextSettings.Cwd
 		var collector model.Collector
 		classifier := model.Classifier{Native: binding.NativeCategories}

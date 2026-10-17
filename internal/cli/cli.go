@@ -19,7 +19,6 @@ import (
 	"github.com/spf13/cobra"
 	"zende.local/harness/internal/process"
 	"zende.local/harness/internal/protocol"
-	"zende.local/harness/internal/provider"
 	"zende.local/harness/internal/resource"
 	"zende.local/harness/internal/resource/mcp"
 	"zende.local/harness/internal/resource/plugin"
@@ -84,18 +83,7 @@ func (a *app) command() *cobra.Command {
 	a.resourceCommands(root)
 	a.workspaceCommands(root)
 	a.contextCommands(root)
-	config := &cobra.Command{Use: "config", Short: "Inspect effective configuration without resolving secrets"}
-	config.AddCommand(&cobra.Command{Use: "inspect", Short: "Show values and override sources", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
-		p, e, err := a.environment()
-		if err != nil {
-			return err
-		}
-		return encode(cmd, struct {
-			Paths resource.Paths `json:"paths"`
-			resource.Effective
-		}{p, e})
-	}})
-	root.AddCommand(config)
+	a.configCommands(root)
 	agent := &cobra.Command{Use: "agent", Short: "Persistent agent sessions"}
 	var createCwd, file string
 	create := &cobra.Command{Use: "create [TEXT]", Short: "Create a session and optionally accept an input", Args: cobra.MaximumNArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -301,6 +289,8 @@ func requestTimeout(method string, params any) time.Duration {
 		return time.Duration(p.WaitMS)*time.Millisecond + 5*time.Second
 	}
 	switch method {
+	case "config.refresh":
+		return 30 * time.Second
 	case "agent.spawn":
 		// A selected plugin model must prepare an independent child instance.
 		return plugin.InitializeTimeout + 10*time.Second
@@ -314,7 +304,11 @@ func requestTimeout(method string, params any) time.Duration {
 }
 
 func (a *app) serve(cmd *cobra.Command, _ []string) error {
-	p, e, err := a.environment()
+	p, err := a.paths()
+	if err != nil {
+		return err
+	}
+	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
@@ -335,25 +329,20 @@ func (a *app) serve(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 	defer s.Close()
-	core := runtime.New(s, e)
+	core := runtime.New(s, resource.Effective{Config: resource.Defaults(cwd)})
+	if err := core.InitializeConfiguration(cmd.Context(), p, cwd, os.Getenv); err != nil {
+		ctx, cancel := context.WithCancel(cmd.Context())
+		cancel()
+		_ = server.Serve(ctx)
+		return err
+	}
 	if exe, err := os.Executable(); err == nil {
 		core.Commands = append(questionHints(exe, a.profile), resourceHints(exe, a.profile)...)
 		core.Commands = append(core.Commands, workspaceHints(exe, a.profile)...)
 		core.Commands = append(core.Commands, selectionHints(exe, a.profile)...)
 		core.Commands = append(core.Commands, collaborationHints(exe, a.profile)...)
 		core.Commands = append(core.Commands, contextHints(exe, a.profile)...)
-	}
-	configuredModels, err := provider.New(e.Config, os.Getenv)
-	if err != nil {
-		ctx, cancel := context.WithCancel(cmd.Context())
-		cancel()
-		_ = server.Serve(ctx)
-		return err
-	}
-	core.RestoreModels = configuredModels
-	core.Catalog = configuredModels
-	if e.Config.Model != "" {
-		core.Models = configuredModels
+		core.Commands = append(core.Commands, configHints(exe, a.profile)...)
 	}
 	runner := process.Remote{Client: protocol.Client{Socket: p.RunnerSocket}}
 	core.Runner = runner
@@ -414,8 +403,13 @@ func (a *app) startService(cmd *cobra.Command, service string) error {
 	if result, err := status(); err == nil {
 		return encode(cmd, result)
 	}
-	if _, _, err := a.environment(); err != nil {
-		return err
+	// Core restores its last publication if today's files are invalid. Let
+	// its owner read the database under the service lock; runner still uses
+	// startup configuration until its refresh path is connected.
+	if service == "runner" {
+		if _, _, err := a.environment(); err != nil {
+			return err
+		}
 	}
 	if err := p.EnsureState(); err != nil {
 		return err

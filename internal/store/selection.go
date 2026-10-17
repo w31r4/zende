@@ -121,7 +121,11 @@ func (s *Store) BeginModelRequest(ctx context.Context, agent, task string, revis
 			}
 			seq = event.Seq
 		}
-		_, err = appendEvent(ctx, tx, agent, task, "model.started", record(seq))
+		prepared := record(seq)
+		if err := checkRequestConfiguration(ctx, tx, prepared); err != nil {
+			return err
+		}
+		_, err = appendEvent(ctx, tx, agent, task, "model.started", prepared)
 		return err
 	})
 }

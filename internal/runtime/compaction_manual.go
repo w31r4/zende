@@ -100,7 +100,7 @@ func (c *Core) runIdleCompaction(ctx, persist context.Context, agent, id string)
 		if err != nil {
 			return compactionStoreFailure(err)
 		}
-		_, binding, err := c.initialModelSelection(ctx, agent, choice)
+		_, binding, err := c.initialModelSelection(ctx, agent, choice, c.configuration())
 		if ctx.Err() != nil {
 			return nil
 		}

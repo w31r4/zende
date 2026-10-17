@@ -68,7 +68,8 @@ func (c *Core) spawnInWorktree(ctx context.Context, req protocol.Request, p prot
 		if err != nil {
 			return failure(err)
 		}
-		record, err = c.Store.PrepareWorktree(ctx, req, p, plan, settings.Choice.Revision, c.Config.Config.Limits.Agents, c.Config.Config.Limits.Depth)
+		limits := c.configuration().effective.Config.Limits
+		record, err = c.Store.PrepareWorktree(ctx, req, p, plan, settings.Choice.Revision, limits.Agents, limits.Depth)
 		if err != nil {
 			return failure(err)
 		}

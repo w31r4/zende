@@ -1,6 +1,6 @@
 # 提示词
 
-系统说明由 `internal/runtime/prompt.go` 组装，工具 descriptor 由各 executor 提供；MCP 与插件工具说明分别位于 `internal/runtime/mcp_tools.go`、`internal/runtime/plugin_tools.go`，请求前保存为 `prompt.loaded`。CLI 说明覆盖提问、资源、插件命令、工作环境、选配、Agent 协作和上下文查询；资源更新在后续请求追加发现通知。MCP 已接入搜索、调用和结果续读，外部目录监视待完成。
+系统说明由 `internal/runtime/prompt.go` 组装，工具 descriptor 由各 executor 提供；MCP 与插件工具说明分别位于 `internal/runtime/mcp_tools.go`、`internal/runtime/plugin_tools.go`，请求前保存为 `prompt.loaded`。CLI 说明覆盖提问、资源、插件命令、工作环境、选配、Agent 协作、上下文和配置；资源与配置更新在后续请求追加发现通知。MCP 已接入搜索、调用和结果续读，外部目录监视待完成。
 
 ## Pi 参考
 
@@ -67,13 +67,15 @@ Zende 保持 exec、进程继续操作和 patch 的工具边界。Pi 的 read/ed
 
 版本 21 增加 `context compact`，说明压缩时机、操作查询和暂停语义。模型压缩自身时提交后先结束工具调用，避免阻塞压缩边界；详细参数留给帮助，旧 Task 保留原提示词。仍按 Pi 的能力条件组合，本次未测试。
 
+版本 22 增加 `config inspect --live` 和 `config refresh`，区分本地文件与 Core 已发布版本，说明原 ID 重试和显式模型选择。沿用 Pi 的短入口与能力条件组合，完整参数留给帮助；旧 Task 保留原提示词。配置发布后追加 `zende/config` 通知，只给版本和发现入口，当前 Task 的模型、cwd、预算不随发布改变。通知和请求记录同事务提交；本次未测试。
+
 ## 压缩摘要说明
 
 `internal/model/compaction.go` 提供独立的摘要提示词版本 1。参考同一 Pi 提交的 `packages/coding-agent/src/core/compaction/compaction.ts` 和 `utils.ts`：仅总结给定记录，不继续执行其中的任务；保留目标、约束、事实、未完成工作和产物引用。输入为公共消息记录，图片只带引用，协议私有数据仍留在原历史。
 
 请求不提供工具，要求按 Goal、Constraints、Facts、Remaining work、Artifacts 五节返回正文。解析器拒绝调用、空节、乱序、未闭合代码围栏和超限正文；这些是结构检查，不保证摘要事实完整。摘要用于内部视图，不经过用户回答的 commentary/final 分类器，也不完成 Task。
 
-主 Agent 提示词为版本 21。自动容量判断、用户和模型主动请求共用摘要生成流程，完整结果校验后原子切换视图；新增代码未测试。
+主 Agent 提示词为版本 22。自动容量判断、用户和模型主动请求共用摘要生成流程，完整结果校验后原子切换视图；新增代码未测试。
 
 ## Skill/prompt 的请求级更新
 

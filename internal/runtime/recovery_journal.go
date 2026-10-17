@@ -68,11 +68,11 @@ func recoveryInvalid() error {
 }
 
 func validSettings(s taskSettings) bool {
-	return (s.Version == 1 || s.Version == 2) && filepath.IsAbs(s.Cwd) && s.Model != "" && s.Protocol != "" && s.FormatRepairs >= 0 && s.SelectionRevision >= 0 && s.ModelRevision >= 0 && s.ModelRevision <= s.SelectionRevision && s.ContextWindow >= 0 && (s.ContextPolicy == nil || s.ContextPolicy.Valid())
+	return (s.Version == 1 || s.Version == 2) && filepath.IsAbs(s.Cwd) && s.Model != "" && s.Protocol != "" && s.FormatRepairs >= 0 && s.SelectionRevision >= 0 && s.ModelRevision >= 0 && s.ModelRevision <= s.SelectionRevision && s.ContextWindow >= 0 && (s.ContextPolicy == nil || s.ContextPolicy.Valid()) && (s.Configuration == nil || s.Configuration.Valid())
 }
 
 func settingsFollow(previous, next taskSettings) bool {
-	if next.SelectionRevision < previous.SelectionRevision || next.ModelRevision < previous.ModelRevision || next.FormatRepairs != previous.FormatRepairs || !reflect.DeepEqual(previous.ContextPolicy, next.ContextPolicy) {
+	if next.SelectionRevision < previous.SelectionRevision || next.ModelRevision < previous.ModelRevision || next.FormatRepairs != previous.FormatRepairs || !reflect.DeepEqual(previous.ContextPolicy, next.ContextPolicy) || !reflect.DeepEqual(previous.Configuration, next.Configuration) {
 		return false
 	}
 	previous.Version, next.Version = 2, 2 // Legacy request snapshots may be upgraded.
@@ -167,6 +167,15 @@ func (j *recoveryJournal) add(e protocol.Event) error {
 		if r.ResourceCatalog != nil && (!r.ResourceCatalog.Valid() || r.ResourceCatalog.Generation > r.Cursor) {
 			return recoveryInvalid()
 		}
+		if r.Configuration != nil && !r.Configuration.Valid() {
+			return recoveryInvalid()
+		}
+		if j.Request != nil && j.Request.Configuration != nil {
+			previous := j.Request.Configuration
+			if r.Configuration == nil || r.Configuration.Generation < previous.Generation || r.Configuration.Generation == previous.Generation && *r.Configuration != *previous {
+				return recoveryInvalid()
+			}
+		}
 		if !validPluginModelRecord(r) {
 			return recoveryInvalid()
 		}
@@ -178,6 +187,9 @@ func (j *recoveryJournal) add(e protocol.Event) error {
 		}
 		if r.Settings != nil {
 			s := r.Settings
+			if s.Configuration != nil && (r.Configuration == nil || r.Configuration.Generation < s.Configuration.Generation) {
+				return recoveryInvalid()
+			}
 			if !validSettings(*s) || r.Model != s.Model || r.Protocol != s.Protocol || r.MaxOutputTokens != s.MaxOutputTokens || r.RepairLimit != s.FormatRepairs || j.Settings != nil && !settingsFollow(*j.Settings, *s) {
 				return recoveryInvalid()
 			}

@@ -57,11 +57,12 @@ func (c *Core) modelCatalogAgent(ctx context.Context, agent string) error {
 // No Agent preserves the original configuration-only API, including errors and
 // version tokens. Scoped calls never pass their combined token to the provider.
 func (c *Core) modelConnections(ctx context.Context, q protocol.ConnectionQuery) (protocol.ConnectionPage, error) {
+	catalog := c.configuration().catalog
 	if q.AgentID == "" {
-		if c.Catalog == nil {
+		if catalog == nil {
 			return protocol.ConnectionPage{}, protocol.E("unavailable", "model catalog is not configured")
 		}
-		return c.Catalog.Connections(ctx, q)
+		return catalog.Connections(ctx, q)
 	}
 	limit, err := modelCatalogLimit(q.After, q.Limit)
 	if err != nil {
@@ -70,7 +71,7 @@ func (c *Core) modelConnections(ctx context.Context, q protocol.ConnectionQuery)
 	if err := c.modelCatalogAgent(ctx, q.AgentID); err != nil {
 		return protocol.ConnectionPage{}, err
 	}
-	base, err := c.baseModelConnections(ctx, protocol.ConnectionQuery{After: q.After, Limit: limit})
+	base, err := baseModelConnectionsFor(ctx, catalog, protocol.ConnectionQuery{After: q.After, Limit: limit})
 	if err != nil {
 		return protocol.ConnectionPage{}, err
 	}
@@ -95,11 +96,12 @@ func (c *Core) modelConnections(ctx context.Context, q protocol.ConnectionQuery)
 }
 
 func (c *Core) modelList(ctx context.Context, q protocol.ModelQuery) (protocol.ModelPage, error) {
+	catalog := c.configuration().catalog
 	if q.AgentID == "" {
-		if c.Catalog == nil {
+		if catalog == nil {
 			return protocol.ModelPage{}, protocol.E("unavailable", "model catalog is not configured")
 		}
-		return c.Catalog.ListModels(ctx, q)
+		return catalog.ListModels(ctx, q)
 	}
 	limit, err := modelCatalogLimit(q.After, q.Limit)
 	if err != nil {
@@ -108,7 +110,7 @@ func (c *Core) modelList(ctx context.Context, q protocol.ModelQuery) (protocol.M
 	if err := c.modelCatalogAgent(ctx, q.AgentID); err != nil {
 		return protocol.ModelPage{}, err
 	}
-	base, err := c.baseModelConnections(ctx, protocol.ConnectionQuery{Limit: 1})
+	base, err := baseModelConnectionsFor(ctx, catalog, protocol.ConnectionQuery{Limit: 1})
 	if err != nil {
 		return protocol.ModelPage{}, err
 	}
@@ -134,11 +136,11 @@ func (c *Core) modelList(ctx context.Context, q protocol.ModelQuery) (protocol.M
 		}
 		return boundedModelCatalogPage(out)
 	}
-	if c.Catalog == nil {
+	if catalog == nil {
 		return protocol.ModelPage{}, protocol.E("model_unavailable", "connection is not configured")
 	}
 	q.AgentID, q.Version, q.Limit = "", base.Version, limit
-	out, err := c.Catalog.ListModels(ctx, q)
+	out, err := catalog.ListModels(ctx, q)
 	if err != nil {
 		return protocol.ModelPage{}, err
 	}
@@ -199,10 +201,14 @@ func modelCatalogChanged() error {
 }
 
 func (c *Core) baseModelConnections(ctx context.Context, q protocol.ConnectionQuery) (protocol.ConnectionPage, error) {
-	if c.Catalog == nil {
+	return baseModelConnectionsFor(ctx, c.configuration().catalog, q)
+}
+
+func baseModelConnectionsFor(ctx context.Context, catalog ModelCatalog, q protocol.ConnectionQuery) (protocol.ConnectionPage, error) {
+	if catalog == nil {
 		return protocol.ConnectionPage{Items: []protocol.ConnectionInfo{}}, nil
 	}
-	return c.Catalog.Connections(ctx, q)
+	return catalog.Connections(ctx, q)
 }
 
 // Publication holds pluginMu across the database commit and slot replacement.

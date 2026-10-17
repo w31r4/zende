@@ -20,8 +20,9 @@ func (c *Core) acceptedSpawn(ctx context.Context, req protocol.Request) (protoco
 }
 
 func (c *Core) spawnWithModelDependency(ctx context.Context, req protocol.Request, p protocol.SpawnAgent, cwd string, settings store.Selection) (protocol.Accepted, error) {
+	limits := c.configuration().effective.Config.Limits
 	if !strings.HasPrefix(settings.Choice.Model, "plugin:") {
-		return c.Store.Spawn(ctx, req, p, cwd, settings.Choice.Revision, c.Config.Config.Limits.Agents, c.Config.Config.Limits.Depth)
+		return c.Store.Spawn(ctx, req, p, cwd, settings.Choice.Revision, limits.Agents, limits.Depth)
 	}
 	dependency, instance, err := c.prepareSpawnDependency(ctx, p.ParentID, settings)
 	if err != nil {
@@ -43,7 +44,7 @@ func (c *Core) spawnWithModelDependency(ctx context.Context, req protocol.Reques
 	if c.pluginsClosed || instance.Info().State != "ready" {
 		return protocol.Accepted{}, protocol.E("unavailable", "child plugin is unavailable before spawn publication")
 	}
-	accepted, publication, err := c.Store.SpawnWithDependency(ctx, req, p, cwd, settings.Choice.Revision, c.Config.Config.Limits.Agents, c.Config.Config.Limits.Depth, dependency)
+	accepted, publication, err := c.Store.SpawnWithDependency(ctx, req, p, cwd, settings.Choice.Revision, limits.Agents, limits.Depth, dependency)
 	if err != nil || publication == nil {
 		return accepted, err
 	}

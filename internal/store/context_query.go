@@ -76,6 +76,7 @@ func contextViewInfo(view ContextView) *protocol.ContextViewInfo {
 // or plugin_binding into an export, and never resolve a credential while reading.
 func contextRequest(ctx context.Context, tx *sql.Tx, agent, id string) (*protocol.ContextRequestInfo, *protocol.ResourceCatalog, int64, string, error) {
 	var saved struct {
+		Configuration   *protocol.ConfigPublication   `json:"configuration"`
 		ID              string                        `json:"request_id"`
 		Model           string                        `json:"model"`
 		Protocol        string                        `json:"protocol"`
@@ -87,10 +88,11 @@ func contextRequest(ctx context.Context, tx *sql.Tx, agent, id string) (*protoco
 		Catalog         *protocol.ResourceCatalog     `json:"resource_catalog"`
 		ContextBudget   *protocol.ContextBudget       `json:"context_budget"`
 		Settings        *struct {
-			Selection         string `json:"selection"`
-			Cwd               string `json:"cwd"`
-			Effort            string `json:"effort"`
-			SelectionRevision int64  `json:"selection_revision"`
+			Configuration     *protocol.ConfigPublication `json:"configuration"`
+			Selection         string                      `json:"selection"`
+			Cwd               string                      `json:"cwd"`
+			Effort            string                      `json:"effort"`
+			SelectionRevision int64                       `json:"selection_revision"`
 		} `json:"settings"`
 	}
 	out := &protocol.ContextRequestInfo{}
@@ -114,11 +116,22 @@ func contextRequest(ctx context.Context, tx *sql.Tx, agent, id string) (*protoco
 	}
 	out.ID, out.Model, out.Protocol = saved.ID, saved.Model, saved.Protocol
 	out.ContextBudget = saved.ContextBudget
+	if err := checkConfigPublication(ctx, tx, saved.Configuration); err != nil {
+		return nil, nil, 0, "", err
+	}
+	out.Configuration = saved.Configuration
 	out.MaxOutputTokens, out.FormatRepair, out.Tools = saved.MaxOutputTokens, saved.FormatRepair, saved.Tools
 	if out.Tools == nil {
 		out.Tools = []protocol.ContextToolVersion{}
 	}
 	if s := saved.Settings; s != nil {
+		if err := checkConfigPublication(ctx, tx, s.Configuration); err != nil {
+			return nil, nil, 0, "", err
+		}
+		if s.Configuration != nil && (saved.Configuration == nil || s.Configuration.Generation > saved.Configuration.Generation) {
+			return nil, nil, 0, "", protocol.E("invalid_state", "request configuration predates its Task configuration")
+		}
+		out.TaskConfiguration = s.Configuration
 		out.Selection, out.Cwd, out.Effort, out.SelectionRevision = s.Selection, s.Cwd, s.Effort, s.SelectionRevision
 	}
 	err = tx.QueryRowContext(ctx, `SELECT seq FROM events WHERE agent_id=? AND task_id=? AND kind='prompt.loaded' AND seq<? ORDER BY seq DESC LIMIT 1`, agent, out.TaskID, out.Started).Scan(&out.PromptSeq)

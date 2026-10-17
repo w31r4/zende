@@ -14,19 +14,21 @@ import (
 
 // Tasks and idle summaries resolve the same explicit selection and defaults.
 // A plugin selection pins its published definition, not a process lease.
-func (c *Core) initialModelSelection(ctx context.Context, agent string, choice store.Selection) (string, model.Binding, error) {
+func (c *Core) initialModelSelection(ctx context.Context, agent string, choice store.Selection, configuration runtimeConfiguration) (string, model.Binding, error) {
 	selection := choice.Choice.Model
 	if selection == "" {
-		selection = c.Config.Config.Model
+		selection = configuration.effective.Config.Model
 	}
 	var binding model.Binding
 	var err error
-	if strings.HasPrefix(selection, "plugin:") && len(choice.Binding) > 0 {
+	if len(choice.Binding) > 0 {
 		binding, err = c.restoreBinding(ctx, agent, choice.Binding)
-	} else if choice.Choice.ModelRevision > 0 || strings.HasPrefix(selection, "plugin:") {
+	} else if choice.Choice.ModelRevision > 0 {
+		err = protocol.E("model_snapshot_invalid", "explicit model selection has no saved binding")
+	} else if strings.HasPrefix(selection, "plugin:") {
 		binding, err = c.resolveModelSelection(ctx, agent, selection, choice.Choice.Effort, "")
-	} else if c.modelResolver() != nil {
-		binding, err = c.modelResolver().Resolve(ctx, selection)
+	} else if configuration.models != nil {
+		binding, err = configuration.models.Resolve(ctx, selection)
 	} else {
 		err = protocol.E("model_unavailable", "model selection is unavailable")
 	}
@@ -37,11 +39,7 @@ func (c *Core) initialModelSelection(ctx context.Context, agent string, choice s
 }
 
 func (c *Core) modelResolver() model.Resolver {
-	if c.Models != nil {
-		return c.Models
-	}
-	r, _ := c.RestoreModels.(model.Resolver)
-	return r
+	return c.configuration().models
 }
 
 func (c *Core) restoreBinding(ctx context.Context, agent string, raw json.RawMessage) (model.Binding, error) {
@@ -55,10 +53,7 @@ func (c *Core) restoreBinding(ctx context.Context, agent string, raw json.RawMes
 		}
 		return c.bindPluginModel(ctx, agent, snapshot)
 	}
-	r := c.RestoreModels
-	if r == nil {
-		r, _ = c.Models.(model.Restorer)
-	}
+	r := c.configuration().restore
 	if r == nil {
 		return model.Binding{}, protocol.E("model_unavailable", "saved model selection cannot be restored")
 	}
@@ -66,6 +61,10 @@ func (c *Core) restoreBinding(ctx context.Context, agent string, raw json.RawMes
 }
 
 func (c *Core) selectAgent(ctx context.Context, req protocol.Request, p protocol.SelectAgent) (protocol.Accepted, error) {
+	// Fence the catalog through durable selection. Slow configuration
+	// preparation is outside this lock; only publication competes here.
+	c.configMu.Lock()
+	defer c.configMu.Unlock()
 	if old, found, err := c.Store.AcceptedRequest(ctx, req); found || err != nil {
 		return old, err
 	}

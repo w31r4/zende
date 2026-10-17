@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"zende.local/harness/internal/model"
@@ -17,11 +18,16 @@ import (
 )
 
 type Core struct {
-	Store      *store.Store
-	Config     resource.Effective
-	InstanceID string
-	Runner     process.Runner
-	// Configure before Run; publication of hot resources is added separately.
+	Store        *store.Store
+	Config       resource.Effective
+	InstanceID   string
+	Runner       process.Runner
+	configMu     sync.Mutex
+	configSource *configSource // Set once before serving/scheduling.
+	liveConfig   atomic.Pointer[runtimeConfiguration]
+	configError  atomic.Pointer[protocol.Error]
+	// Legacy injection for embedders; configure before Run. Live configuration
+	// uses one immutable bundle without mutating these fields.
 	Models             model.Resolver
 	RestoreModels      model.Restorer
 	Catalog            ModelCatalog
@@ -57,13 +63,32 @@ func New(s *store.Store, config resource.Effective) *Core {
 }
 
 func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
+	config := c.configuration().effective.Config
 	switch req.Method {
+	case "config.refresh":
+		var p struct{}
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.refreshConfig(ctx, req)
+	case "config.read":
+		var p protocol.ConfigRead
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.Store.ConfigVersion(ctx, p.Version)
+	case "config.history":
+		var p protocol.ConfigQuery
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.Store.ConfigHistory(ctx, p.After, p.Limit)
 	case "context.compact":
 		var p protocol.CompactContext
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
 			return nil, err
 		}
-		return c.Store.QueueCompaction(ctx, req, p.AgentID, "", "manual", c.Config.Config.ContextBudgetPolicy())
+		return c.Store.QueueCompaction(ctx, req, p.AgentID, "", "manual", config.ContextBudgetPolicy())
 	case "context.inspect":
 		var p protocol.ContextTarget
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
@@ -99,7 +124,7 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
 			return nil, err
 		}
-		return c.Store.Send(ctx, req, p, c.Config.Config.Limits.Agents)
+		return c.Store.Send(ctx, req, p, config.Limits.Agents)
 	case "mailbox.inspect":
 		var p protocol.MailTarget
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
@@ -294,20 +319,20 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 			PID        int             `json:"pid"`
 			Limits     resource.Limits `json:"limits"`
 			ModelLoop  string          `json:"model_loop"`
-		}{c.InstanceID, os.Getpid(), c.Config.Config.Limits, c.loopStatus()}, nil
+		}{c.InstanceID, os.Getpid(), config.Limits, c.loopStatus()}, nil
 	case "config.inspect":
 		var p struct{}
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
 			return nil, err
 		}
-		return c.Config, nil
+		return c.configStatus(), nil
 	case "agent.create":
 		var p protocol.CreateAgent
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
 			return nil, err
 		}
 		if p.Cwd == "" {
-			p.Cwd = c.Config.Config.Cwd
+			p.Cwd = config.Cwd
 		}
 		if !filepath.IsAbs(p.Cwd) {
 			return nil, protocol.E("invalid_params", "cwd must be absolute")
@@ -316,7 +341,7 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 		if err != nil || !st.IsDir() {
 			return nil, protocol.E("invalid_params", "cwd is not an accessible directory")
 		}
-		return c.Store.Create(ctx, req, p, c.Config.Config.Limits.Agents)
+		return c.Store.Create(ctx, req, p, config.Limits.Agents)
 	case "agent.spawn":
 		var p protocol.SpawnAgent
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
@@ -336,7 +361,7 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 				return nil, err
 			}
 		}
-		return c.Store.Submit(ctx, req, p, c.Config.Config.Limits.Agents)
+		return c.Store.Submit(ctx, req, p, config.Limits.Agents)
 	case "question.ask":
 		var p protocol.AskQuestion
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
@@ -393,7 +418,7 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
 			return nil, err
 		}
-		return c.Store.Resume(ctx, req, p, c.Config.Config.Limits.Agents)
+		return c.Store.Resume(ctx, req, p, config.Limits.Agents)
 	case "agent.stop":
 		var p protocol.StopAgent
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

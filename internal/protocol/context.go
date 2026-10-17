@@ -34,6 +34,8 @@ type ContextToolVersion struct {
 // Request inspection is an allowlisted projection. Endpoint settings, provider
 // binding bytes and resolved credentials never enter this public object.
 type ContextRequestInfo struct {
+	Configuration     *ConfigPublication   `json:"configuration,omitempty"`
+	TaskConfiguration *ConfigPublication   `json:"task_configuration,omitempty"`
 	ID                string               `json:"request_id"`
 	TaskID            string               `json:"task_id"`
 	Started           int64                `json:"started"`
