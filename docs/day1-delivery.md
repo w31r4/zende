@@ -1,19 +1,22 @@
 # Day1 交付状态
 
-2026-10-17，功能源码基线 `6c5b367`。本文对应 OpenSpec 11.3，覆盖八项能力的全部 89 个 Scenario。源码入口用于定位实现，不代替场景验收；完整 Day1 尚未验收。
+2026-10-17，功能源码基线 `c080160`。本文对应 OpenSpec 11.3，覆盖八项能力的全部 89 个 Scenario。源码入口用于定位实现，不代替场景验收；完整 Day1 尚未验收。
 
 ## 已有证据
 
 | 范围 | 记录 | 边界 |
 | --- | --- | --- |
-| 当前命令产物 | `6c5b367` 经安装脚本构建并安装 | 编译通过，不代表运行行为通过；未单独构建插件示例 |
+| 当前命令产物 | `c080160` 经安装脚本构建并安装 | 编译通过，不代表运行行为通过；未单独构建插件示例 |
 | 本机安装 | `~/.local/bin/zende` 指向保留版本目录 | 安装保留旧二进制；回退入口未实际执行 |
-| 空配置服务 | default Core 更新至 `6c5b367`，runner 保持 `c2f2f96`，配置同步为 current | 没有模型连接、Agent 或活动命令；不是 TUI 接回或带任务升级验收 |
+| 空配置服务 | default Core 更新至 `c080160`，runner 保持 `c2f2f96`，配置同步为 current | 没有模型连接或任务；不是 TUI 接回或带任务升级验收 |
 | Core 停止与更新 | 按原实例身份停止自建空闲 Core，启动新版；runner 未重启 | 未覆盖忙碌、响应丢失、替代实例及活动进程场景 |
 | 数据库升级 | 空配置库从 schema 25 升到 26，日志记录迁移前副本 | 没有恢复副本，也未覆盖有任务数据、迁移失败及损坏场景 |
+| 工作区入口 | 已为本工作目录建立正式空会话，启动命令见下文 | 没有提交任务、打开 TUI 或请求模型 |
 | 早期功能 | [历史验证记录](verification.md)保存 2026-10-14 至 16 的局部测试、夹具及故障记录 | 只适用于各节注明的版本和范围，不能推广为当前版本全量通过 |
 
-当前安装目录为 `~/.local/share/zende/releases/20261017T094622Z-6c5b36776dab-Vsh2zGpF/`；数据库、日志位于 `~/.local/state/zende/default/`。模型配置尚未创建，未读取或使用用户凭据。实际部署过程见[升级记录](verification.md#2026-10-17重试实现部署与-schema-升级)。
+当前安装目录为 `~/.local/share/zende/releases/20261017T100958Z-c080160e6718-k7alkwhf/`；数据库、日志位于 `~/.local/state/zende/default/`。模型配置尚未创建，未读取或使用用户凭据。实际部署过程见[会话入口部署记录](verification.md#2026-10-17会话入口部署与正式空会话)。
+
+本机工作区会话可用 `zende --profile default tui agent_668abb53fda390ce2348ae86b143082d` 打开；这是已创建会话的使用入口，TUI 交互仍未验收。
 
 2026-10-16 起不新增、不运行测试，也不以冒烟、验收脚本或读者测试替代。下面各场景在当前版本均保留为**未完整验收**；已有局部证据单独说明。
 
@@ -84,14 +87,14 @@
 | 场景 | 主要实现入口 |
 | --- | --- |
 | 正常启动和退出；同一任务由两种客户端观察；断线期间任务完成 | [TUI 启动](../internal/render/run.go)、[异步客户端](../internal/render/client.go)、[事件投影](../internal/render/transcript.go) |
-| 长命令期间操作界面；PTY 输出控制序列；多进程时调整窗口 | [进程面板与目标 resize](../internal/render/process.go)、[显式终端接管](../internal/process/attach_linux.go)、[输出投影](../internal/process/output_cache.go) |
+| 长命令期间操作界面；PTY 输出控制序列；多进程时调整窗口 | [会话导航与草稿](../internal/render/sessions.go)、[进程面板与目标 resize](../internal/render/process.go)、[显式终端接管](../internal/process/attach_linux.go)、[输出投影](../internal/process/output_cache.go) |
 | 窄窗口和空闲界面；错误首次出现和再次出现 | [布局](../internal/render/layout.go)、[绿色主题](../internal/render/theme.go)、[错误状态](../internal/render/issues.go) |
-| 完全通过命令操作 | [共用命令注册表](../internal/render/commands.go)、[输入框下方候选](../internal/render/palette.go) |
+| 完全通过命令操作 | [共用命令注册表](../internal/render/commands.go)、[输入框下方候选](../internal/render/palette.go)、[会话分页](../internal/store/agents.go) |
 | 回答提问时粘贴图片 | [组合输入](../internal/render/composer.go)、[回答草稿](../internal/render/questions.go)、[图片导入](../internal/render/images.go) |
 | 同厂商多个端点和空配置；浏览后取消或确认当前目录 | [配置模型与目录选择](../internal/render/selection.go)、[Git 状态](../internal/render/git.go) |
 | 复制确认取消；确认复制并继续编辑；关闭后接回复制 | [复制确认与草稿映射](../internal/render/session_copy.go)、[复制草稿读取](../internal/store/session_copy_publish.go)、[独立附件映射](../internal/store/session_copy_data.go) |
 
-历史记录包括真实终端生命周期、重连、PTY 接管、极简布局、命令、图片与提问、配置选配。复制流程及草稿恢复随后加入，未测试；尚未用当前用户终端实际接回一次真实模型任务。浏览器原型不作为 TUI 验收证据。
+历史记录包括真实终端生命周期、重连、PTY 接管、极简布局、命令、图片与提问、配置选配。复制、普通会话导航及草稿恢复随后加入，未测试；尚未用当前用户终端实际接回一次真实模型任务。浏览器原型不作为 TUI 验收证据。
 
 ## 6. 终端与 patch：11 个场景
 
