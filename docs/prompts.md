@@ -65,6 +65,14 @@ Zende 保持 exec、进程继续操作和 patch 的工具边界。Pi 的 read/ed
 
 版本 20 增加 `context inspect/read` 短入口，说明如何查询请求版本、回查摘要省略的原文、固定游标及续读大条目。`context entry` 的字节分页参数留给帮助。入口仍按 Pi 的已注册能力组合，旧 Task 保留已存提示词；查询不触发工作或修改历史。本次接线未测试。
 
+## 压缩摘要说明（实现中）
+
+`internal/model/compaction.go` 提供独立的摘要提示词版本 1。参考同一 Pi 提交的 `packages/coding-agent/src/core/compaction/compaction.ts` 和 `utils.ts`：仅总结给定记录，不继续执行其中的任务；保留目标、约束、事实、未完成工作和产物引用。输入为公共消息记录，图片只带引用，协议私有数据仍留在原历史。
+
+请求不提供工具，要求按 Goal、Constraints、Facts、Remaining work、Artifacts 五节返回正文。解析器拒绝调用、空节、乱序、未闭合代码围栏和超限正文；这些是结构检查，不保证摘要事实完整。摘要用于内部视图，不经过用户回答的 commentary/final 分类器，也不完成 Task。
+
+主 Agent 提示词仍为版本 20。摘要请求构造与解析代码已写入，模型派发和自动/主动入口尚未接通，未测试。
+
 ## Skill/prompt 的请求级更新
 
 `resource.register/refresh` 校验并保存不可变文件包；失败保留上一版。任务每次请求从同一数据库事务读取上下文和当前资源目录，`model.started.resource_catalog` 保存 generation 及全部 ID/版本。它记录当时可发现的定义，不代表正文已经应用。
