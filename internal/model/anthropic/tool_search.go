@@ -1,7 +1,6 @@
 package anthropic
 
 import (
-	"encoding/json"
 	"unicode/utf8"
 
 	"zende.local/harness/internal/model"
