@@ -19,6 +19,13 @@ func (m Shell) statusProjection() (string, []hitTarget) {
 		call invocation
 	}
 	var right []part
+	if m.copyFlow != nil {
+		mark := "↗"
+		if m.theme.ascii {
+			mark = "copy"
+		}
+		right = append(right, part{mark, invocation{name: "copy-status"}})
+	}
 	if count := len(m.questionOptions()); count > 0 {
 		right = append(right, part{fmt.Sprintf("? %d", count), invocation{name: "questions"}})
 	}

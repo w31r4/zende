@@ -17,6 +17,7 @@ type Client interface {
 type snapshotMsg struct {
 	Snapshot protocol.Snapshot
 	Err      error
+	AgentID  string
 }
 type coreEventMsg struct{ Event protocol.Event }
 type watchEventMsg struct {
@@ -44,7 +45,7 @@ func snapshotCmd(ctx context.Context, client Client, agent string) tea.Cmd {
 		if err == nil {
 			err = client.Retry(ctx, req, &snapshot, 3, 100*time.Millisecond)
 		}
-		return snapshotMsg{snapshot, err}
+		return snapshotMsg{Snapshot: snapshot, Err: err, AgentID: agent}
 	}
 }
 

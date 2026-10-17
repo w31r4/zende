@@ -110,6 +110,9 @@ func (m *Shell) imageCommand(name string, args []string) (tea.Cmd, error) {
 			m.setImageLoad(draft.id, &old)
 			return loadImageCmd(m.ctx, m.client, old), nil
 		}
+		if name == "image" && m.copyFlow != nil {
+			return nil, protocol.E("copy_pending", "source images are frozen until the session copy is ready")
+		}
 		if len(args) != 1 || args[0] == "" {
 			return nil, protocol.E("invalid_params", "use /image PATH or /images to choose a saved image")
 		}

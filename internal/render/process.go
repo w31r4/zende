@@ -144,7 +144,7 @@ func (m *Shell) openLog(id, stream string, control bool) tea.Cmd {
 }
 func (m *Shell) resizeSelected() tea.Cmd {
 	p := m.panel
-	if m.attaching || m.resizePending != nil || p == nil || p.kind != "log" || !p.control || !p.state.PTY || p.state.Status != "running" || p.state.Terminal == nil {
+	if m.copyFlow != nil || m.attaching || m.resizePending != nil || p == nil || p.kind != "log" || !p.control || !p.state.PTY || p.state.Status != "running" || p.state.Terminal == nil {
 		return nil
 	}
 	cols, rows := min(1000, max(2, m.width)), min(1000, max(2, m.height))
@@ -193,6 +193,9 @@ func (m *Shell) runProcessCommand(name string, args []string) (tea.Cmd, error) {
 			}
 			return resizeCmd(m.ctx, m.client, *m.resizePending), nil
 		}
+		if m.copyFlow != nil {
+			return nil, protocol.E("copy_pending", "source terminal control is frozen during session copying")
+		}
 		if m.panel == nil || !m.panel.state.PTY {
 			return nil, protocol.E("unsupported", "select a PTY with /terminal PROCESS")
 		}
@@ -209,6 +212,9 @@ func (m *Shell) runProcessCommand(name string, args []string) (tea.Cmd, error) {
 		m.resizePending = &req
 		return resizeCmd(m.ctx, m.client, req), nil
 	case "attach":
+		if m.copyFlow != nil {
+			return nil, protocol.E("copy_pending", "source terminal control is frozen during session copying")
+		}
 		id := ""
 		if m.panel != nil {
 			id = m.panel.id

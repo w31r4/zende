@@ -16,6 +16,8 @@ import (
 // Shell owns local input/layout and last observed core data, not task lifetime.
 type Shell struct {
 	ctx                                          context.Context
+	rootCtx                                      context.Context
+	sessionCancel                                context.CancelFunc
 	client                                       Client
 	emit                                         func(tea.Msg)
 	agent                                        string
@@ -72,17 +74,25 @@ type Shell struct {
 	gitPath                                      string
 	gitGeneration                                uint64
 	gitWaiting                                   bool
+	copyFlow                                     *copyFlow
+	copyAction                                   bool
+	copyGeneration                               uint64
+	restoredCopy                                 string
 }
 
 func New(ctx context.Context, client Client, agent string, emit func(tea.Msg)) Shell {
 	input := NewComposer()
-	return Shell{ctx: ctx, client: client, agent: agent, emit: emit, input: input, width: 80, height: 24, loading: true,
+	session, cancel := context.WithCancel(ctx)
+	return Shell{ctx: session, rootCtx: ctx, sessionCancel: cancel, client: client, agent: agent, emit: emit, input: input, width: 80, height: 24, loading: true,
 		transcript: Transcript{Agent: protocol.Agent{ID: agent}}}
 }
 
 func (m Shell) Init() tea.Cmd { return snapshotCmd(m.ctx, m.client, m.agent) }
 
 func (m Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if handled, cmd := m.updateCopy(msg); handled {
+		return m, cmd
+	}
 	if handled, cmd := m.updateSelection(msg); handled {
 		return m, cmd
 	}
@@ -158,6 +168,9 @@ func (m Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.resizeSelected()
 		return m, cmd
 	case snapshotMsg:
+		if msg.AgentID != "" && msg.AgentID != m.agent {
+			return m, nil // A response from the previous session may already be queued.
+		}
 		m.loading, m.refreshing = false, false
 		if msg.Err != nil {
 			m.reportConnection(msg.Err)
@@ -219,6 +232,10 @@ func (m Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.cursor = m.transcript.Cursor
 		if msg.Event.CopiedFrom != nil {
 			return m, nil
+		}
+		if strings.HasPrefix(msg.Event.Kind, "session.copy.") {
+			cmd := m.projectCopyEvent(msg.Event)
+			return m, cmd
 		}
 		m.projectQuestionEvent(msg.Event)
 		if msg.Event.Kind == "context.compaction.state" {
@@ -292,7 +309,10 @@ func (m Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err != nil {
 			m.report(msg.Err)
 			var known *protocol.Error
-			if errors.As(msg.Err, &known) && known.Data.Kind != "transport_unknown" && known.Data.Kind != "unavailable" {
+			if errors.As(msg.Err, &known) && known.Data.Kind != "transport_unknown" && known.Data.Kind != "operation_unknown" && known.Data.Kind != "unavailable" {
+				if m.pending.Method == "agent.copy" {
+					m.rejectCopy()
+				}
 				m.pending = nil // A definite rejection permits correcting the input.
 			}
 			return m, nil
@@ -300,6 +320,10 @@ func (m Shell) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Accepted.OperationID != m.pending.OperationID || msg.Accepted.AgentID != m.agent {
 			m.report(protocol.E("transport_unknown", "acceptance identity did not match; query the original request"))
 			return m, nil
+		}
+		if m.pending.Method == "agent.copy" {
+			cmd := m.acceptCopy(msg.Accepted)
+			return m, cmd
 		}
 		if m.pending.Method == "question.answer" && (msg.Accepted.QuestionID != m.sentQuestion.ID || msg.Accepted.TaskID != m.sentQuestion.TaskID) {
 			m.report(protocol.E("transport_unknown", "answer acceptance identity did not match; retry the original request"))
@@ -464,7 +488,7 @@ func (m *Shell) submitCommand(call invocation) tea.Cmd {
 	m.restoreCommandDraft()
 	m.applyQuestionAction()
 	m.applySkillPicker()
-	return cmd
+	return tea.Batch(cmd, m.applyCopyAction())
 }
 
 func safeText(text string) string { return process.DisplayText([]byte(text)) }

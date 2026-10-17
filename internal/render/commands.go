@@ -28,6 +28,9 @@ var commands = []command{
 	{name: "effort", usage: "[VALUE]", description: "Choose reasoning effort", maxArgs: 1},
 	{name: "select", usage: "[strict|public]", description: "Confirm current selection", maxArgs: 1},
 	{name: "cd", usage: "[PATH]", description: "Browse working directory", maxArgs: 1},
+	{name: "copy", usage: "[PATH]", description: "Copy session to a directory", maxArgs: 1},
+	{name: "copy-confirm", description: "Stop source tree and copy session"},
+	{name: "copy-status", usage: "[OPERATION]", description: "Resume session copy", maxArgs: 1},
 	{name: "git", description: "Working tree status"},
 	{name: "terminal", usage: "[PROCESS]", description: "Select terminal", maxArgs: 1},
 	{name: "logs", usage: "[PROCESS] [stdout|stderr|pty]", description: "Read process output", maxArgs: 2},
@@ -142,6 +145,8 @@ func (m *Shell) invoke(call invocation) (tea.Cmd, error) {
 		return nil, m.questionCommand(c.name, call.args)
 	case "model", "effort", "select", "cd", "git":
 		return m.selectionCommand(c.name, call.args)
+	case "copy", "copy-confirm", "copy-status":
+		return m.copyCommand(c.name, call.args)
 	case "next":
 		if m.selection != nil {
 			return m.selectionNext()
@@ -181,6 +186,9 @@ func (m *Shell) invoke(call invocation) (tea.Cmd, error) {
 		}
 	case "retry":
 		if m.pending == nil {
+			if m.copyFlow != nil {
+				return m.pollCopy(0), nil
+			}
 			return nil, protocol.E("invalid_params", "no pending request")
 		}
 		return mutationCmd(m.ctx, m.client, *m.pending), nil
@@ -205,6 +213,7 @@ func (m *Shell) dispatch(call invocation) tea.Cmd {
 	} else {
 		m.applyQuestionAction()
 		m.applySkillPicker()
+		cmd = tea.Batch(cmd, m.applyCopyAction())
 	}
 	return cmd
 }
@@ -224,6 +233,9 @@ func (m *Shell) closePanel() {
 func (m *Shell) mutate(method string, params any, sentText string) (tea.Cmd, error) {
 	if m.pending != nil {
 		return nil, protocol.E("request_pending", "original request is unresolved; /retry keeps its ID")
+	}
+	if m.copyFlow != nil && method != "agent.copy" {
+		return nil, protocol.E("copy_pending", "source session is retained; continue when its copy is ready")
 	}
 	req, err := protocol.NewRequest(method, protocol.NewID("ui"), params)
 	if err != nil {

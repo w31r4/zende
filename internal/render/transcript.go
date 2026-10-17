@@ -87,6 +87,10 @@ func (p *Transcript) trim() {
 	}
 }
 
+func validID(id string) bool {
+	return id != "" && len(id) <= 128 && utf8.ValidString(id) && !strings.ContainsRune(id, 0)
+}
+
 func validSkillRefs(refs []protocol.ResourceRef) bool {
 	if len(refs) > protocol.MaxInputSkills {
 		return false

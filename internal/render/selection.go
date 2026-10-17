@@ -23,6 +23,7 @@ type selectionPanel struct {
 	directory                 protocol.DirectoryPage
 	connection, model, effort string
 	version                   string
+	copy                      bool
 }
 
 type selectionMsg struct {
@@ -209,6 +210,10 @@ func (m *Shell) selectionCommand(name string, args []string) (tea.Cmd, error) {
 		if len(args) != 0 && (p.kind != "confirm" || args[0] != "strict" && args[0] != "public") {
 			return nil, protocol.E("invalid_params", "use /select strict or /select public when confirming a model")
 		}
+		if p.copy && p.kind == "directory" {
+			p.kind, p.index = "copy-confirm", 2 // Cancel is the default confirmation row.
+			return nil, nil
+		}
 		revision := p.base.Revision
 		choice := protocol.SelectAgent{AgentID: m.agent, ExpectedRevision: &revision}
 		if p.kind == "directory" {
@@ -283,11 +288,16 @@ func (m Shell) selectionChoices() (string, []selectionRow) {
 		title = p.connection
 	case "efforts", "confirm":
 		title = p.connection + "/" + p.model
-	case "directory":
+	case "directory", "copy-confirm":
 		title = p.directory.Path
 		if title == "" {
 			title = "Directory"
 		}
+		if p.copy {
+			title = "Copy" + sep + title
+		}
+	case "copy-progress":
+		return m.copyChoices()
 	}
 	if p.waiting {
 		return title, []selectionRow{{text: "..."}}
@@ -354,6 +364,10 @@ func (m Shell) selectionChoices() (string, []selectionRow) {
 			rows = append(rows, selectionRow{text: fmt.Sprintf("! %d unreadable", p.directory.Skipped)})
 		}
 		next = p.directory.Next
+	case "copy-confirm":
+		rows = append(rows, selectionRow{text: "Stop source Agent tree and processes"},
+			selectionRow{"Confirm copy", invocation{name: "copy-confirm"}},
+			selectionRow{"Cancel", invocation{name: "back"}})
 	}
 	if next != "" {
 		rows = append(rows, selectionRow{"...", invocation{name: "next"}})
@@ -414,6 +428,8 @@ func (m *Shell) selectionKey(key string) (bool, tea.Cmd) {
 			}
 		case "confirm":
 			p.kind, p.index = "efforts", 0
+		case "copy-confirm":
+			p.kind, p.index = "directory", 0
 		case "efforts":
 			p.kind, p.index = "models", 0
 		case "models":
@@ -433,7 +449,7 @@ func (m *Shell) selectionKey(key string) (bool, tea.Cmd) {
 		p.index = min(max(0, len(items)-1), p.index+max(1, m.height-5))
 	case "enter", "right", "l":
 		if p.index < len(items) && items[p.index].call.name != "" {
-			if key != "enter" && items[p.index].call.name == "select" {
+			if key != "enter" && (items[p.index].call.name == "select" || items[p.index].call.name == "copy-confirm") {
 				return true, nil // Traversal keys never confirm a durable change.
 			}
 			return true, m.dispatch(items[p.index].call)
