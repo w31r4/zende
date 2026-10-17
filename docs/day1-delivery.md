@@ -1,18 +1,19 @@
 # Day1 交付状态
 
-2026-10-17，功能源码基线 `2794f8c`。本文对应 OpenSpec 11.3，覆盖八项能力的全部 89 个 Scenario。源码入口用于定位实现，不代替场景验收；完整 Day1 尚未验收。
+2026-10-17，功能源码基线 `6c5b367`。本文对应 OpenSpec 11.3，覆盖八项能力的全部 89 个 Scenario。源码入口用于定位实现，不代替场景验收；完整 Day1 尚未验收。
 
 ## 已有证据
 
 | 范围 | 记录 | 边界 |
 | --- | --- | --- |
-| 当前命令产物 | `2794f8c` 经安装脚本构建并安装 | 编译通过，不代表运行行为通过；未单独构建插件示例 |
+| 当前命令产物 | `6c5b367` 经安装脚本构建并安装 | 编译通过，不代表运行行为通过；未单独构建插件示例 |
 | 本机安装 | `~/.local/bin/zende` 指向保留版本目录 | 安装保留旧二进制；回退入口未实际执行 |
-| 空配置服务 | default Core 更新至 `2794f8c`，runner 保持 `c2f2f96`，配置同步恢复 current | 没有模型连接、Agent 或活动命令；不是 TUI 接回或带任务升级验收 |
+| 空配置服务 | default Core 更新至 `6c5b367`，runner 保持 `c2f2f96`，配置同步为 current | 没有模型连接、Agent 或活动命令；不是 TUI 接回或带任务升级验收 |
 | Core 停止与更新 | 按原实例身份停止自建空闲 Core，启动新版；runner 未重启 | 未覆盖忙碌、响应丢失、替代实例及活动进程场景 |
+| 数据库升级 | 空配置库从 schema 25 升到 26，日志记录迁移前副本 | 没有恢复副本，也未覆盖有任务数据、迁移失败及损坏场景 |
 | 早期功能 | [历史验证记录](verification.md)保存 2026-10-14 至 16 的局部测试、夹具及故障记录 | 只适用于各节注明的版本和范围，不能推广为当前版本全量通过 |
 
-当前安装目录为 `~/.local/share/zende/releases/20261017T092451Z-2794f8cfebb1-tcBRPXOj/`；数据库、日志位于 `~/.local/state/zende/default/`。模型配置尚未创建，未读取或使用用户凭据。实际部署过程见[验证记录末部](verification.md#2026-10-17备份实现部署与空闲-core-更新)。
+当前安装目录为 `~/.local/share/zende/releases/20261017T094622Z-6c5b36776dab-Vsh2zGpF/`；数据库、日志位于 `~/.local/state/zende/default/`。模型配置尚未创建，未读取或使用用户凭据。实际部署过程见[升级记录](verification.md#2026-10-17重试实现部署与-schema-升级)。
 
 2026-10-16 起不新增、不运行测试，也不以冒烟、验收脚本或读者测试替代。下面各场景在当前版本均保留为**未完整验收**；已有局部证据单独说明。
 
@@ -25,12 +26,12 @@
 | 关闭 TUI 后接回同一任务；持续会话接受第二项工作 | [独立服务与 CLI](../internal/cli/cli.go)、[任务循环](../internal/runtime/loop.go)、[客户端重连](../internal/render/client.go) |
 | 提交超时后重试；核心离线时提交 | [请求接受事务](../internal/store/store.go)、[协议客户端](../internal/protocol/ipc.go) |
 | 停止父 Agent 时子任务继续；不可立即取消的操作；显式恢复暂停会话 | [停止/恢复](../internal/store/control.go)、[模型循环](../internal/runtime/loop.go)、[树级停止](../internal/runtime/tree_stop.go) |
-| 工具派发前或运行中崩溃；机器重启导致进程丢失；操作生效后结果未落盘 | [恢复调度](../internal/runtime/recover.go)、[恢复日志](../internal/runtime/recovery_journal.go)、[进程身份恢复](../internal/process/recovery.go) |
+| 工具派发前或运行中崩溃；机器重启导致进程丢失；操作生效后结果未落盘 | [恢复调度](../internal/runtime/recover.go)、[恢复日志](../internal/runtime/recovery_journal.go)、[模型重试额度](../internal/runtime/model_retry.go)、[进程身份恢复](../internal/process/recovery.go) |
 | 状态查询期间继续产生事件 | [快照与事件存储](../internal/store/store.go)、[日志读取](../internal/store/journal.go) |
 | 达到运行限额 | [Core 准入](../internal/runtime/core.go)、[进程管理](../internal/process/manager.go) |
 | 复制有后台工作的会话；停止失败或复制提交时崩溃 | [复制协调](../internal/runtime/session_copy.go)、[复制意图](../internal/store/session_copy.go)、[事务发布](../internal/store/session_copy_publish.go) |
 
-历史记录覆盖基础接受、停止/恢复、进程身份及部分未知副作用。新增复制、恢复依赖查询与插件待核实屏障未测试；本机部署只覆盖空配置服务生命周期。
+历史记录覆盖基础接受、停止/恢复、进程身份及部分未知副作用。新增复制、恢复依赖查询、插件待核实屏障和持久模型重试未测试；本机部署只覆盖空配置服务生命周期及一次升级。
 
 ## 2. 多 Agent 协作：13 个场景
 
@@ -136,7 +137,7 @@
 | final 中途断流或重复出现；final 与工具调用冲突 | [分类校验](../internal/model/output.go)、[有限修复与任务终态](../internal/runtime/loop.go) |
 | 兼容端点缺少可选字段 | [按型号绑定](../internal/provider/resolver.go)、[Chat 协议](../internal/model/chatcompletions/decoder.go)、[MCP host 路径](../internal/runtime/mcp_tools.go) |
 
-历史 Responses/Chat 和公共分类使用本地 HTTP 或模型夹具；Anthropic、Gemini、新原生搜索和显式公开历史转换未测试。当前命令构建包含四 adapter，不能据此声称任何真实端点组合兼容。能力声明与配置矩阵见[四协议对照](development.md#四协议配置与能力对照)。
+历史 Responses/Chat 和公共分类使用本地 HTTP 或模型夹具；Anthropic、Gemini、新原生搜索、显式公开历史转换和有界 HTTP 重试未测试。当前命令构建包含四 adapter，不能据此声称任何真实端点组合兼容。能力声明与配置矩阵见[四协议对照](development.md#四协议配置与能力对照)。
 
 ## 已知边界与未交付的验收
 
@@ -144,8 +145,8 @@
 - 默认严格续接；跨协议不能携带的私有内容会报错。显式 `--context public` 只为后续请求生成公开历史副本，不改写原记录，也不承诺保留私有推理语义。
 - 资源监视等待稳定窗口，无法辨别一个暂时合法的文件是否还会续写。建议写完临时文件后 rename；本地准备成功也不证明远端认证或能力可用。
 - tmux 是 PTY 依赖；缺失时不退为 pipe。进程、插件和 shell 没有审批或沙箱，均按当前用户权限执行。
-- 容量和并发默认值尚未经过长会话负载测量。原文保留、输出引用和 unknown 屏障不因额度不足而自动清除或盲目重试。
-- schema 25 同版本启动不会生成迁移备份。本机更新未触发旧库备份分支；迁移、损坏和恢复未验收。SQLite 副本不包含 runner、配置、工作区或新产生的历史，不能当作整个 profile 的可随意覆盖恢复点。
+- 容量、并发和退避默认值尚未经过长会话负载测量。新 Task 的额外模型请求计数持久保存，HTTP 重试和 Core 中断重建共用额度；部分流、结果不明的连接和插件不做 HTTP 自动重放。原文和输出引用继续保留。
+- schema 26 阻止旧调度器忽略模型重试额度；本机升级已保留 schema 25 副本。迁移故障、损坏和恢复未验收。SQLite 副本不包含 runner、配置、工作区或新产生的历史，不能当作整个 profile 的可随意覆盖恢复点。
 - V01–V23 的当前版本组合验收、V22 复制故障、V23 TUI 接回和数据回退均未完成。纯测试事项保留原任务，不执行、不标为通过。
 
 首次模型接入仍需用户指定协议、端点、型号与凭据引用，授权前不读取或使用模型凭据。实际部署和恢复操作见[运行说明](development.md)，实现进度以 [OpenSpec 任务](../openspec/changes/build-day1-harness/tasks.md)为准。
