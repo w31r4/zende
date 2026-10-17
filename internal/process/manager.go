@@ -32,6 +32,13 @@ type Manager struct {
 	cache                 *outputCache
 	stops                 map[string]StopRecord
 	stopFault             bool // Damaged stop metadata must not silently reopen admission.
+	configRefreshMu       sync.Mutex
+	configSource          ConfigurationSource // Set before serving.
+	configPublication     *protocol.ConfigPublication
+	configError           *protocol.Error
+	configReady           bool
+	configLoaded          bool
+	configFault           bool // Preserve unreadable or future configuration metadata.
 }
 
 type entry struct {
@@ -49,13 +56,15 @@ type entry struct {
 var processID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_-]{0,95}$`)
 
 func NewManager(root, shell string, maxProcesses int, maxOutput int64) (*Manager, error) {
-	if !filepath.IsAbs(root) || !filepath.IsAbs(shell) || maxProcesses < 1 || maxOutput < 1024 {
+	settings := Configuration{Shell: shell, MaxProcesses: maxProcesses, MaxOutput: maxOutput}
+	if !filepath.IsAbs(root) || !settings.Valid() {
 		return nil, fmt.Errorf("invalid runner settings")
 	}
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return nil, err
 	}
-	m := &Manager{root: root, shell: shell, instance: protocol.NewID("runner"), maxProcesses: maxProcesses, maxOutput: maxOutput, entries: map[string]*entry{}}
+	m := &Manager{root: root, shell: shell, instance: protocol.NewID("runner"), maxProcesses: maxProcesses, maxOutput: maxOutput, entries: map[string]*entry{}, configReady: true}
+	m.loadConfiguration()
 	m.tmux, _ = exec.LookPath("tmux")
 	m.helper, _ = os.Executable()
 	m.socket = terminalSocket(root)
@@ -120,6 +129,10 @@ func saveJSON(path string, value any) error {
 
 func snapshot(s State) State {
 	out := s
+	if s.Configuration != nil {
+		configuration := cloneConfiguration(*s.Configuration)
+		out.Configuration = &configuration
+	}
 	out.References = make(map[string]OutputReference, len(s.References))
 	for k, v := range s.References {
 		out.References[k] = v
@@ -164,20 +177,27 @@ func (m *Manager) Start(ctx context.Context, spec Spec) (State, error) {
 		return State{}, protocol.E("invalid_params", "terminal size does not apply to pipe")
 	}
 	m.mu.Lock()
+	state, found, err := m.existingStartLocked(spec)
+	m.mu.Unlock()
+	if found {
+		return state, err
+	}
+	// An accepted identity is independent of today's configuration/Core. New
+	// identities synchronize before admission, then recheck for a racing retry.
+	syncErr := m.syncConfiguration(ctx)
+	m.mu.Lock()
 	defer m.mu.Unlock()
-	if e, ok := m.entries[spec.ID]; ok {
-		e.mu.Lock()
-		defer e.mu.Unlock()
-		if e.quarantined {
-			return snapshot(e.state), protocol.E("operation_unknown", "original process metadata is unavailable; the process_id cannot be reused")
-		}
-		if e.state.Spec != spec {
-			return State{}, protocol.E("operation_conflict", "process_id already identifies another command")
-		}
-		if e.state.PTY {
-			m.refreshPTY(e)
-		}
-		return snapshot(e.state), nil
+	if state, found, err := m.existingStartLocked(spec); found {
+		return state, err
+	}
+	if err := ctx.Err(); err != nil {
+		return State{}, err
+	}
+	if !m.configReady || m.configFault {
+		return State{}, protocol.E("unavailable", "runner configuration is not ready; inspect runner status; existing processes are retained")
+	}
+	if syncErr != nil && (m.configPublication != nil || !runnerCoreOffline(syncErr)) {
+		return State{}, syncErr
 	}
 	if err := m.startAllowed(spec); err != nil {
 		return State{}, err
@@ -205,7 +225,8 @@ func (m *Manager) Start(ctx context.Context, spec Spec) (State, error) {
 	if err := os.Mkdir(dir, 0700); err != nil {
 		return State{}, err
 	}
-	e := &entry{state: State{Spec: spec, SchemaVersion: 1, InstanceID: m.instance, Status: "starting", Output: map[string]StreamState{"stdout": {}, "stderr": {}}}, dir: dir, done: make(chan struct{})}
+	configuration := m.configurationLocked()
+	e := &entry{state: State{Spec: spec, SchemaVersion: 2, Configuration: &configuration, InstanceID: m.instance, Status: "starting", Output: map[string]StreamState{"stdout": {}, "stderr": {}}}, dir: dir, done: make(chan struct{})}
 	e.state.CreatedAt = time.Now().UnixNano()
 	e.state.References = map[string]OutputReference{}
 	if spec.TaskID != "" {
@@ -238,13 +259,13 @@ func (m *Manager) Start(ctx context.Context, spec Spec) (State, error) {
 		stderr.Close()
 		return m.failStart(e, err)
 	}
-	command := exec.Command(m.shell, "-c", spec.Command)
+	command := exec.Command(configuration.Shell, "-c", spec.Command)
 	command.Dir = spec.Cwd
 	command.Env = processEnvironment(spec, os.Environ())
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Stdin = read
-	command.Stdout = &outputWriter{entry: e, file: stdout, stream: "stdout", limit: m.maxOutput}
-	command.Stderr = &outputWriter{entry: e, file: stderr, stream: "stderr", limit: m.maxOutput}
+	command.Stdout = &outputWriter{entry: e, file: stdout, stream: "stdout", limit: configuration.MaxOutput}
+	command.Stderr = &outputWriter{entry: e, file: stderr, stream: "stderr", limit: configuration.MaxOutput}
 	command.WaitDelay = 2 * time.Second
 	e.mu.Lock()
 	if err := command.Start(); err != nil {
@@ -263,7 +284,7 @@ func (m *Manager) Start(ctx context.Context, spec Spec) (State, error) {
 	e.state.Identity = identity(e.state.PID)
 	e.state.StdinOpen = true
 	persistErr := e.save()
-	state := snapshot(e.state)
+	state = snapshot(e.state)
 	e.mu.Unlock()
 	go func() {
 		err := command.Wait()
@@ -292,6 +313,25 @@ func (m *Manager) Start(ctx context.Context, spec Spec) (State, error) {
 		return state, protocol.E("transport_unknown", "process started but its identity could not be saved; inspect before retrying")
 	}
 	return state, nil
+}
+
+func (m *Manager) existingStartLocked(spec Spec) (State, bool, error) {
+	e, ok := m.entries[spec.ID]
+	if !ok {
+		return State{}, false, nil
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.quarantined {
+		return snapshot(e.state), true, protocol.E("operation_unknown", "original process metadata is unavailable; the process_id cannot be reused")
+	}
+	if e.state.Spec != spec {
+		return State{}, true, protocol.E("operation_conflict", "process_id already identifies another command")
+	}
+	if e.state.PTY {
+		m.refreshPTY(e)
+	}
+	return snapshot(e.state), true, nil
 }
 
 func (m *Manager) failStart(e *entry, cause error) (State, error) {

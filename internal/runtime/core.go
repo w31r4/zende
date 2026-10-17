@@ -65,6 +65,12 @@ func New(s *store.Store, config resource.Effective) *Core {
 func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 	config := c.configuration().effective.Config
 	switch req.Method {
+	case "config.runner":
+		var p struct{}
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.runnerConfiguration()
 	case "config.refresh":
 		var p struct{}
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

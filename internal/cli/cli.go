@@ -403,14 +403,8 @@ func (a *app) startService(cmd *cobra.Command, service string) error {
 	if result, err := status(); err == nil {
 		return encode(cmd, result)
 	}
-	// Core restores its last publication if today's files are invalid. Let
-	// its owner read the database under the service lock; runner still uses
-	// startup configuration until its refresh path is connected.
-	if service == "runner" {
-		if _, _, err := a.environment(); err != nil {
-			return err
-		}
-	}
+	// Each owner restores its retained configuration under its service lock.
+	// Invalid current files must not prevent querying already accepted work.
 	if err := p.EnsureState(); err != nil {
 		return err
 	}

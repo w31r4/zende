@@ -60,7 +60,7 @@ func (t processTool) RecoverStopped(ctx context.Context, call Call, proof proces
 		if err != nil {
 			return Recovered{}, unresolvedProcess()
 		}
-		if state.SchemaVersion != 1 || state.Spec != spec || state.PID != target.PID || state.Identity != target.Identity || state.PTY != target.PTY {
+		if !state.ValidConfigurationMetadata() || state.Spec != spec || state.PID != target.PID || state.Identity != target.Identity || state.PTY != target.PTY {
 			return Recovered{}, protocol.E("operation_conflict", "stopped process does not match the original tool call")
 		}
 		observed, readErr := t.observe(ctx, state, nil, nil, 0, limit, false)

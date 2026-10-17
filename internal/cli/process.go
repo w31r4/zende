@@ -11,10 +11,15 @@ import (
 	"github.com/spf13/cobra"
 	"zende.local/harness/internal/process"
 	"zende.local/harness/internal/protocol"
+	"zende.local/harness/internal/resource"
 )
 
 func (a *app) serveRunner(cmd *cobra.Command, _ []string) error {
-	p, e, err := a.environment()
+	p, err := a.paths()
+	if err != nil {
+		return err
+	}
+	cwd, err := os.Getwd()
 	if err != nil {
 		return err
 	}
@@ -26,15 +31,38 @@ func (a *app) serveRunner(cmd *cobra.Command, _ []string) error {
 	if err != nil {
 		return err
 	}
-	manager, err := process.NewManager(filepath.Join(p.State, "processes"), e.Config.Shell, e.Config.Limits.Processes, e.Config.Limits.OutputBytes)
+	defaults := resource.Defaults(cwd)
+	manager, err := process.NewManager(filepath.Join(p.State, "processes"), defaults.Shell, defaults.Limits.Processes, defaults.Limits.OutputBytes)
 	if err != nil {
 		ctx, cancel := context.WithCancel(cmd.Context())
 		cancel()
 		server.Serve(ctx)
 		return err
 	}
+	manager.InitializeConfiguration(cmd.Context(), func(ctx context.Context) (process.Configuration, error) {
+		req, err := protocol.NewRequest("config.runner", "", struct{}{})
+		var config process.Configuration
+		if err == nil {
+			err = (protocol.Client{Socket: p.Socket}).Call(ctx, req, &config)
+		}
+		return config, err
+	}, func() (process.Configuration, error) {
+		_, effective, err := a.environment()
+		config := effective.Config
+		return process.Configuration{Shell: config.Shell, MaxProcesses: config.Limits.Processes, MaxOutput: config.Limits.OutputBytes}, err
+	})
 	proxy.handler = process.Service{Manager: manager}
-	return server.Serve(cmd.Context())
+	ctx, cancel := context.WithCancel(cmd.Context())
+	defer cancel()
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		manager.FollowConfiguration(ctx)
+	}()
+	err = server.Serve(ctx)
+	cancel()
+	<-finished
+	return err
 }
 
 func (a *app) processCommands(root *cobra.Command) {

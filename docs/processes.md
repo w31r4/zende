@@ -2,6 +2,8 @@
 
 独立 runner 支持 pipe 与 tmux PTY、身份查询、输出游标、输入、尺寸调整、进程组信号和有界等待。
 
+2026-10-16 起按项目约定不新增、不运行测试。文末用例是历史记录；本次配置刷新及进程快照改动未测试或构建。
+
 ```sh
 ./bin/zende --profile dev runner start
 ./bin/zende --profile dev runner status
@@ -24,6 +26,16 @@ PTY 依赖 PATH 中的 tmux，最低已测版本为 **3.3a**。缺失时返回�
 runner 独立于 core。core 或 CLI 退出不终止命令；新 core 可通过 runner 查询原进程。`runner serve` 是前台监督入口，日志在 profile 的 `runner.log`，控制 socket 与 core 分开。
 
 `process exec` 返回真实启动状态，不等待命令完成。`process wait` 最长等待 30 秒，超时只结束本次等待。空输出与进程终态分别表示。重复相同 `--request-id` 与参数返回原进程；同 ID 改参数报冲突，不再执行。
+
+## 配置刷新
+
+`config refresh` 发布 Core 配置；runner 通过只读 `config.runner` 获取 shell、进程容量、输出限额和发布身份。后台每秒触发一次同步，Core 查询限时 2 秒；接受新进程前再同步。设置持久保存后才切换，降额不终止已有进程。`runner status` 返回实际设置、`publication`、`configuration_state` 和最近错误，Core 接受刷新不代表离线 runner 已同步。
+
+首次启动且 Core 不可用时，runner 可从本地配置初始化，状态为 `local`；连接 Core 后以其发布为准。`current` 表示上次同步成功，`stale` 表示保留旧版但同步失败，`unavailable` 表示还没有可用设置，`invalid` 表示保存记录损坏或不兼容。连接过 Core 的 runner 同步失败时拒绝新进程；已有进程的观察、控制和原 ID 重试继续可用。首次配置失效也保留查询服务，修复并经 Core 发布后可再次同步。
+
+最新设置缓存于 `processes/.configuration.json`，格式版本 1、读取上限 32 KiB；不可变配置历史仍归 Core。缓存损坏或版本不兼容时保留文件并阻止新启动。保存结果不确定时同样暂停新启动，后续同步成功再恢复。
+
+新 `state.json` 使用版本 2，启动前保存 `configuration`；pipe 与 PTY 采集器固定其中的输出限额，PTY 的 `launch.json` 同时保存该绑定。`process inspect` 可查每条命令实际使用的设置。旧版本 1 继续读取，缺失配置保持未知，不用当前值补写。进程恢复仍查询原身份，不重新派发命令。
 
 ## 模型工具
 

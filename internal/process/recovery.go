@@ -37,8 +37,11 @@ func recoverEntry(dir, id string) *entry {
 		return quarantine("process metadata is unreadable")
 	}
 	s := e.state
-	if s.SchemaVersion != 1 {
+	if s.SchemaVersion != 1 && s.SchemaVersion != 2 {
 		return quarantine("process metadata version is unsupported")
+	}
+	if !s.ValidConfigurationMetadata() {
+		return quarantine("process configuration metadata is invalid")
 	}
 	if s.ID != id || !validStreams(s) || !filepath.IsAbs(s.Cwd) || s.Command == "" {
 		return quarantine("process identity or output metadata is invalid")

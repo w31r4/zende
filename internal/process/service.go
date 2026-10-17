@@ -2,7 +2,6 @@ package process
 
 import (
 	"context"
-	"os"
 	"time"
 
 	"zende.local/harness/internal/protocol"
@@ -33,12 +32,7 @@ func (s Service) Handle(ctx context.Context, req protocol.Request) (any, error) 
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
 			return nil, err
 		}
-		return struct {
-			Instance     string `json:"instance_id"`
-			PID          int    `json:"pid"`
-			MaxProcesses int    `json:"max_processes"`
-			MaxOutput    int64  `json:"max_output_bytes"`
-		}{s.Manager.instance, os.Getpid(), s.Manager.maxProcesses, s.Manager.maxOutput}, nil
+		return s.Manager.Status(), nil
 	case "process.start":
 		var p Spec
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {

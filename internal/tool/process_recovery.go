@@ -40,7 +40,7 @@ func (t processTool) Recover(ctx context.Context, call Call) (Recovered, error) 
 	if err != nil {
 		return Recovered{}, unresolvedProcess()
 	}
-	if state.SchemaVersion != 1 || state.Spec != spec {
+	if !state.ValidConfigurationMetadata() || state.Spec != spec {
 		return Recovered{}, protocol.E("operation_conflict", "saved process does not match the original tool call")
 	}
 	if state.Status == "failed" {

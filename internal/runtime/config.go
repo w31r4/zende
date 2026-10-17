@@ -7,6 +7,7 @@ import (
 	"os"
 
 	"zende.local/harness/internal/model"
+	"zende.local/harness/internal/process"
 	"zende.local/harness/internal/protocol"
 	"zende.local/harness/internal/provider"
 	"zende.local/harness/internal/resource"
@@ -73,6 +74,22 @@ func configBundle(snapshot resource.ConfigSnapshot, publication protocol.ConfigP
 		models: resolver, restore: resolver, catalog: resolver, defaultModel: snapshot.Effective.Config.Model != ""}
 }
 
+func runnerConfiguration(config resource.Config, publication *protocol.ConfigPublication) process.Configuration {
+	if publication != nil {
+		copy := *publication
+		publication = &copy
+	}
+	return process.Configuration{Publication: publication, Shell: config.Shell, MaxProcesses: config.Limits.Processes, MaxOutput: config.Limits.OutputBytes}
+}
+
+func (c *Core) runnerConfiguration() (process.Configuration, error) {
+	current := c.configuration()
+	if current.publication == nil {
+		return process.Configuration{}, protocol.E("unavailable", "Core has no published runner configuration")
+	}
+	return runnerConfiguration(current.effective.Config, current.publication), nil
+}
+
 // InitializeConfiguration runs before serving or scheduling. Invalid current
 // files keep the last committed configuration available for repair/inspection.
 // Without any published version, initialization reports the actual failure.
@@ -130,6 +147,9 @@ func (c *Core) prepareConfig(ctx context.Context) (*provider.PreparedConfig, err
 	source := c.configSource
 	prepared, err := resource.PrepareConfig(ctx, source.paths, source.cwd, source.env, nil, nil)
 	if err != nil {
+		return nil, err
+	}
+	if err := process.CheckConfiguration(runnerConfiguration(prepared.Snapshot().Effective.Config, nil)); err != nil {
 		return nil, err
 	}
 	return provider.PrepareConfig(ctx, prepared, source.env)
@@ -190,6 +210,12 @@ func (c *Core) commitConfig(ctx context.Context, req protocol.Request, candidate
 		return protocol.Accepted{}, failure
 	}
 	snapshot := candidate.Snapshot()
+	if err := process.CheckConfiguration(runnerConfiguration(snapshot.Effective.Config, nil)); err != nil {
+		failure := configFailure(err)
+		failure.Data.OperationID = req.OperationID
+		c.configError.Store(failure)
+		return protocol.Accepted{}, failure
+	}
 	accepted, err := c.Store.PublishConfig(ctx, req, snapshot, generation)
 	if err != nil {
 		failure := protocol.E("persistence_failed", "configuration publication was not confirmed; inspect the original operation before retrying")
@@ -209,7 +235,7 @@ func configFailure(err error) *protocol.Error {
 	var known *protocol.Error
 	if errors.As(err, &known) {
 		switch known.Data.Kind {
-		case "credential_unavailable", "resource_changed", "resource_limit", "unavailable", "config_changed", "persistence_failed", "cancelled":
+		case "credential_unavailable", "dependency_missing", "resource_changed", "resource_limit", "unavailable", "config_changed", "persistence_failed", "cancelled":
 			kind = known.Data.Kind
 		}
 	} else if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {

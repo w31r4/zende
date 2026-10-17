@@ -20,6 +20,7 @@ type Spec struct {
 type State struct {
 	Spec
 	SchemaVersion int                        `json:"schema_version"`
+	Configuration *Configuration             `json:"configuration,omitempty"`
 	InstanceID    string                     `json:"instance_id"`
 	Status        string                     `json:"status"`
 	ExitCode      *int                       `json:"exit_code,omitempty"`

@@ -21,11 +21,12 @@ import (
 )
 
 type launch struct {
-	Spec     Spec     `json:"spec"`
-	Shell    string   `json:"shell"`
-	Limit    int64    `json:"limit"`
-	TMUX     string   `json:"tmux"`
-	Terminal Terminal `json:"terminal"`
+	Configuration *Configuration `json:"configuration,omitempty"`
+	Spec          Spec           `json:"spec"`
+	Shell         string         `json:"shell"`
+	Limit         int64          `json:"limit"`
+	TMUX          string         `json:"tmux"`
+	Terminal      Terminal       `json:"terminal"`
 }
 
 type captureRecord struct {
@@ -145,7 +146,8 @@ func inspectPane(binary string, t Terminal) (paneState, error) {
 func (m *Manager) startPTY(e *entry) (State, error) {
 	// The pane helper waits on a durable release file. Even a very short command
 	// cannot run until the collector has opened and synced its output file.
-	l := launch{Spec: e.state.Spec, Shell: m.shell, Limit: m.maxOutput, TMUX: m.tmux,
+	configuration := cloneConfiguration(*e.state.Configuration)
+	l := launch{Spec: e.state.Spec, Configuration: &configuration, Shell: configuration.Shell, Limit: configuration.MaxOutput, TMUX: m.tmux,
 		Terminal: Terminal{Socket: m.socket, Session: "z-" + e.state.ID, Token: protocol.NewID("pane"), Cols: e.state.Cols, Rows: e.state.Rows}}
 	if err := saveJSON(filepath.Join(e.dir, "launch.json"), l); err != nil {
 		return m.failStart(e, err)
@@ -290,6 +292,9 @@ func RunInternalPTY(args []string) (bool, int) {
 	if err := readJSON(filepath.Join(args[1], "launch.json"), &l); err != nil {
 		return true, 1
 	}
+	if l.Configuration != nil && (!l.Configuration.Valid() || l.Shell != l.Configuration.Shell || l.Limit != l.Configuration.MaxOutput) {
+		return true, 1
+	}
 	var err error
 	if args[0] == "--zende-internal-pty-worker" {
 		err = runPane(args[1], l)
@@ -425,7 +430,7 @@ func capturePane(dir string, l launch) error {
 
 func recoverPaneExit(dir string, l launch, pane paneState) paneState {
 	var saved State
-	if readJSON(filepath.Join(dir, "state.json"), &saved) != nil || saved.SchemaVersion != 1 || saved.Spec != l.Spec || saved.PID != pane.PID || saved.Terminal == nil {
+	if readJSON(filepath.Join(dir, "state.json"), &saved) != nil || !saved.ValidConfigurationMetadata() || saved.Spec != l.Spec || saved.PID != pane.PID || saved.Terminal == nil {
 		return pane
 	}
 	t := saved.Terminal

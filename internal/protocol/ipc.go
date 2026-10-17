@@ -357,7 +357,7 @@ func (c Client) Retry(ctx context.Context, req Request, result any, attempts int
 
 func ReadOnly(method string) bool {
 	switch method {
-	case "config.read", "config.history":
+	case "config.read", "config.history", "config.runner":
 		return true
 	case "context.inspect", "context.read", "context.entry":
 		return true
