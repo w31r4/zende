@@ -134,7 +134,7 @@ func (r *Resolver) bind(ctx context.Context, saved bindingSnapshot) (model.Bindi
 		}
 		adapter = value
 	case anthropic.Protocol:
-		config := anthropic.Config{Endpoint: conn.BaseURL, Effort: saved.Effort, Credential: credential, Images: selected.Images}
+		config := anthropic.Config{Endpoint: conn.BaseURL, Effort: saved.Effort, Credential: credential, Images: selected.Images, ClientToolSearch: selected.ToolSearch == "anthropic-deferred"}
 		if options := selected.Anthropic; options != nil {
 			config.Thinking, config.ThinkingBudget = options.Thinking, options.ThinkingBudget
 			config.ThinkingDisplay, config.InterleavedThinking = options.ThinkingDisplay, options.InterleavedThinking

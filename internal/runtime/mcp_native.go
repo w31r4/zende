@@ -16,8 +16,12 @@ import (
 )
 
 const nativeSearchVersion = "native-search-1"
-const maxDiscoveredMCP = 240 // Leave space for the stable host tools in Responses.
+const maxDiscoveredMCP = 240 // Leave space for stable host tools in native requests.
 const maxDiscoveredMCPBytes = 2 << 20
+
+func nativeToolSearch(mode string) bool {
+	return mode == "responses-client" || mode == "anthropic-deferred"
+}
 
 // The model-facing name is bound to an immutable server/ref pair. Catalog and
 // publication fields record where it was discovered; execution uses the ref,
@@ -180,7 +184,7 @@ func (c *Core) searchDescriptors(descriptors []tool.Descriptor, mode string) ([]
 	if mode == "" {
 		return descriptors, nil
 	}
-	if mode != "responses-client" {
+	if !nativeToolSearch(mode) {
 		return nil, protocol.E("unsupported_capability", "native tool search route is not implemented")
 	}
 	executor, _, found := c.Tools.Lookup("tool_search")
@@ -268,7 +272,10 @@ func validDiscoveredMCPRecord(r requestRecord) bool {
 	if r.Settings != nil {
 		mode = r.Settings.ToolSearch
 	}
-	if len(r.DiscoveredMCP) > maxDiscoveredMCP || len(r.DiscoveredMCP) > 0 && (mode != "responses-client" || r.FormatRepair) {
+	if mode != "" && !nativeToolSearch(mode) {
+		return false
+	}
+	if len(r.DiscoveredMCP) > maxDiscoveredMCP || len(r.DiscoveredMCP) > 0 && (!nativeToolSearch(mode) || r.FormatRepair) {
 		return false
 	}
 	seen := map[string]bool{}
@@ -324,7 +331,7 @@ func validDiscoveredMCPRecord(r requestRecord) bool {
 }
 
 func (c *Core) requestTool(r *requestRecord, name string) (tool.Executor, tool.Descriptor, bool) {
-	if r != nil && !r.FormatRepair && r.Settings != nil && r.Settings.ToolSearch == "responses-client" {
+	if r != nil && !r.FormatRepair && r.Settings != nil && nativeToolSearch(r.Settings.ToolSearch) {
 		if name == "tool_search" {
 			base, _, exists := c.Tools.Lookup(name)
 			if standard, ok := base.(mcpTool); exists && ok && !standard.invoke {

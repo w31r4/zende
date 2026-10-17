@@ -24,6 +24,7 @@ type decoder struct {
 	emit                                 func(model.Delta) error
 	blocks                               []*blockState
 	callIDs                              map[string]bool
+	clientSearch, searchAdvertised       bool
 	bytes, calls                         int
 	input, output, cacheRead, cacheWrite *int64
 }
@@ -175,6 +176,9 @@ func (d *decoder) startBlock(index int, raw []byte) error {
 		if !validCall(value.ID, value.Name) || d.callIDs[value.ID] || decodeObject(value.Input, &input) != nil {
 			return wireError("invalid or duplicate tool call")
 		}
+		if d.clientSearch && value.Name == searchToolName && !d.searchAdvertised {
+			return wireError("native search was not offered for this request")
+		}
 		b.id, b.name, b.initialInput = value.ID, value.Name, value.Input
 		d.callIDs[value.ID] = true
 		d.calls++
@@ -284,7 +288,11 @@ func (d *decoder) complete() (bool, error) {
 		if err != nil {
 			return false, wireError("content block could not be saved")
 		}
-		saved, err := json.Marshal(savedBlock{Version: 1, Endpoint: d.endpoint, Model: d.model, Block: raw})
+		version := 1
+		if d.clientSearch && d.searchAdvertised && b.kind == "tool_use" && b.name == searchToolName {
+			version = 2
+		}
+		saved, err := json.Marshal(savedBlock{Version: version, Endpoint: d.endpoint, Model: d.model, Block: raw})
 		if err != nil {
 			return false, wireError("content block could not be saved")
 		}

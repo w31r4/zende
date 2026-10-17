@@ -343,8 +343,10 @@ func (c Config) Validate() error {
 			if conn.Protocol != "responses" && m.NativeCategories {
 				return fmt.Errorf("selected protocol uses explicit text markers, not native categories")
 			}
-			if m.ToolSearch != "" && m.ToolSearch != "host" && (m.ToolSearch != "responses-client" || conn.Protocol != "responses") {
-				return fmt.Errorf("tool_search must be host or responses-client on a confirmed Responses endpoint/model")
+			if m.ToolSearch != "" && m.ToolSearch != "host" &&
+				!(m.ToolSearch == "responses-client" && conn.Protocol == "responses") &&
+				!(m.ToolSearch == "anthropic-deferred" && conn.Protocol == "anthropic") {
+				return fmt.Errorf("tool_search requires host, responses-client on Responses, or anthropic-deferred on Anthropic; native routes require a confirmed endpoint/model")
 			}
 		}
 	}

@@ -68,7 +68,8 @@ func recoveryInvalid() error {
 }
 
 func validSettings(s taskSettings) bool {
-	return (s.ToolSearch == "" || s.ToolSearch == "responses-client" && s.Protocol == "responses") && (s.Version == 1 || s.Version == 2) && filepath.IsAbs(s.Cwd) && s.Model != "" && s.Protocol != "" && s.FormatRepairs >= 0 && s.SelectionRevision >= 0 && s.ModelRevision >= 0 && s.ModelRevision <= s.SelectionRevision && s.ContextWindow >= 0 && (s.ContextPolicy == nil || s.ContextPolicy.Valid()) && (s.Configuration == nil || s.Configuration.Valid())
+	search := s.ToolSearch == "" || s.ToolSearch == "responses-client" && s.Protocol == "responses" || s.ToolSearch == "anthropic-deferred" && s.Protocol == "anthropic"
+	return search && (s.Version == 1 || s.Version == 2) && filepath.IsAbs(s.Cwd) && s.Model != "" && s.Protocol != "" && s.FormatRepairs >= 0 && s.SelectionRevision >= 0 && s.ModelRevision >= 0 && s.ModelRevision <= s.SelectionRevision && s.ContextWindow >= 0 && (s.ContextPolicy == nil || s.ContextPolicy.Valid()) && (s.Configuration == nil || s.Configuration.Valid())
 }
 
 func settingsFollow(previous, next taskSettings) bool {

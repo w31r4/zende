@@ -65,6 +65,20 @@ func (a *Adapter) encode(request model.Request, allowPending bool) ([]byte, erro
 	if a.config.Thinking == "enabled" && a.config.ThinkingBudget >= request.MaxOutputTokens {
 		return nil, protocol.E("invalid_params", "Anthropic thinking budget must be smaller than max output")
 	}
+	tools, names := []any{}, map[string]bool{}
+	for _, tool := range request.Tools {
+		var schema map[string]any
+		if !toolName.MatchString(tool.Name) || names[tool.Name] || decodeObject(tool.InputSchema, &schema) != nil || schema["type"] != "object" {
+			return nil, wireError("invalid tool definition")
+		}
+		names[tool.Name] = true
+		tools = append(tools, toolDefinition(tool, false))
+	}
+	searches := map[string]bool{}
+	discovery := deferredTools{reserved: names, definitions: map[string]model.Tool{}}
+	if a.config.ClientToolSearch && len(names) > maxSearchDefinitions {
+		return nil, protocol.E("context_limit", "native search definitions exceed the request limit")
+	}
 	messages := []wireMessage{}
 	appendParts := func(role string, parts []any) {
 		if len(parts) == 0 {
@@ -93,7 +107,7 @@ func (a *Adapter) encode(request model.Request, allowPending bool) ([]byte, erro
 		parts := []any{}
 		if len(message.Opaque) != 0 {
 			var saved savedBlock
-			if role != "assistant" || message.Protocol != Protocol || protocol.StrictDecode(message.Opaque, &saved) != nil || saved.Version != 1 || saved.Endpoint != a.endpoint || saved.Model != request.Model {
+			if role != "assistant" || message.Protocol != Protocol || protocol.StrictDecode(message.Opaque, &saved) != nil || (saved.Version != 1 && saved.Version != 2) || saved.Endpoint != a.endpoint || saved.Model != request.Model {
 				return nil, protocol.E("protocol_mismatch", "Anthropic private block belongs to another endpoint/model or version")
 			}
 			var block wireBlock
@@ -102,6 +116,12 @@ func (a *Adapter) encode(request model.Request, allowPending bool) ([]byte, erro
 			}
 			if err := matchSavedBlock(block, message); err != nil {
 				return nil, err
+			}
+			if saved.Version == 2 {
+				if !a.config.ClientToolSearch || block.Type != "tool_use" || block.Name != searchToolName {
+					return nil, protocol.E("protocol_mismatch", "saved native search requires the Anthropic deferred search route")
+				}
+				searches[block.ID] = true
 			}
 			if block.Type == "tool_use" {
 				if seen[block.ID] {
@@ -182,7 +202,15 @@ func (a *Adapter) encode(request model.Request, allowPending bool) ([]byte, erro
 					return nil, wireError("orphan or repeated tool result")
 				}
 				delete(pending, id)
-				parts = append(parts, map[string]any{"type": "tool_result", "tool_use_id": id, "content": strings.Join(text, "\n"), "is_error": failed})
+				var content any = strings.Join(text, "\n")
+				if searches[id] {
+					var err error
+					content, err = discovery.result(strings.Join(text, "\n"), failed)
+					if err != nil {
+						return nil, err
+					}
+				}
+				parts = append(parts, map[string]any{"type": "tool_result", "tool_use_id": id, "content": content, "is_error": failed})
 				role = "user"
 			default:
 				return nil, wireError("unsupported history role")
@@ -198,17 +226,16 @@ func (a *Adapter) encode(request model.Request, allowPending bool) ([]byte, erro
 		return nil, wireError("Anthropic history must start and end with user input or tool results")
 	}
 	body := map[string]any{"model": request.Model, "messages": messages, "stream": true, "max_tokens": request.MaxOutputTokens, "system": strings.TrimSuffix(request.System, "\n") + "\n\n" + instructionGuide}
-	tools, names := []any{}, map[string]bool{}
-	for _, tool := range request.Tools {
-		var schema map[string]any
-		if !toolName.MatchString(tool.Name) || names[tool.Name] || decodeObject(tool.InputSchema, &schema) != nil || schema["type"] != "object" {
-			return nil, wireError("invalid tool definition")
-		}
-		names[tool.Name] = true
-		tools = append(tools, map[string]any{"name": tool.Name, "description": tool.Description, "input_schema": tool.InputSchema})
+	for _, name := range discovery.order {
+		tools = append(tools, toolDefinition(discovery.definitions[name], true))
 	}
 	if len(tools) != 0 {
 		body["tools"] = tools
+	}
+	if a.config.ClientToolSearch && len(request.Tools) == 0 {
+		// References in history still need their definitions. An empty active
+		// tool set must not reactivate those functions during format repair.
+		body["tool_choice"] = map[string]string{"type": "none"}
 	}
 	if a.config.Thinking != "" {
 		thinking := map[string]any{"type": a.config.Thinking}

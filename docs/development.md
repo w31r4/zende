@@ -198,7 +198,7 @@ compaction:
 
 ## 数据与恢复边界
 
-SQLite schema 为 20，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。版本 8 加入上下文视图事件，9 保存 worktree 准备，10 加入 mailbox，11 保存结果投递回执，12 加入整树停止事件与调度保护，13 保存资源准备状态，14 保存 MCP 调用与结果回执，15 保存插件调用、进度与结果，16 追加插件订阅状态、投递身份和事件数据，17 保存压缩操作状态，18 追加配置版本与发布记录，19 在资源准备及事件中保存自动发现来源，20 保存原生搜索选路和请求级 MCP 函数绑定。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答、资源和配置版本，以及插件调用意图、进度、订阅记录和已完成的 MCP/插件回执；更高版本拒绝打开。
+SQLite schema 为 21，使用 WAL + FULL synchronous。版本 1→2 增加暂停和任务优先级，2→3 增加附件与引用，3→4 增加提问和回答投递，4→5 增加资源版本与发布记录，5→6 增加输入选中的 skill 版本，6→7 增加 Agent 选配。版本 8 加入上下文视图事件，9 保存 worktree 准备，10 加入 mailbox，11 保存结果投递回执，12 加入整树停止事件与调度保护，13 保存资源准备状态，14 保存 MCP 调用与结果回执，15 保存插件调用、进度与结果，16 追加插件订阅状态、投递身份和事件数据，17 保存压缩操作状态，18 追加配置版本与发布记录，19 在资源准备及事件中保存自动发现来源，20 保存原生搜索选路和请求级 MCP 函数绑定，21 加入 Anthropic deferred 选路及搜索私有记录版本 2。迁移和请求接受各自原子提交，保留历史。数据库约束保护历史、接受记录、附件、任务输入、已接受回答、资源和配置版本，以及插件调用意图、进度、订阅记录和已完成的 MCP/插件回执；更高版本拒绝打开。
 
 core 启动先将中断任务置为待核实，再按原身份恢复。取消中的任务保留 cancelling 和暂停选择；核实完成后结束取消，不恢复执行。历史、已接受输入和原 Task ID 保留。
 
@@ -776,7 +776,7 @@ adapter 将搜索入口编码为 `type:tool_search`、`execution:client`。搜�
 
 Core 每次请求最多保留 240 个动态 MCP 映射，编码合计最多 2 MiB；超限提示压缩上下文，原历史保留。压缩后若发现结果已被摘要覆盖，需要重新搜索才能取得可调用定义。
 
-字段依据：[OpenAI Tool search](https://developers.openai.com/api/docs/guides/tools-tool-search) 的 client-executed 流程，以及本地 Codex 的 `tools/handlers/tool_search_spec.rs`、`protocol/src/models.rs`。Responses 原生路径已接线，其他协议的原生选路继续实施，10.5 保持未完成。本批未新增或运行测试、构建或真实模型请求。
+字段依据：[OpenAI Tool search](https://developers.openai.com/api/docs/guides/tools-tool-search) 的 client-executed 流程，以及本地 Codex 的 `tools/handlers/tool_search_spec.rs`、`protocol/src/models.rs`。Responses、Anthropic 原生路径已接线，四协议能力矩阵与真实兼容记录继续实施，10.5 保持未完成。本批未新增或运行测试、构建或真实模型请求。
 
 ## Chat Completions 接入
 
@@ -828,7 +828,19 @@ Responses 与 Chat 已有共用两轮工具/错误回填、断流不执行和真
 
 支持声明后的 PNG/JPEG 输入、取消、有界 SSE 和工具结果回填；请求上限 32 MiB，SSE 单事件 8 MiB、单流 64 MiB，公共消息沿用单块 1 MiB、响应 4 MiB/128 块限制。用量缺失保持未知，缓存输入计入总输入 token。未支持的内容类型、citations、服务端工具暂停等返回明确错误。
 
-此接入未运行测试、构建或真实端点验收。原生 deferred/tool search、跨协议迁移与完整 Day1 行为继续按任务清单实现。
+此接入未运行测试、构建或真实端点验收。跨协议迁移与完整 Day1 行为继续按任务清单实现。
+
+### 原生 deferred 搜索，未测试
+
+在 Anthropic 连接的具体 `models` 条目设置 `tool_search: anthropic-deferred`，声明端点和型号支持自定义搜索返回 `tool_reference`。省略或设为 `host` 使用原路径；兼容端点需自行确认字段支持，系统不自动探测或降级。
+
+搜索入口仍是普通 `tool_search` 函数，由 Core 执行。配对的成功结果转换为 `tool_result.content` 中的 `tool_reference` 和文本块；命中定义按首次发现顺序加入顶层 `tools`，标记 `defer_loading:true`。请求只携带保留历史中命中的定义，MCP 全目录留在本地。分页和来源元数据保留在工具结果中。
+
+新搜索调用使用私有记录版本 2，同端点、同型号且仍启用此路径时才能续接。旧 host 搜索结果保持原文本；普通消息中的同形 JSON 不加载工具。失败结果保留 `is_error`，不加载定义。同名定义须保持描述和 schema 一致，且不能覆盖基础工具。
+
+调用复用请求级 MCP 映射、原操作 ID 和持久回执。每页最多 50 项/1 MiB，基础与已发现定义合计最多 256 项；Core 的动态映射另限 240 项/2 MiB。格式修复请求保留历史引用需要的定义，显式发送 `tool_choice:{type:none}`。schema 21 仅提升兼容标记，旧历史不重写；提示词沿用版本 23 和 `native-search-1`。
+
+依据 [自定义 tool search](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-search-tool)、[defer_loading](https://platform.claude.com/docs/en/agents-and-tools/tool-use/tool-reference) 和 [tool_choice](https://platform.claude.com/docs/en/agents-and-tools/tool-use/define-tools)。原生路径、thinking 组合和纯文本修复均未经过真实请求验证；10.5 保持未完成。
 
 ## Gemini 接入
 

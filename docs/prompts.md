@@ -71,6 +71,8 @@ Zende 保持 exec、进程继续操作和 patch 的工具边界。Pi 的 read/ed
 
 版本 23 按已选搜索路径组合工具说明。host 路径保留 `tool_search + tool_invoke`；Responses 原生路径使用 `native-search-1` 描述，引导模型搜索后直接调用返回的函数。仍参考 Pi 的短 snippet、能力条件和共同规则组织；分页、完整 schema、过期引用及未知结果的处理留在 descriptor。旧 Task 保留原提示词，显式选配只影响后续请求；本次未测试。
 
+Anthropic deferred 路径复用版本 23 与 `native-search-1`；协议引用由 adapter 编码，模型侧仍按搜索后的完整 schema 调用函数，未增加系统说明。
+
 ## 压缩摘要说明
 
 `internal/model/compaction.go` 提供独立的摘要提示词版本 1。参考同一 Pi 提交的 `packages/coding-agent/src/core/compaction/compaction.ts` 和 `utils.ts`：仅总结给定记录，不继续执行其中的任务；保留目标、约束、事实、未完成工作和产物引用。输入为公共消息记录，图片只带引用，协议私有数据仍留在原历史。

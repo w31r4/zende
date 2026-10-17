@@ -15,7 +15,7 @@ import (
 	"zende.local/harness/internal/protocol"
 )
 
-const SchemaVersion = 20
+const SchemaVersion = 21
 
 type Store struct {
 	db   *sql.DB
@@ -167,8 +167,9 @@ PRAGMA user_version=2;`); err != nil {
 			}
 		}
 		// Optional native-search settings and request-local executor bindings
-		// require a reader that understands their recovery semantics.
-		_, err := tx.Exec("PRAGMA user_version=20;")
+		// require a reader that understands their recovery semantics. v21 adds
+		// the Anthropic deferred route and its versioned private search calls.
+		_, err := tx.Exec("PRAGMA user_version=21;")
 		return err
 	})
 }
