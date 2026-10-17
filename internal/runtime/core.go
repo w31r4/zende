@@ -374,15 +374,18 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 			return nil, err
 		}
 		return c.beginSessionCopy(ctx, req, p)
-	case "agent.copy.inspect", "agent.copy.drafts":
+	case "agent.copy.drafts":
+		var p protocol.CopyDraftQuery
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.Store.ReadSessionCopyDrafts(ctx, p)
+	case "agent.copy.inspect":
 		var p struct {
 			ID string `json:"operation_id"`
 		}
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
 			return nil, err
-		}
-		if req.Method == "agent.copy.drafts" {
-			return c.Store.SessionCopyDrafts(ctx, p.ID)
 		}
 		r, err := c.Store.SessionCopy(ctx, p.ID)
 		return r.Info, err

@@ -15,11 +15,19 @@ const MaxCopyDrafts = 17 // Main composer plus 16 retained answer composers.
 const MaxCopyDraftBytes = 6 << 20
 
 type CopyDraft struct {
-	ID          string        `json:"draft_id"`
-	QuestionID  string        `json:"source_question_id,omitempty"`
-	Text        string        `json:"text"`
-	Attachments []string      `json:"attachments,omitempty"`
-	Skills      []ResourceRef `json:"skills,omitempty"`
+	ID            string        `json:"draft_id"`
+	QuestionID    string        `json:"source_question_id,omitempty"`
+	QuestionAgent string        `json:"source_question_agent_id,omitempty"`
+	Text          string        `json:"text"`
+	Attachments   []string      `json:"attachments,omitempty"`
+	Skills        []ResourceRef `json:"skills,omitempty"`
+}
+
+// Drafts, when supplied, remaps a client's newer source drafts without changing
+// the retained copy intent. Omitting it reads the originally accepted drafts.
+type CopyDraftQuery struct {
+	ID     string      `json:"operation_id"`
+	Drafts []CopyDraft `json:"drafts,omitempty"`
 }
 
 // Public progress excludes private provider bindings and draft bodies.

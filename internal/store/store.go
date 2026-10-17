@@ -15,7 +15,7 @@ import (
 	"zende.local/harness/internal/protocol"
 )
 
-const SchemaVersion = 24
+const SchemaVersion = 25
 
 type Store struct {
 	db   *sql.DB
@@ -171,8 +171,9 @@ PRAGMA user_version=2;`); err != nil {
 				return err
 			}
 		}
-		// v24 readers preserve copied queued-mail attribution at task claim.
-		_, err := tx.Exec("PRAGMA user_version=24;")
+		// v24 preserves copied mail attribution; v25 understands inherited
+		// question owners in retained copy drafts. Older strict readers must stop.
+		_, err := tx.Exec("PRAGMA user_version=25;")
 		return err
 	})
 }

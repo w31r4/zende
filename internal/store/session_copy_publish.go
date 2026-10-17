@@ -250,9 +250,13 @@ func (s *Store) PublishSessionCopy(ctx context.Context, id string, dependency *S
 // Copies keep immutable source drafts. Completed reads map only their image
 // references; source question IDs remain explicit historical identities.
 func (s *Store) SessionCopyDrafts(ctx context.Context, id string) (protocol.SessionCopyDrafts, error) {
+	return s.ReadSessionCopyDrafts(ctx, protocol.CopyDraftQuery{ID: id})
+}
+
+func (s *Store) ReadSessionCopyDrafts(ctx context.Context, query protocol.CopyDraftQuery) (protocol.SessionCopyDrafts, error) {
 	var result protocol.SessionCopyDrafts
 	err := s.Transaction(ctx, func(tx *sql.Tx) error {
-		r, err := sessionCopy(ctx, tx, id)
+		r, err := sessionCopy(ctx, tx, query.ID)
 		if err != nil {
 			return err
 		}
@@ -261,10 +265,20 @@ func (s *Store) SessionCopyDrafts(ctx context.Context, id string) (protocol.Sess
 		if r.Info.State != "completed" {
 			return protocol.E("copy_pending", "drafts are available after the copy is published")
 		}
-		for _, draft := range r.Drafts {
-			draft.Attachments, err = copiedImageRefs(ctx, tx, id, draft.Attachments)
+		drafts := r.Drafts
+		if query.Drafts != nil {
+			if err := validateCopyDrafts(ctx, tx, r.Info.SourceAgent, query.Drafts); err != nil {
+				return err
+			}
+			drafts = query.Drafts
+		}
+		for _, draft := range drafts {
+			draft.Attachments, err = copiedImageRefs(ctx, tx, query.ID, draft.Attachments)
 			if err != nil {
 				return err
+			}
+			if draft.QuestionID != "" && draft.QuestionAgent == "" {
+				draft.QuestionAgent = r.Info.SourceAgent
 			}
 			draft.Skills = append([]protocol.ResourceRef(nil), draft.Skills...)
 			result.Drafts = append(result.Drafts, draft)

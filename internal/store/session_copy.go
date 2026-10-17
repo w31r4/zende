@@ -87,13 +87,20 @@ func validateCopyDrafts(ctx context.Context, tx *sql.Tx, agent string, drafts []
 	ids, questions := map[string]bool{}, map[string]bool{}
 	bytes := 0
 	for _, draft := range drafts {
-		if draft.ID == "" || len(draft.ID) > 128 || !utf8.ValidString(draft.ID) || strings.ContainsRune(draft.ID, 0) || ids[draft.ID] || questions[draft.QuestionID] || len(draft.QuestionID) > 128 || !utf8.ValidString(draft.QuestionID) || strings.ContainsRune(draft.QuestionID, 0) || !utf8.ValidString(draft.Text) || len(draft.Text) > 6<<20 {
+		if draft.ID == "" || len(draft.ID) > 128 || !utf8.ValidString(draft.ID) || strings.ContainsRune(draft.ID, 0) || ids[draft.ID] || questions[draft.QuestionID] || len(draft.QuestionID) > 128 || !utf8.ValidString(draft.QuestionID) || strings.ContainsRune(draft.QuestionID, 0) || len(draft.QuestionAgent) > 128 || !utf8.ValidString(draft.QuestionAgent) || strings.ContainsRune(draft.QuestionAgent, 0) || draft.QuestionID == "" && draft.QuestionAgent != "" || !utf8.ValidString(draft.Text) || len(draft.Text) > 6<<20 {
 			return protocol.E("invalid_params", "copy draft identity or text is invalid")
 		}
 		ids[draft.ID], questions[draft.QuestionID] = true, true
 		if draft.QuestionID != "" {
+			owner := draft.QuestionAgent
+			if owner == "" {
+				owner = agent
+			}
 			var found bool
-			if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM questions WHERE agent_id=? AND id=?)", agent, draft.QuestionID).Scan(&found); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM questions WHERE agent_id=? AND id=?)
+ AND (?=? OR EXISTS(SELECT 1 FROM events WHERE agent_id=? AND source_agent=?
+ AND kind IN ('question.asked','question.answered','question.cancelled') AND json_extract(payload,'$.question_id')=?))`,
+				owner, draft.QuestionID, owner, agent, agent, owner, draft.QuestionID).Scan(&found); err != nil {
 				return err
 			}
 			if !found {
