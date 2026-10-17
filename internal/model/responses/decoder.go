@@ -46,6 +46,8 @@ type decoder struct {
 	calls                       map[string]bool
 	sequence                    *int64
 	bytes                       int
+	clientSearch                bool
+	searchAdvertised            bool
 }
 
 func (d *decoder) send(delta model.Delta) error { return d.emit(delta) }
@@ -149,17 +151,19 @@ func (d *decoder) start(e event) error {
 	if err := decodeObject(e.Item, &item); err != nil {
 		return err
 	}
-	if item.ID == "" || len(item.ID) > 512 {
+	if (item.ID == "" && item.Type != "tool_search_call") || len(item.ID) > 512 {
 		return wireError("invalid item identity")
 	}
 	if d.ids == nil {
 		d.ids = map[string]bool{}
 		d.calls = map[string]bool{}
 	}
-	if d.ids[item.ID] {
+	if item.ID != "" && d.ids[item.ID] {
 		return wireError("duplicate item identity")
 	}
-	d.ids[item.ID] = true
+	if item.ID != "" {
+		d.ids[item.ID] = true
+	}
 	s := &itemState{item: item, parts: map[int]*partState{}}
 	d.items = append(d.items, s)
 	switch item.Type {
@@ -182,15 +186,30 @@ func (d *decoder) start(e event) error {
 		return d.flush(s)
 	case "reasoning":
 		return d.send(model.Delta{Kind: model.MessageStart, MessageID: item.ID})
-	case "function_call":
-		if item.CallID == "" || len(item.CallID) > 512 || item.Name == "" || len(item.Name) > 256 || d.calls[item.CallID] {
+	case "function_call", "tool_search_call":
+		name, arguments, err := item.call(d.clientSearch)
+		if err != nil {
+			return err
+		}
+		if item.Type == "tool_search_call" && !d.searchAdvertised {
+			return wireError("native search was not offered for this request")
+		}
+		if item.Type == "function_call" && name == searchToolName && d.searchAdvertised {
+			return wireError("native search returned an ordinary function call")
+		}
+		if item.CallID == "" || len(item.CallID) > 512 || name == "" || len(name) > 256 || d.calls[item.CallID] {
 			return wireError("invalid function call identity")
 		}
 		d.calls[item.CallID] = true
-		if err := d.send(model.Delta{Kind: model.CallStart, CallID: item.CallID, Name: item.Name}); err != nil {
+		if err := d.send(model.Delta{Kind: model.CallStart, CallID: item.CallID, Name: name}); err != nil {
 			return err
 		}
-		return d.arguments(s, item.Arguments, false)
+		if item.Type == "tool_search_call" {
+			// Search arguments are object-valued, not streamed JSON strings.
+			// Publish them only from the complete output_item.done object.
+			return nil
+		}
+		return d.arguments(s, arguments, false)
 	default:
 		return protocol.E("unsupported_capability", "Responses output item type is not supported")
 	}
@@ -397,22 +416,39 @@ func (d *decoder) finish(e event) error {
 		if full != s.text.String() {
 			return wireError("final message lost content")
 		}
-	case "function_call":
-		if item.CallID != s.item.CallID || item.Name != s.item.Name {
+	case "function_call", "tool_search_call":
+		if item.CallID != s.item.CallID || item.Name != s.item.Name || item.Namespace != s.item.Namespace || item.Execution != s.item.Execution {
 			return wireError("function call identity changed")
 		}
-		if err := d.arguments(s, item.Arguments, true); err != nil {
+		_, arguments, err := item.call(d.clientSearch)
+		if err != nil {
 			return err
 		}
 		var args map[string]any
-		if decodeObject([]byte(item.Arguments), &args) != nil {
+		if decodeObject([]byte(arguments), &args) != nil {
 			return wireError("function arguments must be a complete JSON object")
+		}
+		if item.Type == "tool_search_call" {
+			if item.Status != "completed" {
+				return wireError("native search call is not completed")
+			}
+			initial := s.item.Arguments
+			if len(initial) != 0 && !bytes.Equal(initial, []byte("null")) && !sameJSON(initial, []byte("{}")) && !sameJSON(initial, item.Arguments) {
+				return wireError("native search arguments changed")
+			}
+		}
+		if err := d.arguments(s, arguments, true); err != nil {
+			return err
 		}
 	}
 	if d.responseID == "" {
 		return wireError("output arrived without response identity")
 	}
-	raw, err := json.Marshal(savedItem{Version: 1, Endpoint: d.endpoint, Model: d.model, ResponseID: d.responseID, Item: e.Item})
+	version := 1
+	if item.Type == "tool_search_call" || item.Type == "function_call" && item.Namespace != "" {
+		version = 2
+	}
+	raw, err := json.Marshal(savedItem{Version: version, Endpoint: d.endpoint, Model: d.model, ResponseID: d.responseID, Item: e.Item})
 	if err != nil {
 		return err
 	}
@@ -424,7 +460,7 @@ func (d *decoder) finish(e event) error {
 	}
 	private := model.Delta{Kind: model.ProtocolData, Protocol: Protocol, Raw: raw}
 	end := model.Delta{Kind: model.MessageEnd, MessageID: item.ID}
-	if item.Type == "function_call" {
+	if item.Type == "function_call" || item.Type == "tool_search_call" {
 		private.CallID = item.CallID
 		end = model.Delta{Kind: model.CallEnd, CallID: item.CallID}
 	} else {

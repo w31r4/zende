@@ -750,9 +750,21 @@ go test -race ./internal/runtime -run '^TestPluginExecution' -count=3
 
 请求最多 32 MiB，SSE 单事件 8 MiB、单次流 64 MiB；公共组装仍受单块 1 MiB、响应 4 MiB/128 块限制，私有数据计入额度。服务端的 `response.completed` 必须与已结束 item 一致。响应结束只通过传输校验，任务完成仍需显式 final。
 
-`reasoning` 只保存为协议数据，不进入可见正文。端点、型号或协议变化导致私有数据不兼容时返回 `protocol_mismatch`，原历史保留。user 图片输入见上一节；assistant/tool 附件、内置远端工具、原生 tool search 和自动重试仍待接入。上下文压缩由公共运行时处理，新增代码未测试。遇到不支持的输出事件/类型会报错，`limits.model_retries` 此阶段不驱动 HTTP 重试。
+`reasoning` 保存为协议数据。端点、型号或协议变化导致私有数据不兼容时返回 `protocol_mismatch`，原历史保留。user 图片输入见上一节；assistant/tool 附件、内置远端工具和自动重试仍待接入。上下文压缩由公共运行时处理，新增代码未测试。不支持的输出事件/类型会报错，`limits.model_retries` 此阶段不驱动 HTTP 重试。
 
 协议与本地源码依据：OpenAI [流事件](https://developers.openai.com/api/reference/resources/responses/streaming-events)、[函数调用](https://developers.openai.com/api/docs/guides/function-calling)、[reasoning](https://developers.openai.com/api/docs/guides/reasoning)；Pi `7bc154ad082e2f0029c19117a16d22a504439476` 的 `packages/ai/src/providers/openai-responses{,-shared}.ts`，Codex `7219fd735bef2f9cfd0363fecdbbb212e3df5255` 的 `codex-rs/codex-api/src/sse/responses.rs`。实现及测试不代表任意兼容端点支持这些字段；真实端点、凭据和原生 phase 仍未验收。
+
+### 原生工具搜索协议层，尚未接通运行时
+
+adapter 的 `ClientToolSearch` 开关将 `tool_search` 定义编码为 `type:tool_search`、`execution:client`。它只供后续运行时接线使用；当前 provider 配置仍走 host 搜索，不能据此宣称具体端点已支持原生路径。
+
+`tool_search_call.arguments` 按 JSON 对象读取，完整响应后交给公共工具调用流程。原始 item 使用私有记录版本 2 保存，同端点、同型号且启用该能力才能续接。普通 function call 保留字符串参数；已有 host 搜索历史仍按原类型回放。
+
+配对结果采用 `model.ToolSearchResult`：`tools` 保存完整定义，`text` 保存分页等数据。adapter 生成同 call ID 的 `tool_search_output`，其中 function 使用 `defer_loading:true`、`strict:false`。数据和错误另放相邻的 user 级 JSON 文本；错误结果加载空集合。普通文本中的 tools 字段不会被当作原生定义。
+
+每页最多 50 个定义、结果文本最多 1 MiB，载入新名称时请求内已有定义须少于 256 个。同名重用须保持描述和 schema 一致；超限报错，schema 保持完整。只支持平铺 function，以及返回同名 namespace 的 function call；其他 namespace 明确报不支持。纯文本请求显式设置 `tool_choice:none`，禁用历史中已加载的工具。
+
+字段依据：[OpenAI Tool search](https://developers.openai.com/api/docs/guides/tools-tool-search) 的 client-executed 流程，以及本地 Codex 的 `tools/handlers/tool_search_spec.rs`、`protocol/src/models.rs`。后续还需接通能力声明、MCP 引用与执行器绑定、恢复和其他协议选路；本批未新增或运行测试、构建或真实模型请求，10.5 保持未完成。
 
 ## Chat Completions 接入
 

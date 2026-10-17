@@ -28,15 +28,17 @@ type wirePart struct {
 }
 
 type wireItem struct {
-	ID        string     `json:"id"`
-	Type      string     `json:"type"`
-	Role      string     `json:"role"`
-	Phase     string     `json:"phase"`
-	Status    string     `json:"status"`
-	CallID    string     `json:"call_id"`
-	Name      string     `json:"name"`
-	Arguments string     `json:"arguments"`
-	Content   []wirePart `json:"content"`
+	ID        string          `json:"id"`
+	Type      string          `json:"type"`
+	Role      string          `json:"role"`
+	Phase     string          `json:"phase"`
+	Status    string          `json:"status"`
+	CallID    string          `json:"call_id"`
+	Name      string          `json:"name"`
+	Namespace string          `json:"namespace"`
+	Execution string          `json:"execution"`
+	Arguments json.RawMessage `json:"arguments"`
+	Content   []wirePart      `json:"content"`
 }
 
 func category(phase string) (string, error) {
@@ -93,13 +95,27 @@ func buildRequest(request model.Request, endpoint, effort string) ([]byte, error
 }
 
 func encodeRequest(request model.Request, endpoint, effort string, allowPending bool) ([]byte, error) {
+	return encodeSearchRequest(request, endpoint, effort, allowPending, false)
+}
+
+func encodeSearchRequest(request model.Request, endpoint, effort string, allowPending, clientSearch bool) ([]byte, error) {
 	if request.Model == "" || request.MaxOutputTokens < 1 {
 		return nil, protocol.E("invalid_params", "Responses requires a model and positive output budget")
 	}
 	input := []any{}
 	imageBytes := 0
 	pending := map[string]bool{}
+	searchCalls := map[string]bool{}
 	seen := map[string]bool{}
+	definitions := map[string]model.Tool{}
+	// Reserve ordinary tool names before reading discovery results. A search
+	// cannot replace an existing executor's advertised schema.
+	for _, tool := range request.Tools {
+		if _, exists := definitions[tool.Name]; exists {
+			return nil, wireError("duplicate function definition")
+		}
+		definitions[tool.Name] = tool
+	}
 	appendCall := func(id string) error {
 		if id == "" || seen[id] {
 			return wireError("missing or duplicate historical call ID")
@@ -113,12 +129,15 @@ func encodeRequest(request model.Request, endpoint, effort string, allowPending 
 		}
 		if len(message.Opaque) != 0 {
 			var saved savedItem
-			if message.Role != "assistant" || message.Protocol != Protocol || protocol.StrictDecode(message.Opaque, &saved) != nil || saved.Version != 1 || saved.Endpoint != endpoint || saved.Model != request.Model {
+			if message.Role != "assistant" || message.Protocol != Protocol || protocol.StrictDecode(message.Opaque, &saved) != nil || (saved.Version != 1 && saved.Version != 2) || saved.Endpoint != endpoint || saved.Model != request.Model {
 				return nil, protocol.E("protocol_mismatch", "Responses private item belongs to another endpoint/model or version")
 			}
 			var item wireItem
 			if err := decodeObject(saved.Item, &item); err != nil {
 				return nil, err
+			}
+			if saved.Version == 2 && (!clientSearch || item.Type != "tool_search_call" && (item.Type != "function_call" || item.Namespace == "")) {
+				return nil, protocol.E("unsupported_capability", "saved item requires native client tool search")
 			}
 			switch item.Type {
 			case "message":
@@ -140,12 +159,26 @@ func encodeRequest(request model.Request, endpoint, effort string, allowPending 
 				if err != nil || cat != message.Category {
 					return nil, wireError("saved message conflicts with public category")
 				}
-			case "function_call":
+			case "function_call", "tool_search_call":
 				if len(message.Content) != 1 {
 					return nil, wireError("saved call conflicts with public content")
 				}
+				name, arguments, err := item.call(clientSearch)
+				if err != nil {
+					return nil, err
+				}
+				var argumentsObject map[string]any
+				if decodeObject([]byte(arguments), &argumentsObject) != nil || name == "" || len(name) > 256 || len(item.CallID) > 512 || item.Status != "" && item.Status != "completed" {
+					return nil, wireError("saved call is incomplete or invalid")
+				}
+				if item.Type == "tool_search_call" {
+					if saved.Version != 2 || item.Status != "completed" {
+						return nil, wireError("saved search call is not a complete versioned item")
+					}
+					searchCalls[item.CallID] = true
+				}
 				block := message.Content[0]
-				if block.Type != "tool_call" || block.CallID != item.CallID || block.Name != item.Name || !sameJSON(block.Arguments, []byte(item.Arguments)) {
+				if block.Type != "tool_call" || block.CallID != item.CallID || block.Name != name || !sameJSON(block.Arguments, []byte(arguments)) {
 					return nil, wireError("saved call conflicts with public content")
 				}
 				if err := appendCall(item.CallID); err != nil {
@@ -210,6 +243,8 @@ func encodeRequest(request model.Request, endpoint, effort string, allowPending 
 					if err := appendCall(block.CallID); err != nil {
 						return nil, err
 					}
+					// A public-only host call remains a function call even when
+					// native search is enabled later. Preserve its original kind.
 					input = append(input, map[string]any{"type": "function_call", "call_id": block.CallID, "name": block.Name, "arguments": string(block.Arguments)})
 				default:
 					return nil, protocol.E("unsupported_capability", "Responses assistant content is not supported")
@@ -235,6 +270,14 @@ func encodeRequest(request model.Request, endpoint, effort string, allowPending 
 			}
 			delete(pending, id)
 			text := strings.Join(pieces, "\n")
+			if searchCalls[id] {
+				items, err := searchOutput(id, text, isError, definitions)
+				if err != nil {
+					return nil, err
+				}
+				input = append(input, items...)
+				continue
+			}
 			if isError {
 				text = "Tool error:\n" + text
 			}
@@ -254,9 +297,18 @@ func encodeRequest(request model.Request, endpoint, effort string, allowPending 
 			return nil, wireError("invalid function definition")
 		}
 		toolNames[tool.Name] = true
+		if clientSearch && tool.Name == searchToolName {
+			tools = append(tools, map[string]any{"type": "tool_search", "execution": "client", "description": tool.Description, "parameters": tool.InputSchema})
+			continue
+		}
 		tools = append(tools, map[string]any{"type": "function", "name": tool.Name, "description": tool.Description, "parameters": tool.InputSchema, "strict": false})
 	}
 	body := map[string]any{"model": request.Model, "instructions": request.System, "input": input, "tools": tools, "stream": true, "store": false, "truncation": "disabled", "max_output_tokens": request.MaxOutputTokens, "include": []string{"reasoning.encrypted_content"}}
+	if clientSearch && len(request.Tools) == 0 {
+		// Loaded tools survive in history. An empty tools array alone would
+		// leave them callable during a summary or text-only format repair.
+		body["tool_choice"] = "none"
+	}
 	if effort != "" {
 		body["reasoning"] = map[string]string{"effort": effort}
 	}

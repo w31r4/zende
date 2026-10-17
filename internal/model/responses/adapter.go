@@ -22,6 +22,9 @@ type Config struct {
 	Credential func(context.Context) (string, error)
 	Client     *http.Client
 	Images     bool
+	// ClientToolSearch requires an explicitly confirmed endpoint/model. It is
+	// an adapter seam until the runtime can bind discovered tool executors.
+	ClientToolSearch bool
 }
 
 type Adapter struct {
@@ -63,7 +66,7 @@ func (a *Adapter) Stream(ctx context.Context, request model.Request, emit func(m
 			}
 		}
 	}
-	body, err := buildRequest(request, a.endpoint, a.config.Effort)
+	body, err := encodeSearchRequest(request, a.endpoint, a.config.Effort, false, a.config.ClientToolSearch)
 	if err != nil {
 		return err
 	}
@@ -116,7 +119,12 @@ func (a *Adapter) Stream(ctx context.Context, request model.Request, emit func(m
 	if err != nil || media != "text/event-stream" {
 		return wireError("expected text/event-stream")
 	}
-	d := decoder{endpoint: a.endpoint, model: request.Model, emit: emit}
+	d := decoder{endpoint: a.endpoint, model: request.Model, emit: emit, clientSearch: a.config.ClientToolSearch}
+	if a.config.ClientToolSearch {
+		for _, tool := range request.Tools {
+			d.searchAdvertised = d.searchAdvertised || tool.Name == searchToolName
+		}
+	}
 	err = readSSE(response.Body, d.receive)
 	if ctx.Err() != nil {
 		return ctx.Err()
@@ -142,6 +150,6 @@ func (a *Adapter) validate(request model.Request, allowPending bool) error {
 			}
 		}
 	}
-	_, err := encodeRequest(request, a.endpoint, a.config.Effort, allowPending)
+	_, err := encodeSearchRequest(request, a.endpoint, a.config.Effort, allowPending, a.config.ClientToolSearch)
 	return err
 }
