@@ -29,6 +29,9 @@ func pauseAgent(ctx context.Context, tx *sql.Tx, operation, agent string) (strin
 	if state == "archived" || state == "copying" {
 		return "", protocol.E("conflict", "agent is read-only")
 	}
+	if err := cancelAgentCompaction(ctx, tx, agent); err != nil {
+		return "", err
+	}
 	var task string
 	err := tx.QueryRowContext(ctx, `SELECT id FROM tasks WHERE agent_id=? AND state IN ('running','cancelling','unknown') ORDER BY rowid LIMIT 1`, agent).Scan(&task)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {

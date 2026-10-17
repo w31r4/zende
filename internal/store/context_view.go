@@ -84,6 +84,21 @@ func contextView(ctx context.Context, tx *sql.Tx, agent string, cursor int64) (C
 func (s *Store) PublishContextView(ctx context.Context, agent string, prepared ContextView) (ContextView, error) {
 	var published ContextView
 	err := s.Transaction(ctx, func(tx *sql.Tx) error {
+		var err error
+		published, err = publishContextView(ctx, tx, agent, prepared)
+		return err
+	})
+	if err != nil {
+		return ContextView{}, err
+	}
+	return published, nil
+}
+
+// Used by the compaction journal to commit a view and operation completion in
+// one transaction. A failed terminal record must roll back the new view too.
+func publishContextView(ctx context.Context, tx *sql.Tx, agent string, prepared ContextView) (ContextView, error) {
+	var published ContextView
+	err := func() error {
 		if strings.TrimSpace(prepared.Summary) == "" || !utf8.ValidString(prepared.Summary) || len(prepared.Summary) > 1<<20 || prepared.Through <= 0 || prepared.Through > prepared.SourceCursor {
 			return protocol.E("context_invalid", "summary and a valid source range are required")
 		}
@@ -138,7 +153,7 @@ func (s *Store) PublishContextView(ctx context.Context, agent string, prepared C
 		prepared.Published = event.Seq
 		published = prepared
 		return nil
-	})
+	}()
 	if err != nil {
 		return ContextView{}, err
 	}

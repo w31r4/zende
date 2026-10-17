@@ -101,6 +101,13 @@ func (s *Store) BeginModelRequest(ctx context.Context, agent, task string, revis
 		if err != nil {
 			return err
 		}
+		var compacting bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM compactions WHERE agent_id=? AND json_extract(record,'$.state')='running')`, agent).Scan(&compacting); err != nil {
+			return err
+		}
+		if compacting {
+			return protocol.E("context_busy", "wait for the active summary attempt before another model request")
+		}
 		for _, notice := range notices {
 			if notice.Message.Role != "developer" || notice.RequestID != "" || notice.MessageID != "" || len(notice.MessageIDs) != 0 || notice.QuestionID != "" || notice.Summary != nil {
 				return protocol.E("invalid_params", "request notices must be developer context, not model or tool results")

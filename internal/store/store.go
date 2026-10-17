@@ -15,7 +15,7 @@ import (
 	"zende.local/harness/internal/protocol"
 )
 
-const SchemaVersion = 16
+const SchemaVersion = 17
 
 type Store struct {
 	db   *sql.DB
@@ -146,7 +146,12 @@ PRAGMA user_version=2;`); err != nil {
 				return err
 			}
 		}
-		_, err := tx.Exec(pluginSubscriptionSchema)
+		if version < 16 {
+			if _, err := tx.Exec(pluginSubscriptionSchema); err != nil {
+				return err
+			}
+		}
+		_, err := tx.Exec(compactionSchema)
 		return err
 	})
 }
@@ -488,6 +493,10 @@ func (s *Store) Events(ctx context.Context, c protocol.Cursor) (protocol.EventPa
 				return protocol.E("cursor_gap", "durable event range is missing")
 			}
 			e.Payload = json.RawMessage(payload)
+			e, err = publicCompactionEvent(e)
+			if err != nil {
+				return err
+			}
 			encoded, err := json.Marshal(e)
 			if err != nil {
 				return err

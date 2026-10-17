@@ -196,6 +196,11 @@ func (s *Store) BeginPluginEventDelivery(ctx context.Context, target protocol.Pl
 			}
 			if len(r.Receipt.Kinds) == 0 || slices.Contains(r.Receipt.Kinds, e.Kind) {
 				e.Payload = json.RawMessage(payload)
+				e, err = publicCompactionEvent(e)
+				if err != nil {
+					rows.Close()
+					return err
+				}
 				raw, err := json.Marshal(e)
 				if err != nil || len(raw)+512 > plugin.MaxEventBatchBytes {
 					rows.Close()

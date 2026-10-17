@@ -35,6 +35,16 @@ func (s *Store) PrepareCompaction(ctx context.Context, agent string, cursor int6
 		return out, protocol.E("invalid_params", "compaction requires a valid retained-context policy")
 	}
 	err := s.Transaction(ctx, func(tx *sql.Tx) error {
+		var err error
+		out, err = prepareCompaction(ctx, tx, agent, cursor, policy)
+		return err
+	})
+	return out, err
+}
+
+func prepareCompaction(ctx context.Context, tx *sql.Tx, agent string, cursor int64, policy protocol.ContextBudgetPolicy) (CompactionPreparation, error) {
+	var out CompactionPreparation
+	err := func() error {
 		boundary, err := contextQueryBoundary(ctx, tx, protocol.ContextTarget{AgentID: agent, At: &cursor})
 		if err != nil {
 			return err
@@ -88,7 +98,7 @@ func (s *Store) PrepareCompaction(ctx context.Context, agent string, cursor int6
 			out.Retained = append(out.Retained, entry.Record.Message)
 		}
 		return nil
-	})
+	}()
 	if err != nil {
 		return CompactionPreparation{}, err
 	}

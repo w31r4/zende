@@ -43,6 +43,12 @@ func (c *Core) Run(ctx context.Context) error {
 	if err := c.Store.HoldInterrupted(ctx); err != nil {
 		return err
 	}
+	if err := c.Store.InterruptCompactions(ctx, c.InstanceID); err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return err
+	}
 	if err := c.Store.InterruptResourceUpdates(ctx, c.InstanceID); err != nil {
 		if ctx.Err() != nil {
 			return nil

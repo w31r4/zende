@@ -56,7 +56,8 @@ func (s *Store) ClaimNext(ctx context.Context, id string) (*Work, error) {
 	err := s.Transaction(ctx, func(tx *sql.Tx) error {
 		w := &Work{}
 		a, t := &w.Agent, &w.Task
-		err := tx.QueryRowContext(ctx, `SELECT id,coalesce(parent_id,''),cwd,state,model,seq FROM agents WHERE id=? AND state='idle' AND paused=0`, id).Scan(&a.ID, &a.ParentID, &a.Cwd, &a.State, &a.Model, &a.Seq)
+		err := tx.QueryRowContext(ctx, `SELECT id,coalesce(parent_id,''),cwd,state,model,seq FROM agents WHERE id=? AND state='idle' AND paused=0
+AND NOT EXISTS(SELECT 1 FROM compactions c WHERE c.agent_id=agents.id AND json_extract(c.record,'$.state')='running')`, id).Scan(&a.ID, &a.ParentID, &a.Cwd, &a.State, &a.Model, &a.Seq)
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil
 		}
