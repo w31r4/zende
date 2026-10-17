@@ -1,6 +1,6 @@
 # 本地开发
 
-CLI 支持持久会话、子 Agent 创建与复用、历史查询、进程工具及四种模型协议；独立 runner 管理 pipe、tmux PTY 与输出。本机命令已安装，完整 Day1 和运行接回仍未验收，新增 Anthropic、Gemini 接入未测试。进度见 [OpenSpec 任务](../openspec/changes/build-day1-harness/tasks.md)。
+CLI 支持持久会话、子 Agent 创建与复用、历史查询、进程工具及四种模型协议；独立 runner 管理 pipe、tmux PTY 与输出。本机命令已安装，完整 Day1 和运行接回仍未验收，新增 Anthropic、Gemini 接入未测试。场景与证据见[交付状态](day1-delivery.md)，进度见 [OpenSpec 任务](../openspec/changes/build-day1-harness/tasks.md)。
 
 ## 构建与测试
 
