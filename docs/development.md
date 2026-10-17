@@ -15,6 +15,18 @@ go build -o bin/zende ./cmd/zende
 
 项目使用 Go 1.26，`go.mod` 选择工具链并锁定依赖。参考仓库 `.research/` 保持只读。测试使用临时数据库和 Unix socket。
 
+## 用户级安装与更新
+
+在源码目录执行 `bash scripts/install.sh`，编译当前源码并安装到 `~/.local/bin/zende`。需要 Go 1.26、Bash、GNU coreutils 和 util-linux 的 flock；PTY 另需 tmux。脚本只生成产物和切换入口，不运行测试、启动服务或读取模型凭据。
+
+二进制放在 `$XDG_DATA_HOME/zende/releases/RELEASE/zende`，未设置 XDG 时使用 `~/.local/share/zende/releases/`。入口是指向该版本的符号链接；新版本完整构建后，在入口目录内 rename 切换。每次安装保留旧版，进程继续使用各自启动时的二进制；Core/runner 不会随入口切换而自动重启。编译记录来源提交和日期，已跟踪源码有改动时标记 dirty。
+
+`--bin-dir DIR` 和 `--data-dir DIR` 可覆盖安装位置，均须为绝对路径；data-dir 对应 `zende` 安装目录本身。安装前检查现有入口，未知文件或其他发布目录管理的链接会报错并保留。并发安装通过入口和发布目录的锁互斥；入口在构建期间被改动时也保留现状。
+
+`bash scripts/install.sh --list` 列出保留版本，`bash scripts/install.sh --rollback RELEASE` 只切换二进制入口。安装和回退都保留配置、数据库、历史、worktree、日志及运行进程。回退到旧程序不会降级 schema；运行数据已升级时须使用兼容程序或完整备份，较旧 schema 读写规则见下文。
+
+安装后按实际模型配置选择 profile，从项目目录启动 `zende --profile NAME core start` 和 `zende --profile NAME runner start`。用户配置默认放在 `~/.config/zende/NAME/config.yaml`，凭据只使用 env/file 引用；四协议示例见 [four-protocols.yaml](../examples/config/four-protocols.yaml)。先创建 Agent 再执行 `zende --profile NAME tui AGENT`；退出 TUI 后，使用同一 profile 和 Agent ID 接回。首次接入、数据位置和恢复入口见下面各节。
+
 ## 模块
 
 | 包 | 职责 |
