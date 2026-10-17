@@ -210,6 +210,12 @@ func resourceAgent(ctx context.Context, tx rowQuerier, agent string, writable bo
 	return err
 }
 
+// Offline discovery can reconnect or start a local MCP host. Copy admission
+// therefore applies before creating such a runtime, even on a read API.
+func (s *Store) ResourceRuntimeAllowed(ctx context.Context, agent string) error {
+	return resourceAgent(ctx, s.db, agent, true)
+}
+
 func (s *Store) ResourceStatus(ctx context.Context, target protocol.ResourceTarget) (protocol.ResourceStatus, error) {
 	var result protocol.ResourceStatus
 	err := s.Transaction(ctx, func(tx *sql.Tx) error {

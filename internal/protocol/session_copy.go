@@ -4,6 +4,7 @@ package protocol
 // instructions to execute during copying.
 type CopyAgent struct {
 	AgentID          string      `json:"agent_id"`
+	Caller           *Caller     `json:"caller,omitempty"`
 	Cwd              string      `json:"cwd"`
 	Confirm          bool        `json:"confirm"`
 	ExpectedRevision *int64      `json:"expected_revision,omitempty"`
@@ -38,4 +39,9 @@ type SessionCopyInfo struct {
 type CopiedEventSource struct {
 	AgentID string `json:"agent_id"`
 	Seq     int64  `json:"seq"`
+}
+
+type SessionCopyDrafts struct {
+	Copy   SessionCopyInfo `json:"copy"`
+	Drafts []CopyDraft     `json:"drafts"`
 }

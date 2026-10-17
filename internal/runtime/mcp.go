@@ -257,6 +257,9 @@ func (c *Core) searchMCP(ctx context.Context, p protocol.MCPSearch) (mcp.SearchR
 // readyMCP returns a locked slot with a durable catalog. Callers must unlock;
 // invocation takes a lease while locked, then performs network I/O unlocked.
 func (c *Core) readyMCP(ctx context.Context, target protocol.ResourceTarget) (*mcpSlot, error) {
+	if err := c.Store.ResourceRuntimeAllowed(ctx, target.AgentID); err != nil {
+		return nil, err
+	}
 	// Check ownership before creating an in-memory slot. Unknown IDs cannot
 	// grow the host map or start a process.
 	status, err := c.Store.ResourceStatus(ctx, target)
@@ -280,6 +283,9 @@ func (c *Core) readyMCP(ctx context.Context, target protocol.ResourceTarget) (*m
 		}
 	}()
 	if err := c.mcpOpen(); err != nil {
+		return nil, err
+	}
+	if err := c.Store.ResourceRuntimeAllowed(ctx, target.AgentID); err != nil {
 		return nil, err
 	}
 	if s.conn == nil || s.conn.Status().State != "ready" || s.pkg.Info.Version != status.Version && s.generation <= status.Generation {

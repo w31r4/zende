@@ -15,7 +15,7 @@ import (
 	"zende.local/harness/internal/protocol"
 )
 
-const SchemaVersion = 23
+const SchemaVersion = 24
 
 type Store struct {
 	db   *sql.DB
@@ -171,7 +171,8 @@ PRAGMA user_version=2;`); err != nil {
 				return err
 			}
 		}
-		_, err := tx.Exec("PRAGMA user_version=23;")
+		// v24 readers preserve copied queued-mail attribution at task claim.
+		_, err := tx.Exec("PRAGMA user_version=24;")
 		return err
 	})
 }
@@ -396,7 +397,7 @@ func (s *Store) Submit(ctx context.Context, req protocol.Request, p protocol.Sub
 func checkCapacity(ctx context.Context, tx *sql.Tx, agent string, maxAgents int) error {
 	var count, own int
 	const active = "state IN ('accepted','running','cancelling','unknown')"
-	const reserved = "SELECT agent_id FROM tasks WHERE " + active + " UNION SELECT agent_id FROM mailbox WHERE delivered_seq=0"
+	const reserved = "SELECT t.agent_id FROM tasks t JOIN agents a ON a.id=t.agent_id WHERE a.state!='archived' AND t." + active + " UNION SELECT m.agent_id FROM mailbox m JOIN agents a ON a.id=m.agent_id WHERE a.state!='archived' AND m.delivered_seq=0 UNION SELECT source_agent FROM session_copies WHERE state='stopping' AND json_extract(plan,'$.reserve')=1"
 	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM ("+reserved+")").Scan(&count); err != nil {
 		return err
 	}

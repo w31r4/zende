@@ -100,7 +100,10 @@ func (s *Store) BeginTreeStop(ctx context.Context, req protocol.Request, root st
 // transaction. No stop or copy identity is published before commit.
 func beginTreeStop(ctx context.Context, tx *sql.Tx, operation, root string) (protocol.Accepted, error) {
 	plan := TreeStopPlan{OperationID: operation, AgentID: root, Members: []TreeStopMember{}, Worktrees: []string{}}
-	rows, err := tx.QueryContext(ctx, agentTree+`SELECT a.id,a.state FROM agents a JOIN tree t ON t.id=a.id ORDER BY a.rowid LIMIT ?`, root, maxTreeStopMembers+1)
+	// A previously copied descendant is already archived under its own stop
+	// proof. It must not be captured by a later ancestor's independent stop.
+	rows, err := tx.QueryContext(ctx, agentTree+`SELECT a.id,a.state FROM agents a JOIN tree t ON t.id=a.id
+ WHERE a.state!='archived' OR a.id=? ORDER BY a.rowid LIMIT ?`, root, root, maxTreeStopMembers+1)
 	if err != nil {
 		return protocol.Accepted{}, err
 	}

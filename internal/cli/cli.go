@@ -176,6 +176,7 @@ func (a *app) command() *cobra.Command {
 	recoverCommand.Flags().StringVar(&recoverTask, "task", "", "Held task identity")
 	agent.AddCommand(recoverCommand)
 	a.selectionCommands(agent)
+	a.copyCommands(agent)
 	a.collaborationCommands(agent)
 	a.sendCommand(agent)
 	a.resultCommands(agent)
@@ -249,6 +250,8 @@ func (a *app) call(cmd *cobra.Command, method string, mutation bool, params any)
 	var caller *protocol.Caller
 	switch p := params.(type) {
 	case protocol.SpawnAgent:
+		caller = p.Caller
+	case protocol.CopyAgent:
 		caller = p.Caller
 	case protocol.Submit:
 		caller = p.Caller
@@ -340,6 +343,7 @@ func (a *app) serve(cmd *cobra.Command, _ []string) error {
 		core.Commands = append(questionHints(exe, a.profile), resourceHints(exe, a.profile)...)
 		core.Commands = append(core.Commands, workspaceHints(exe, a.profile)...)
 		core.Commands = append(core.Commands, selectionHints(exe, a.profile)...)
+		core.Commands = append(core.Commands, copyHints(exe, a.profile)...)
 		core.Commands = append(core.Commands, collaborationHints(exe, a.profile)...)
 		core.Commands = append(core.Commands, contextHints(exe, a.profile)...)
 		core.Commands = append(core.Commands, configHints(exe, a.profile)...)

@@ -47,6 +47,8 @@ PRAGMA user_version=23;
 
 type sessionCopyPlan struct {
 	Version   int                     `json:"version"`
+	Reserve   bool                    `json:"reserve,omitempty"`
+	Source    *protocol.CallSource    `json:"source,omitempty"`
 	Selection protocol.AgentSelection `json:"selection"`
 	Binding   json.RawMessage         `json:"binding,omitempty"`
 	Drafts    []protocol.CopyDraft    `json:"drafts,omitempty"`
@@ -127,6 +129,13 @@ func (s *Store) BeginSessionCopy(ctx context.Context, req protocol.Request, cwd 
 		return protocol.Accepted{}, protocol.E("invalid_params", "session copy requires explicit confirmation, a source and a prepared directory")
 	}
 	return s.accept(ctx, req, func(tx *sql.Tx) (protocol.Accepted, error) {
+		origin, err := callSource(ctx, tx, p.Caller)
+		if err != nil {
+			return protocol.Accepted{}, err
+		}
+		if err := treeCallerWritable(ctx, tx, p.Caller); err != nil {
+			return protocol.Accepted{}, err
+		}
 		choice, err := selection(ctx, tx, p.AgentID)
 		if err != nil {
 			return protocol.Accepted{}, err
@@ -137,12 +146,16 @@ func (s *Store) BeginSessionCopy(ctx context.Context, req protocol.Request, cwd 
 		if err := validateCopyDrafts(ctx, tx, p.AgentID, p.Drafts); err != nil {
 			return protocol.Accepted{}, err
 		}
+		var reserved bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM tasks WHERE agent_id=? AND state IN ('accepted','running','cancelling','unknown')) OR EXISTS(SELECT 1 FROM mailbox WHERE agent_id=? AND delivered_seq=0)`, p.AgentID, p.AgentID).Scan(&reserved); err != nil {
+			return protocol.Accepted{}, err
+		}
 		accepted, err := beginTreeStop(ctx, tx, req.OperationID, p.AgentID)
 		if err != nil {
 			return protocol.Accepted{}, err
 		}
 		info := protocol.SessionCopyInfo{OperationID: req.OperationID, SourceAgent: p.AgentID, AgentID: protocol.NewID("agent"), Cwd: cwd, State: "stopping", Stage: "processes", Drafts: len(p.Drafts)}
-		plan := sessionCopyPlan{Version: 1, Selection: choice.Choice, Binding: choice.Binding, Drafts: p.Drafts}
+		plan := sessionCopyPlan{Version: 1, Reserve: reserved, Source: origin, Selection: choice.Choice, Binding: choice.Binding, Drafts: p.Drafts}
 		raw, err := json.Marshal(plan)
 		if err != nil {
 			return protocol.Accepted{}, err

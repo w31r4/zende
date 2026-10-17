@@ -97,6 +97,12 @@ AND NOT EXISTS(SELECT 1 FROM compactions c WHERE c.agent_id=agents.id AND json_e
 			work = w
 			return nil
 		}
+		if copied, err := copiedInputContext(ctx, tx, id, t.ID); err != nil {
+			return err
+		} else if copied {
+			work = w
+			return nil
+		}
 		var content []model.Block
 		if t.Input != "" {
 			content = append(content, model.Block{Type: "text", Text: t.Input})

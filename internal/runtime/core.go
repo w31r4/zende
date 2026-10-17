@@ -368,6 +368,24 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 			return nil, err
 		}
 		return c.spawnAgent(ctx, req, p)
+	case "agent.copy":
+		var p protocol.CopyAgent
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		return c.beginSessionCopy(ctx, req, p)
+	case "agent.copy.inspect", "agent.copy.drafts":
+		var p struct {
+			ID string `json:"operation_id"`
+		}
+		if err := protocol.StrictDecode(req.Params, &p); err != nil {
+			return nil, err
+		}
+		if req.Method == "agent.copy.drafts" {
+			return c.Store.SessionCopyDrafts(ctx, p.ID)
+		}
+		r, err := c.Store.SessionCopy(ctx, p.ID)
+		return r.Info, err
 	case "agent.submit":
 		var p protocol.Submit
 		if err := protocol.StrictDecode(req.Params, &p); err != nil {
@@ -492,6 +510,13 @@ func (c *Core) Handle(ctx context.Context, req protocol.Request) (any, error) {
 		}
 		accepted, err := c.Store.Operation(ctx, p.ID)
 		if err == nil {
+			copy, copyErr := c.Store.SessionCopy(ctx, p.ID)
+			if copyErr == nil {
+				return copy.Info, nil
+			}
+			if !isFailure(copyErr, "not_found") {
+				return nil, copyErr
+			}
 			compaction, compactErr := c.Store.Compaction(ctx, p.ID)
 			if compactErr == nil {
 				return compaction.CompactionInfo, nil

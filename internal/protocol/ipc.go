@@ -359,6 +359,8 @@ func ReadOnly(method string) bool {
 	switch method {
 	case "agent.select.preview":
 		return true
+	case "agent.copy.inspect", "agent.copy.drafts":
+		return true
 	case "config.read", "config.history", "config.runner":
 		return true
 	case "resource.watch.status":
