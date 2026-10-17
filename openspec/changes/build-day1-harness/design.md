@@ -43,6 +43,8 @@ Agent 与 Process 各自管理生命周期，共享身份关联与事件记录�
 
 runner 与 core 分开存活，不能因 core IPC 关闭就退出。启动记录包含配置档、runner 实例身份、连接位置及其管理的进程；core 重启后先查询 runner，再决定是否继续任务。客户端可在后台服务缺失时启动服务，但连接重试不能创建多个同配置档 core；启动锁与运行身份需要测试。
 
+服务 stop 固定 `instance_id`，不跨替代进程重放，也不依赖数字 PID。Core 停止保留 runner；runner 在同一准入锁内确认没有活动或未知进程后才停止。响应写完后关闭，worker 和状态写入结束后释放服务锁；等待超时保留 stopping 状态，不升级为强杀。
+
 没有选择“所有 goroutine 都挂在 TUI”是因为断开界面必须不影响工作；没有把 tmux pane 当 Agent，是因为会话历史、模型状态和 mailbox 仍由 core 管理。
 
 ### D2. 本地 JSON-RPC 控制接口，事件按会话游标补发

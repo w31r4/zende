@@ -1,6 +1,6 @@
 # 本地开发
 
-CLI 支持持久会话、子 Agent 创建与复用、历史查询、进程工具及四种模型协议；独立 runner 管理 pipe、tmux PTY 与输出。完整 Day1 和部署仍在实施，新增 Anthropic、Gemini 接入未测试。进度见 [OpenSpec 任务](../openspec/changes/build-day1-harness/tasks.md)。
+CLI 支持持久会话、子 Agent 创建与复用、历史查询、进程工具及四种模型协议；独立 runner 管理 pipe、tmux PTY 与输出。本机命令已安装，完整 Day1 和运行接回仍未验收，新增 Anthropic、Gemini 接入未测试。进度见 [OpenSpec 任务](../openspec/changes/build-day1-harness/tasks.md)。
 
 ## 构建与测试
 
@@ -109,6 +109,12 @@ model: local/my-model
 ```
 
 `core start` 脱离启动终端，日志写入该 profile 的 `core.log`。`core serve` 为前台/监督进程入口，可用 SIGINT/SIGTERM 停止。锁覆盖 socket 清理到服务退出；并发启动只保留一个状态所有者。连接失败时检查 profile、`config inspect` 和 `core.log`，不要删除数据库或重建会话。
+
+`zende --profile NAME core stop` 停止当前 Core，保留独立 runner 及其进程；重新 start 后沿原任务记录恢复。`runner stop` 只允许监督器空闲时退出：活动、未知或未保存完整终态的进程会返回 `runner_busy`，须先用 Agent/进程接口结束或核实对应工作。停止确认与新进程准入共用锁，期间拒绝新身份，已接受身份仍可查询。
+
+服务 stop 先读取当前 `instance_id`，再向同一实例发送控制请求；`--instance ID` 可固定预期目标，变化时报错。此操作不使用 Task 的 `--request-id`，也不向数字 PID 发信号。回执写完才关闭服务；响应写失败会撤销尚未确认的 runner 准入冻结。Core 的 worker、IPC 请求和数据库关闭后才释放服务锁。
+
+stop 默认最多等待 5000 ms，可用 `--wait-ms 0..30000` 调整。返回 `stopped` 表示原服务已释放所有权或已有不同实例接管；`stopping` 表示仍在收尾。等待超时不强杀；响应丢失且未能确认原实例退出时报 `service_stop_unknown`，用原 `--instance` 查询或重试，不能把新实例当成原目标。以上控制链路未测试，旧版服务不支持该入口时返回原协议错误。
 
 写命令支持 `--request-id`。连接中断后用同一 ID 和相同参数重试，或查询 operation；换 ID 会创建另一项工作。每次网络交换有独立 `id`，持久去重使用 `operation_id`。同 ID 配不同参数返回冲突。
 

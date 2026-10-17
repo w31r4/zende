@@ -68,11 +68,13 @@ func (a *app) command() *cobra.Command {
 	core := &cobra.Command{Use: "core", Short: "Manage the profile's background core"}
 	core.AddCommand(&cobra.Command{Use: "serve", Short: "Run core in foreground (supervisor entry)", Args: cobra.NoArgs, RunE: a.serve})
 	core.AddCommand(&cobra.Command{Use: "start", Short: "Start a detached core or connect to the existing one", Args: cobra.NoArgs, RunE: a.start})
+	core.AddCommand(a.stopCommand("core"))
 	core.AddCommand(&cobra.Command{Use: "status", Short: "Inspect core identity and limits", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return a.call(cmd, "core.status", false, struct{}{}) }})
 	root.AddCommand(core)
 	runner := &cobra.Command{Use: "runner", Short: "Independent process runner"}
 	runner.AddCommand(&cobra.Command{Use: "serve", Short: "Run the process supervisor in foreground", Args: cobra.NoArgs, RunE: a.serveRunner})
 	runner.AddCommand(&cobra.Command{Use: "start", Short: "Start a detached runner", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return a.startService(cmd, "runner") }})
+	runner.AddCommand(a.stopCommand("runner"))
 	runner.AddCommand(&cobra.Command{Use: "status", Short: "Inspect runner identity and limits", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error { return a.call(cmd, "runner.status", false, struct{}{}) }})
 	root.AddCommand(runner)
 	a.processCommands(root)
@@ -334,6 +336,7 @@ func (a *app) serve(cmd *cobra.Command, _ []string) error {
 	defer s.Close()
 	core := runtime.New(s, resource.Effective{Config: resource.Defaults(cwd)})
 	if err := core.InitializeConfiguration(cmd.Context(), p, cwd, os.Getenv); err != nil {
+		_ = s.Close()
 		ctx, cancel := context.WithCancel(cmd.Context())
 		cancel()
 		_ = server.Serve(ctx)
@@ -354,16 +357,24 @@ func (a *app) serve(cmd *cobra.Command, _ []string) error {
 	executors = append(executors, core.MCPExecutors()...)
 	core.Tools, err = tool.NewRegistry(append(executors, core.PluginExecutors()...)...)
 	if err != nil {
+		_ = s.Close()
 		ctx, cancel := context.WithCancel(cmd.Context())
 		cancel()
 		_ = server.Serve(ctx)
 		return err
 	}
-	proxy.handler = core
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 	finished := make(chan error, 2)
-	go func() { finished <- core.Run(ctx) }()
+	coreDone := make(chan struct{})
+	proxy.handler = &serviceControl{handler: core, service: "core", instance: core.InstanceID, cancel: cancel, drain: func() {
+		<-coreDone
+		_ = s.Close() // Close state writers before releasing the service lock.
+	}}
+	go func() {
+		defer close(coreDone)
+		finished <- core.Run(ctx)
+	}()
 	go func() { finished <- server.Serve(ctx) }()
 	err = <-finished
 	cancel()
@@ -380,6 +391,18 @@ func (d *deferredHandler) Handle(ctx context.Context, r protocol.Request) (any, 
 }
 func (d *deferredHandler) Subscribe(ctx context.Context, r protocol.Request, f func(protocol.Event) error) error {
 	return d.handler.Subscribe(ctx, r, f)
+}
+
+func (d *deferredHandler) ResponseSent(r protocol.Request, result any, err error) {
+	if finalizer, ok := d.handler.(protocol.ResponseFinalizer); ok {
+		finalizer.ResponseSent(r, result, err)
+	}
+}
+
+func (d *deferredHandler) Drain() {
+	if drainer, ok := d.handler.(protocol.ServiceDrainer); ok {
+		drainer.Drain()
+	}
 }
 
 func (a *app) start(cmd *cobra.Command, _ []string) error {

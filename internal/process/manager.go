@@ -32,6 +32,7 @@ type Manager struct {
 	cache                 *outputCache
 	stops                 map[string]StopRecord
 	stopFault             bool // Damaged stop metadata must not silently reopen admission.
+	shutdown              bool
 	configRefreshMu       sync.Mutex
 	configSource          ConfigurationSource // Set before serving.
 	configPublication     *protocol.ConfigPublication
@@ -192,6 +193,9 @@ func (m *Manager) Start(ctx context.Context, spec Spec) (State, error) {
 	}
 	if err := ctx.Err(); err != nil {
 		return State{}, err
+	}
+	if m.shutdown {
+		return State{}, protocol.E("unavailable", "runner is stopping; existing process identities remain inspectable")
 	}
 	if !m.configReady || m.configFault {
 		return State{}, protocol.E("unavailable", "runner configuration is not ready; inspect runner status; existing processes are retained")

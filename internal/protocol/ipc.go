@@ -70,10 +70,15 @@ func Listen(path string, handler Handler) (*Server, error) {
 	return &Server{listener: listener, lock: lock, handler: handler}, nil
 }
 
-func (s *Server) Serve(ctx context.Context) error {
+func (s *Server) Serve(parent context.Context) error {
+	ctx, cancel := context.WithCancel(parent)
 	defer func() {
+		cancel() // An unexpected listener error must also release idle clients.
 		s.listener.Close()
 		s.wg.Wait()
+		if drainer, ok := s.handler.(ServiceDrainer); ok {
+			drainer.Drain()
+		}
 		syscall.Flock(int(s.lock.Fd()), syscall.LOCK_UN)
 		s.lock.Close()
 	}()
@@ -120,7 +125,15 @@ func (s *Server) serveConn(ctx context.Context, conn net.Conn) {
 			response.Error = wireError(err, req.OperationID)
 		}
 		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-		if encoder.Encode(response) != nil {
+		writeErr := encoder.Encode(response)
+		if finalizer, ok := s.handler.(ResponseFinalizer); ok {
+			responseErr := err
+			if writeErr != nil {
+				responseErr = writeErr
+			}
+			finalizer.ResponseSent(req, result, responseErr)
+		}
+		if writeErr != nil {
 			return
 		}
 		if req.Method == "events.watch" && err == nil {

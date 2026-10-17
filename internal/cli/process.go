@@ -51,10 +51,11 @@ func (a *app) serveRunner(cmd *cobra.Command, _ []string) error {
 		config := effective.Config
 		return process.Configuration{Shell: config.Shell, MaxProcesses: config.Limits.Processes, MaxOutput: config.Limits.OutputBytes}, err
 	})
-	proxy.handler = process.Service{Manager: manager}
 	ctx, cancel := context.WithCancel(cmd.Context())
 	defer cancel()
 	finished := make(chan struct{})
+	proxy.handler = &serviceControl{handler: process.Service{Manager: manager}, service: "runner", instance: manager.Status().Instance,
+		cancel: cancel, prepare: manager.PrepareShutdown, reopen: manager.CancelShutdown, drain: func() { <-finished }}
 	go func() {
 		defer close(finished)
 		manager.FollowConfiguration(ctx)
